@@ -43,6 +43,94 @@ enum CatCareSubject {
     }
 }
 
+/// 11/21: a microchip number not 15 digits yet, by cat, while the app runs.
+/// Never written to a file: only the full number is saved.
+@MainActor
+enum CatCareUnfinishedMicrochip {
+    static var numbers: [UUID: String] = [:]
+}
+
+/// 11/21: deleting a cat removes what this iPhone kept for it in the tools
+/// (預けるとき・避難に備える・迷子のとき・病院のメモ・この子のこと), so the
+/// cat does not come back as a tool page.
+/// A cat in the family notebook stays the family's cat for everyone: its
+/// 「この子のこと」 and tool records are kept and follow the family's cat
+/// (the household cat ID) instead of the deleted profile, so it has one
+/// page, not a second one made from the tools.
+@MainActor
+enum CatProfileDeletionCleanup {
+    static func run(profileID: String, careCatID: UUID?, keepsCareRecord: Bool) {
+        guard let profile = UUID(uuidString: profileID) else { return }
+        func matches(_ value: String?) -> Bool {
+            value.flatMap(UUID.init(uuidString:)) == profile
+        }
+        let care = CareHandoffStore.shared
+        let evacuation = EvacuationStore.shared
+        if keepsCareRecord {
+            guard let careCatID else { return }
+            // The record no longer names the deleted profile.
+            CatCareStore.shared.update { state in
+                for index in state.cats.indices where state.cats[index].catID == careCatID
+                    && state.cats[index].profileID == profile {
+                    state.cats[index].profileID = nil
+                }
+            }
+            if care.plan.cats.contains(where: { matches($0.profileID) }) {
+                care.update { plan in
+                    for index in plan.cats.indices where matches(plan.cats[index].profileID) {
+                        plan.cats[index].profileID = nil
+                        plan.cats[index].toolCatID = careCatID
+                    }
+                }
+            }
+            if evacuation.plan.cats.contains(where: { matches($0.profileID) }) {
+                evacuation.update { plan in
+                    for index in plan.cats.indices where matches(plan.cats[index].profileID) {
+                        plan.cats[index].profileID = nil
+                        plan.cats[index].toolCatID = careCatID
+                    }
+                }
+            }
+            return
+        }
+        if care.plan.cats.contains(where: { matches($0.profileID) }) {
+            care.update { $0.cats.removeAll { matches($0.profileID) } }
+        }
+        let evacuationIDs = evacuation.plan.cats.filter { matches($0.profileID) }.map(\.id)
+        if !evacuationIDs.isEmpty {
+            let departed = CatFarewell.departedIdentifiers()
+            evacuation.update { plan in evacuationIDs.forEach { plan.removeCat($0, departed: departed) } }
+        }
+        for key in Set([profileID, profileID.uppercased()]) {
+            try? CatPreparednessStore.shared.delete(for: key)
+            try? LostCatDraftStore.shared.delete(for: key)
+        }
+        let ids = Set([careCatID, profile].compactMap { $0 })
+        let now = Date()
+        CatCareStore.shared.update { state in
+            for index in state.cats.indices where state.cats[index].deletedAt == nil
+                && (ids.contains(state.cats[index].catID) || state.cats[index].profileID == profile) {
+                state.cats[index].deletedAt = now
+                // Its photos are named no more, so their files leave too
+                // (CatCareStore removes a file only when nothing names it).
+                state.cats[index].facePhoto = nil
+                state.cats[index].bodyPhoto = nil
+                for entry in state.cats[index].vaccinations.indices {
+                    state.cats[index].vaccinations[entry].proof = nil
+                }
+                state.cats[index].detachedVaccinations = nil
+            }
+        }
+        let vet = VeterinaryVisitStore.shared
+        Task {
+            guard let visits = try? await vet.visits() else { return }
+            for visit in visits where ids.contains(visit.catID) {
+                try? await vet.delete(visitID: visit.id, expectedRevision: visit.revision)
+            }
+        }
+    }
+}
+
 /// Test builds only: the day a cat passed away (ねこのまど_ペットロスの方針_1028).
 /// Kept on this iPhone until the saved records can hold it. Nothing is
 /// deleted: the photos and records stay; the age stops at this day.
@@ -277,9 +365,12 @@ struct CatCareDetailView: View {
             // the loaded cat in the same update, so it does not count.
             .sensoryFeedback(.success, trigger: careCompletion, condition: CareCompletion.justCompleted)
             .alert(deleteTitle, isPresented: $showsDeleteConfirmation) { deleteActions } message: {
-                // 11/7: what goes (removeProfile drops the profile and which
-                // photos are this cat), what stays, and that it is final.
-                Text("名前・誕生日と、この子に分けた写真の記録が消えます。写真アプリの写真とツールの記録は残ります。元に戻せません。")
+                // 11/7: what goes, what stays, and that it is final. 11/21: the
+                // tools' records of this cat go too (CatProfileDeletionCleanup).
+                // A cat in the family notebook stays the family's cat.
+                Text(sharedWithFamily
+                     ? "このiPhoneの、この子のプロフィールが消えます。家族の手帳のこの子と、書いたことは残ります。元に戻せません。"
+                     : "この子の記録と、ツールに書いたことが消えます。写真アプリの写真は残ります。元に戻せません。")
             }
             .confirmationDialog("家族の手帳とのつながりを外しますか？", isPresented: $confirmsUnlink, titleVisibility: .visible) {
                 Button("つながりを外す", role: .destructive) { unlinkFromFamily() }
@@ -381,7 +472,10 @@ struct CatCareDetailView: View {
             LostCatPhotoCropView(image: request.image) { data in
                 guard let jpeg = CatCareFormat.cleanJPEG(data),
                       let ref = store.savePhoto(jpeg, sourceAssetID: nil, origin: request.origin) else { return false }
-                return setPhoto(ref, request.role)
+                let kept = setPhoto(ref, request.role)
+                // 11/21: a copy not kept does not stay behind.
+                if !kept { store.discardPhoto(ref) }
+                return kept
             }
         }
         .sheet(isPresented: $showsFarewellEditor) {
@@ -1010,10 +1104,25 @@ struct CatCareDetailView: View {
     private func delete(_ profile: CatProfilePresentation) {
         isDeleting = true
         deleteFailed = false
+        // Read before the profile goes: whether this is the family's cat.
+        let shared = sharedWithFamily
         Task {
             let deleted = await profileActions.deleteProfile(profile.identifier)
             isDeleting = false
             if deleted {
+                // 11/21: what the tools kept for this cat goes too, so the
+                // cat does not come back as a page of its own.
+                CatProfileDeletionCleanup.run(profileID: profile.identifier, careCatID: catID,
+                                              keepsCareRecord: shared)
+                if shared { familyNotebook.forgetDeletedProfile(profile.identifier) }
+                // The family's cat keeps its 旅立った日, under the key its
+                // page uses from now on; a cat that is gone keeps none.
+                let day = CatFarewell.days(farewellJSON)[subject.key]
+                var days = CatFarewell.setting(nil, for: subject.key, in: farewellJSON)
+                if shared, let catID, let day {
+                    days = CatFarewell.setting(day, for: "tool-" + catID.uuidString, in: days)
+                }
+                farewellJSON = days
                 dismiss()
             } else { deleteFailed = true }
         }
@@ -1179,6 +1288,12 @@ struct CatCareDetailView: View {
         savedDraft = draft
         storedDraft = draft
         microchipInvalid = false
+        // 11/21: a number still being typed comes back with the page.
+        if let unfinished = CatCareUnfinishedMicrochip.numbers[record.catID] {
+            draft.microchipStatus = .recorded
+            draft.microchip = unfinished
+            microchipInvalid = true
+        }
     }
 
     /// Saves what changed. A microchip number that is not 15 digits yet is
@@ -1189,14 +1304,20 @@ struct CatCareDetailView: View {
         if draft.microchipStatus != .recorded {
             value.microchip = ""
             microchipInvalid = false
+            CatCareUnfinishedMicrochip.numbers[catID] = nil
         } else if let chip = CatCareLimits.normalizedMicrochip(draft.microchip), !chip.isEmpty {
             value.microchip = chip
             microchipInvalid = false
+            CatCareUnfinishedMicrochip.numbers[catID] = nil
         } else {
             // 「入っている」 with no full number yet: keep what was saved.
             value.microchipStatus = savedDraft.microchipStatus
             value.microchip = savedDraft.microchip
-            microchipInvalid = !draft.microchip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let typed = draft.microchip.trimmingCharacters(in: .whitespacesAndNewlines)
+            microchipInvalid = !typed.isEmpty
+            // 11/21: kept while the app runs, so leaving the page or
+            // switching cats does not lose the digits typed so far.
+            CatCareUnfinishedMicrochip.numbers[catID] = typed.isEmpty ? nil : draft.microchip
         }
         // 11/20: a cat no longer in the file stores nothing; that is not saved.
         var written = false
@@ -1886,6 +2007,15 @@ struct CatCareListEntrySheet: View {
     @State private var opensProof = false
     @State private var removesProof = false
     @State private var message: String?
+    /// 11/21: one tap saves once (a second tap made a second entry).
+    @State private var saved = false
+    /// 11/21: what the sheet opened with, so closing with changes asks first.
+    @State private var opened: [String]?
+    @State private var confirmsDiscard = false
+    /// 11/21: photos picked on this sheet; any not kept leave with it.
+    @State private var pickedHere: [CatCarePhotoRef] = []
+    /// 11/21: a picked photo still being read; 追加 waits for it.
+    @State private var loadingProof = false
 
     var body: some View {
         NavigationStack {
@@ -1933,7 +2063,7 @@ struct CatCareListEntrySheet: View {
                         }
                         .contextMenu { Button("写真を外す", role: .destructive) { removesProof = true } }
                         .confirmationDialog("写真を外しますか？", isPresented: $removesProof) {
-                            Button("写真を外す", role: .destructive) { proof = nil }
+                            Button("写真を外す", role: .destructive) { replaceProof(nil) }
                             Button("キャンセル", role: .cancel) { }
                         }
                         .fullScreenCover(isPresented: $opensProof) {
@@ -1957,26 +2087,42 @@ struct CatCareListEntrySheet: View {
             .announcesWhenShown(message)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button(editor.entryID == nil ? "追加" : "保存") { save() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { if hasChanges { confirmsDiscard = true } else { close() } }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(editor.entryID == nil ? "追加" : "保存") { save() }.disabled(saved || loadingProof)
+                }
                 if let entryID = editor.entryID {
                     ToolbarItem(placement: .bottomBar) {
                         Button("この記録を削除", role: .destructive) {
-                            dismiss()
+                            close()
                             NotificationCenter.default.post(name: Self.deleteRequested, object: entryID)
                         }
                         .accessibilityIdentifier("cat-care-delete-entry")
                     }
                 }
             }
-            .onAppear(perform: fillFromRecord)
+            .onAppear {
+                guard opened == nil else { return }
+                fillFromRecord()
+                opened = snapshot
+            }
+            // 11/21: typed words are not lost to a swipe; キャンセル asks.
+            .interactiveDismissDisabled(hasChanges)
+            .confirmationDialog("入力した内容を破棄しますか？", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("破棄する", role: .destructive) { close() }
+                Button("入力を続ける", role: .cancel) {}
+            }
             .fullScreenCover(isPresented: $showsCamera) {
                 CatCareCameraView { image in
                     showsCamera = false
                     guard let image else { return }
                     // Re-encoding drops metadata. The shot stays in this app, not in Photos.
                     if let data = image.jpegData(compressionQuality: 0.95), let jpeg = CatCareFormat.cleanJPEG(data) {
-                        proof = store.savePhoto(jpeg, sourceAssetID: nil, origin: .camera)
+                        if let made = store.savePhoto(jpeg, sourceAssetID: nil, origin: .camera) {
+                            pickedHere.append(made); replaceProof(made)
+                        } else { message = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。" }
                     } else {
                         message = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。"
                     }
@@ -1985,10 +2131,14 @@ struct CatCareListEntrySheet: View {
             }
             .onChange(of: proofItem) { _, item in
                 guard let item else { return }
+                loadingProof = true
                 Task {
+                    defer { loadingProof = false }
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let jpeg = CatCareFormat.cleanJPEG(data) {
-                        proof = store.savePhoto(jpeg, sourceAssetID: item.itemIdentifier, origin: .photos)
+                        if let made = store.savePhoto(jpeg, sourceAssetID: item.itemIdentifier, origin: .photos) {
+                            pickedHere.append(made); replaceProof(made)
+                        } else { message = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。" }
                     } else {
                         message = "写真を読み込めませんでした。別の写真を選んでください。"
                     }
@@ -2008,7 +2158,9 @@ struct CatCareListEntrySheet: View {
         case .weight:
             guard let entry = record.weights.first(where: { $0.id == entryID }) else { return }
             date = dateOf(entry.measuredOn)
-            gramsText = String(format: "%.2f", Double(entry.grams) / 1000)
+            // 11/21: three places when the grams need them (4.235 kg was
+            // shown as 4.24 and saved back as 4,240 g).
+            gramsText = String(format: entry.grams % 10 == 0 ? "%.2f" : "%.3f", Double(entry.grams) / 1000)
         case .medication:
             guard let entry = record.medications.first(where: { $0.id == entryID }) else { return }
             name = entry.name; dose = entry.dose; schedule = entry.schedule
@@ -2021,13 +2173,40 @@ struct CatCareListEntrySheet: View {
         }
     }
 
+    /// What can be typed or picked here, to tell a change from the opened sheet.
+    private var snapshot: [String] {
+        [gramsText, name, dose, schedule, food, amount, proof?.fileName ?? "",
+         CatCareDay(date: date).map { "\($0.year)-\($0.month)-\($0.day)" } ?? ""]
+    }
+
+    private var hasChanges: Bool { !saved && opened != nil && snapshot != opened }
+
+    /// A photo picked here and then replaced or removed leaves at once.
+    private func replaceProof(_ next: CatCarePhotoRef?) {
+        if let old = proof, old != next, pickedHere.contains(old) {
+            store.discardPhoto(old)
+            pickedHere.removeAll { $0 == old }
+        }
+        proof = next
+    }
+
+    /// Closing without saving: photos picked here are not kept.
+    private func close() {
+        pickedHere.forEach { store.discardPhoto($0) }
+        pickedHere = []
+        dismiss()
+    }
+
     private func save() {
-        guard let day = CatCareDay(date: date) else { return }
+        guard !saved else { return }
+        guard let day = CatCareDay(date: date) else { message = "日付を確かめてください。"; return }
         let replacing = editor.entryID
         switch editor.kind {
         case .weight:
             // kg, as in the photo memo. Full-width digits and a comma also work.
             let half = gramsText.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? gramsText
+            // 11/21: 「-4」 is not 4 kg.
+            guard !half.contains("-") else { message = "体重はkgの数字で入れてください（例：4.2）。"; return }
             let number = half.replacingOccurrences(of: ",", with: ".").filter { $0.isASCII && ($0.isNumber || $0 == ".") }
             guard let kilograms = Double(number), kilograms > 0,
                   let today = CatCareDay(date: Date()),
@@ -2047,6 +2226,10 @@ struct CatCareListEntrySheet: View {
             }
             onSave(.meal(time: name, food: food, amount: amount, replacing: replacing))
         }
+        saved = true
+        // Photos picked here and not kept (picked again before saving) leave.
+        pickedHere.filter { $0 != proof }.forEach { store.discardPhoto($0) }
+        pickedHere = []
         dismiss()
     }
 }
@@ -2107,8 +2290,12 @@ struct CatCareIdentifyingPhotoSheet: View {
 
     private func save(_ jpeg: Data, assetID: String?) -> Bool {
         guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }
-        guard let catID = store.ensureRecord(for: subject)?.catID else { onSaved(false); return false }
+        guard let catID = store.ensureRecord(for: subject)?.catID else {
+            store.discardPhoto(ref); onSaved(false); return false
+        }
         let saved = store.setIdentifyingPhoto(ref, role, catID: catID)
+        // 11/21: a copy not kept does not stay behind.
+        if !saved { store.discardPhoto(ref) }
         onSaved(saved)
         return saved
     }
@@ -2830,19 +3017,10 @@ extension CatCareFormat {
 
     /// Re-encodes to JPEG, which drops location and other metadata.
     static func cleanJPEG(_ data: Data) -> Data? {
-        guard let image = UIImage(data: data) else { return nil }
-        let maxSide: CGFloat = 2048
-        let scale = min(1, maxSide / max(image.size.width, image.size.height))
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        // Scale 1 and standard range: 2048 points must stay 2048 pixels (the
-        // screen scale made 6144, which the save server refuses) and carry no
-        // HDR second picture.
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.preferredRange = .standard
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-        return resized.jpegData(compressionQuality: 0.85)
+        // 11/21: read at most 2048 px straight from the file (a 48 MP photo
+        // was decoded whole, about 190 MB), upright, without the photo's
+        // place or other details. ImageIO's copy carries no HDR picture.
+        VeterinaryCapture.copy(of: data)
     }
 }
 

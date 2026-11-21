@@ -2125,6 +2125,43 @@ extension ProductionGroupWindowClient {
         return record
     }
 
+    /// 11/21: after 機種変更 the family notebook can use the recovered person
+    /// (FamilyNotebookIdentityChoice), another person on the relay than this
+    /// client's usual one. Deleting this person's data deletes that person
+    /// too, signed by its own device, with its own receipt kept in its own
+    /// store (`store`, the recovery root's Keychain): a lost reply is answered
+    /// by the same operation, never a second one. Once accepted, its keys in
+    /// that store are removed; the record stays.
+    func requestDeletion(of recovered: GroupDeviceIdentity, in store: any GroupSecretStore) async throws -> GroupIdentityDeletion {
+        var record: GroupIdentityDeletion
+        if let bytes = try store.read(Self.deletionAccount) {
+            record = try GroupWire.decode(GroupIdentityDeletion.self, bytes)
+        } else {
+            record = .init(operationID: UUID(),
+                           receipt: GroupWire.base64(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }))
+            record.personID = recovered.personID; record.deviceID = try? recovered.deviceID
+            try store.write(GroupWire.encode(record), account: Self.deletionAccount, createOnly: true)
+        }
+        if record.acceptedAt == nil {
+            guard recovered.registered, try !isRevoked(recovered) else { throw GroupClientError.authenticationRequired }
+            let input = DeletionInput(operationID: record.operationID.uuidString.lowercased(), receipt: record.receipt)
+            let reply = try GroupWire.decode(DeletionReply.self,
+                await raw(Self.deletionPath, body: GroupWire.encode(input), identity: recovered))
+            guard reply.protocolVersion == 3, reply.requestID == record.operationID.uuidString.lowercased(),
+                  ["processing", "completed"].contains(reply.state),
+                  (reply.state == "completed") == (reply.completedAt != nil) else { throw GroupClientError.invalidResponse }
+            record.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
+            record.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            try store.write(GroupWire.encode(record), account: Self.deletionAccount, createOnly: false)
+        }
+        // Accepted: the recovered device's keys go; a Keychain error here is
+        // tried again by the next deletion, never shown as a failure.
+        for account in (try? store.accounts(prefix: "")) ?? [] where account != Self.deletionAccount {
+            try? store.remove(account)
+        }
+        return record
+    }
+
     /// 11/20: an accepted deletion whose local clean-up has not finished (the
     /// app closed, or a Keychain error, after the relay accepted it), with
     /// this store's keys removed again. nil when there is none, when it was

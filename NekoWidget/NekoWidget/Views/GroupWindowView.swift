@@ -3266,6 +3266,8 @@ struct GroupIdentityDeletionView: View {
         failure = nil
         let windowIDs = (try? await client.localWindowIDs()) ?? []
         do {
+            // 11/21: the person the notebook uses after 機種変更 goes too.
+            _ = try await FamilyNotebookServiceFactory.deleteRecoveredPerson(client)
             record = try await client.requestIdentityDeletion()
             // 11/20: accepted: the rest of the sharing state on this iPhone.
             await GroupIdentityDeletionLocalData.resumeIfNeeded()

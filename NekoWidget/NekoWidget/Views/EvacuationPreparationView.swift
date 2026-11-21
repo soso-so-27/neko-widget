@@ -82,10 +82,10 @@ struct EvacuationPreparationView: View {
                         }
                         .accessibilityIdentifier("evacuation-destinations-open")
                     }
-                    if !store.plan.cats.isEmpty {
+                    if !livingCats.isEmpty {
                         // 11/8: the show screen in one tap, for each cat.
                         Section {
-                            ForEach(store.plan.cats) { cat in
+                            ForEach(livingCats) { cat in
                                 Button("\(name(of: cat))を見せる") { show(cat) }
                                 .disabled(store.saveError != nil)
                                 .accessibilityIdentifier("evacuation-show-\(cat.id.uuidString)")
@@ -205,9 +205,14 @@ struct EvacuationPreparationView: View {
         return ("\(ready) / \(needed.count)", true, false)
     }
 
+    /// 11/21: a cat whose 旅立った日 is recorded is not offered to show.
+    private var livingCats: [EvacuationCat] {
+        store.plan.livingCats(departed: CatFarewell.departedIdentifiers())
+    }
+
     /// 「猫の情報」's value: 「未記入」, a cat with no photo to tell it apart, or the names.
     private var catsState: String {
-        let cats = store.plan.cats
+        let cats = livingCats
         if cats.isEmpty { return ToolEmptyValue.unwritten }
         let noPhoto = cats.filter { $0.identificationPhoto(store: store) == nil }.map { name(of: $0) }
         if !noPhoto.isEmpty { return "写真なし：" + noPhoto.joined(separator: "、") }
@@ -872,7 +877,7 @@ private struct EvacuationCatView: View {
             .navigationDestination(item: $preview) { EvacuationDisplayView(record: $0.record) }
             .confirmationDialog("この子の避難用の記録を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("避難用の記録を削除", role: .destructive) {
-                    if store.update({ $0.removeCat(id) }) {
+                    if store.update({ $0.removeCat(id, departed: CatFarewell.departedIdentifiers()) }) {
                         if let onDeleted { onDeleted() } else { dismiss() }
                     }
                 }

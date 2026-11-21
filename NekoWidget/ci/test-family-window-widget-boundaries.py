@@ -3982,11 +3982,11 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("openPacking = true", review)
         self.assertIn('Button("閉じる")', view)
         # Amounts the app wrote follow the cats; the owner's amounts never change.
-        follow = section(plan, "mutating func followCatCount()", "mutating func followMedicines(")
+        follow = section(plan, "mutating func followCatCount(", "mutating func followMedicines(")
         self.assertIn("(1...30).contains(where: { Self.recommendedQuantity(title, cats: $0) == quantity })", follow)
         self.assertIn("carriedIDs.remove(supplies[index].id)", follow)
-        self.assertIn("followCatCount()", section(plan, "mutating func removeCat(", "mutating func followCatCount()"))
-        self.assertIn("next.followCatCount()", section(store, "func addCat(", "func refreshCandidates("))
+        self.assertIn("followCatCount(departed: departed)", section(plan, "mutating func removeCat(", "mutating func followCatCount("))
+        self.assertIn("next.followCatCount(departed: CatFarewell.departedIdentifiers())", section(store, "func addCat(", "func refreshCandidates("))
         medicines = section(plan, "mutating func followMedicines(", "mutating func toggleCarried(")
         self.assertIn('if supplies[index].title.hasPrefix("薬："), supplies[index].title != title {', medicines)
         # The checklist follows 「この子のこと」 each time it opens.
@@ -4195,7 +4195,7 @@ class EvacuationRoundTwoTests(unittest.TestCase):
         self.assertIn(".filter { $0.hasPrefix(EvacuationScheduledNotice.prefix) }", notice)
         self.assertIn("center.removePendingNotificationRequests(withIdentifiers: old)", notice)
         self.assertIn('static let prefix = "evacuation."', self.plan)
-        self.assertIn("let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed) : []", notice)
+        self.assertIn("let wanted = isOn ? plan.notices(now: now, dismissedAt: dismissed, departed: CatFarewell.departedIdentifiers()) : []", notice)
         # The review notice counts as the in-app note: 「閉じる」 moves both.
         self.assertIn('nonisolated static let dismissedKey = "evacuation-review-reminder-dismissed"', notice)
         self.assertIn('@AppStorage("evacuation-review-reminder-dismissed")', self.view)
@@ -7757,7 +7757,9 @@ class IdentifyingPhotosOnePlace1109Tests(unittest.TestCase):
         # A chosen or cropped photo is a clean copy kept by 「この子のこと」.
         self.assertIn("guard let ref = store.savePhoto(jpeg, sourceAssetID: assetID, origin: .photos) else { return false }",
                       sheet)
-        self.assertIn("guard let catID = store.ensureRecord(for: subject)?.catID else { onSaved(false); return false }", sheet)
+        self.assertIn("guard let catID = store.ensureRecord(for: subject)?.catID else {"
+                      "\n            store.discardPhoto(ref); onSaved(false); return false", sheet)
+        self.assertIn("if !saved { store.discardPhoto(ref) }", sheet)
         self.assertIn("let saved = store.setIdentifyingPhoto(ref, role, catID: catID)", sheet)
         self.assertIn("LostCatPhotoCropView(image: request.image) { data in", detail)
         self.assertIn("guard let jpeg = CatCareFormat.cleanJPEG(data),", detail)

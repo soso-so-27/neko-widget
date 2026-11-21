@@ -98,7 +98,9 @@ class CatLimitTests(unittest.TestCase):
 
     def test_import_brings_the_first_ten_and_says_so(self):
         self.assertIn("func limitedToCatProfileLimit() -> (transfer: Self, wasLimited: Bool) {", TRANSFER)
-        self.assertIn("let kept = Array(profiles.prefix(CatProfileLimit.maximumLiving))", TRANSFER)
+        # 11/21: living cats only; a departed cat in the file always comes.
+        self.assertIn("return living <= CatProfileLimit.maximumLiving", TRANSFER)
+        self.assertIn("if departed.contains(entry.id.uuidString) { return true }", TRANSFER)
         # File validation still accepts what older builds wrote.
         self.assertIn("guard profiles.count <= 100, Set(profiles.map(\\.id)).count == profiles.count else {", TRANSFER)
         self.assertIn("entry.name.count <= CatNameText.storedMaximumCharacters,", TRANSFER)

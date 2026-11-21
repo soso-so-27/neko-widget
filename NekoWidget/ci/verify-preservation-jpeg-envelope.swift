@@ -57,12 +57,17 @@ func size(_ data: Data) -> (Int, Int) {
         check(!PreservationJPEGEnvelope.accepts(Data("not a photo".utf8)), "non-JPEG refused")
         check(PreservationJPEGEnvelope.conforming(Data("not a photo".utf8)) == nil, "unreadable stays an error")
 
-        // The source that made the 6144 px files: the renderer must be 1x.
+        // The source that made the 6144 px files: the size must be in pixels.
+        // 11/21: cleanJPEG uses ImageIO's copy, which counts pixels and
+        // never decodes the whole photo.
         let root = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
         let view = try! String(contentsOf: root.appendingPathComponent("NekoWidget/Views/CatCareView.swift"), encoding: .utf8)
         guard let start = view.range(of: "static func cleanJPEG") else { return check(false, "cleanJPEG present") }
-        let body = view[start.lowerBound...].prefix(900)
-        check(body.contains("format.scale = 1") && body.contains("UIGraphicsImageRenderer(size: size, format: format)"),
-              "cleanJPEG renders at scale 1")
+        let body = view[start.lowerBound...].prefix(600)
+        check(body.contains("VeterinaryCapture.copy(of: data)") && !body.contains("UIImage(data:"),
+              "cleanJPEG reads at most 2048 px")
+        let capture = try! String(contentsOf: root.appendingPathComponent("NekoWidget/Views/VeterinaryCapture.swift"), encoding: .utf8)
+        check(capture.contains("kCGImageSourceThumbnailMaxPixelSize: copyPixels")
+              && capture.contains("static let copyPixels: CGFloat = 2048"), "the copy is 2048 px at most")
     }
 }

@@ -265,8 +265,8 @@ final class LostCatDraftStore: ObservableObject {
             for (role, data) in [("face", newInformation?.facePhoto), ("body", newInformation?.bodyPhoto)] {
                 guard (role == "face" ? migrated.faceFileName : migrated.bodyFileName) == nil,
                       let data else { continue }
-                guard let image = UIImage(data: data),
-                      let jpeg = image.jpegData(compressionQuality: 0.86) else { throw CocoaError(.fileReadCorruptFile) }
+                // 11/21: at most 2048 px, read without decoding the whole photo.
+                guard let jpeg = VeterinaryCapture.copy(of: data) else { throw CocoaError(.fileReadCorruptFile) }
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let name = UUID().uuidString + ".jpg"
                 let destination = directory.appendingPathComponent(name)
@@ -331,8 +331,8 @@ final class LostCatDraftStore: ObservableObject {
     func replacePhoto(_ data: Data, role: CatPreparednessStore.PhotoRole,
                       draft: LostCatDraft, for key: String) throws -> LostCatDraft {
         try requireReadableManifest()
-        guard let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.86)
-        else { throw CocoaError(.fileReadCorruptFile) }
+        // 11/21: at most 2048 px, read without decoding the whole photo.
+        guard let jpeg = VeterinaryCapture.copy(of: data) else { throw CocoaError(.fileReadCorruptFile) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = UUID().uuidString + ".jpg"
         let url = directory.appendingPathComponent(name)

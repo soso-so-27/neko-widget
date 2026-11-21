@@ -21,9 +21,15 @@ enum FamilyNotebookToolBridge {
                         snapshot: FamilyNotebookSnapshot, now: Date = Date()) throws -> FamilyNotebookImportPlan {
         let next = try FamilyNotebookMigration.prepare(source: after, familyID: snapshot.familyID, mappings: snapshot.activeMappings, now: now).plan
         let old = try FamilyNotebookMigration.prepare(source: before, familyID: snapshot.familyID, mappings: next.mappings, now: now).plan
-        let previous = Dictionary(uniqueKeysWithValues: old.entries.map { ($0.target,$0) })
-        let current = Dictionary(uniqueKeysWithValues: next.entries.map { ($0.target,$0) })
-        var entries = next.entries.filter { previous[$0.target]?.value != $0.value }
+        // 11/21: a tool's change is about the tool's own rows only. The cat's
+        // own fields a memo also carries (name, water, litter, temperament,
+        // vet) are for the first import: as a change they overwrote
+        // 「この子のこと」 for the whole family, and a deleted memo became a
+        // tombstone of the cat itself (the cat vanished for everyone).
+        let ownRows = { (entry: FamilyNotebookImportEntry) in entry.target.collection != .cat }
+        let previous = Dictionary(uniqueKeysWithValues: old.entries.filter(ownRows).map { ($0.target,$0) })
+        let current = Dictionary(uniqueKeysWithValues: next.entries.filter(ownRows).map { ($0.target,$0) })
+        var entries = next.entries.filter { ownRows($0) && previous[$0.target]?.value != $0.value }
         // Only removal of a stable row becomes a tombstone. Field clearing is
         // represented by .clear and does not delete neighboring fields.
         func row(_ target: FamilyNotebookTarget) -> FamilyNotebookTarget {

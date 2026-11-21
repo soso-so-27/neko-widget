@@ -1871,11 +1871,26 @@ final class AppViewModel: ObservableObject {
                 let reconciled = current.reconcilingLegacyUnscoped(
                     lifeReference: self.settings.catLifeReference, curation: self.catCandidateCuration
                 )
-                let profiles = try preview.transfer.applying(
+                var profiles = try preview.transfer.applying(
                     to: reconciled, expectedRevision: preview.expectedIdentityRevision,
                     legacyCuration: self.catCandidateCuration,
                     legacyLifeReference: self.settings.catLifeReference
                 )
+                // 11/21: a file that brings a second cat to a household of
+                // one is the same boundary as adding a cat by hand: the only
+                // cat keeps the photo its page shows (createCatProfile).
+                if reconciled.profiles.count == 1, profiles.profiles.count > 1 {
+                    let shown = self.singleCatShownPhotoIdentifier()
+                    var pinned = reconciled
+                    if shown?.profileID == pinned.singleCatProfileID {
+                        pinned.pinSingleCatPhotoBeforeAnotherProfile(shownPhotoIdentifier: shown?.photo)
+                    }
+                    profiles = try preview.transfer.applying(
+                        to: pinned, expectedRevision: preview.expectedIdentityRevision,
+                        legacyCuration: self.catCandidateCuration,
+                        legacyLifeReference: self.settings.catLifeReference
+                    )
+                }
                 let proposed = try preview.transfer.applyingConfirmedPhotos(to: profiles,
                     selections: preview.selectedPhotoIdentifiers,
                     candidates: self.transferPhotoCandidates(preview.transfer))

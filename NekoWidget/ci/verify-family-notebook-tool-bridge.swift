@@ -30,6 +30,19 @@ enum FamilyNotebookToolBridgeVerifier {
         try check(try FamilyNotebookToolBridge.apply(receiver.snapshot(), to: projected) == projected, "repeated handoff receive is idempotent")
         var disclosure = CareHandoffDisclosure(); disclosure.catIDs = [shared.id]
         try check(!disclosure.commonFields(plan: projected).contains(where: { $0.1.contains("PRIVATE") }), "selected shared cat cannot disclose unrelated household request")
+        // 11/21: a memo's change or removal never touches the cat itself.
+        var removed = projected; removed.cats.remove(at: 1)
+        let removal = try FamilyNotebookToolBridge.changes(
+            before: .init(handoff: FamilyNotebookToolBridge.selected(projected, snapshot: receiver.snapshot())),
+            after: .init(handoff: FamilyNotebookToolBridge.selected(removed, snapshot: receiver.snapshot())), snapshot: receiver.snapshot())
+        try check(!removal.entries.isEmpty && removal.entries.allSatisfy { $0.target.collection != .cat },
+                  "deleting a memo deletes the memo, never the family's cat")
+        var watered = projected; watered.cats[1].water = "別の水"; watered.cats[1].name = "別の名前"
+        let waterDelta = try FamilyNotebookToolBridge.changes(
+            before: .init(handoff: FamilyNotebookToolBridge.selected(projected, snapshot: receiver.snapshot())),
+            after: .init(handoff: FamilyNotebookToolBridge.selected(watered, snapshot: receiver.snapshot())), snapshot: receiver.snapshot())
+        try check(!waterDelta.entries.isEmpty && waterDelta.entries.allSatisfy { $0.target.collection != .cat },
+                  "a memo's edit never rewrites 「この子のこと」")
         var edited = projected; edited.cats[1].familyContext?.period = "受け手が直した期間"
         let delta = try FamilyNotebookToolBridge.changes(
             before: .init(handoff: FamilyNotebookToolBridge.selected(projected, snapshot: receiver.snapshot())),

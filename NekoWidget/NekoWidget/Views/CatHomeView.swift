@@ -502,7 +502,8 @@ struct CatHomeView: View {
     private func record(for cat: CatHomeCat) -> CatCareRecord? {
         switch cat.kind {
         case let .profile(profile):
-            careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
+            // 11/21: never a deleted record (a cat brought back by a file).
+            careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier && $0.deletedAt == nil }
         case let .toolCat(id):
             careStore.state?.cats.first { $0.catID == id && $0.deletedAt == nil }
         }

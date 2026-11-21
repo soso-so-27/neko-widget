@@ -22,6 +22,8 @@ struct VerifyEvacuationPlan {
         try noticeSchedule()
         try takenOnTheDay()
         try noticeChoiceTravelsWithThePlan()
+        try departedCats()
+        try pastDaysTakeNoPlace()
         print("Evacuation plan (避難に備える) decoding and rule checks passed")
     }
 
@@ -358,5 +360,49 @@ struct VerifyEvacuationPlan {
         plan.recordTaken(id, now: t0)
         try check(plan.lastCheckedAt == t0 && plan.lastReadyDate == t0, "a check records the day")
         try check(plan.carriedIDs == [plan.supplies[1].id] && plan.checkStartedAt == nil, "the list's own checks stay")
+    }
+
+    /// 11/21: a cat whose 旅立った日 is recorded is not counted, shown or reminded.
+    static func departedCats() throws {
+        var plan = EvacuationPlan()
+        let carrier = plan.supplies.firstIndex(where: { $0.title == "キャリー" })!
+        var living = EvacuationCat(); living.profileID = "A0000000-0000-0000-0000-000000000001"
+        var gone = EvacuationCat(); gone.profileID = "A0000000-0000-0000-0000-000000000002"
+        let tool = EvacuationCat()
+        plan.cats = [living, gone, tool]
+        let departed: Set<String> = [gone.profileID!, "tool-" + tool.id.uuidString]
+        try check(plan.livingCats(departed: departed).map(\.id) == [living.id], "only the living cat")
+        plan.followCatCount(departed: departed)
+        try check(plan.supplies[carrier].quantity == "1個", "one carrier for one living cat")
+        plan.followCatCount()
+        try check(plan.supplies[carrier].quantity == "3個（1匹に1つ）", "without days, every cat counts")
+        // An item kept for the departed cat sets no notice.
+        plan.createdAt = day(2026, 11, 1, hour: 10)
+        var item = EvacuationSupply(title: "むぎの薬", quantity: "1袋")
+        item.catID = gone.id
+        item.expiresAt = day(2027, 1, 20)
+        plan.supplies.append(item)
+        let now = day(2026, 11, 9), never = Date(timeIntervalSince1970: 0)
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo, departed: departed)
+                    .filter { $0.id.hasPrefix("evacuation.expiry.") }.isEmpty, "no notice for the departed cat's item")
+        try check(plan.notices(now: now, dismissedAt: never, calendar: tokyo)
+                    .filter { $0.id.hasPrefix("evacuation.expiry.") }.count == 1, "without days, the item has one")
+    }
+
+    /// 11/21: days already past never take the places of the days ahead.
+    static func pastDaysTakeNoPlace() throws {
+        var plan = EvacuationPlan()
+        plan.createdAt = day(2026, 11, 1, hour: 10)
+        plan.supplies = (0..<EvacuationScheduledNotice.expiryLimit + 5).map { index in
+            var item = EvacuationSupply(title: "持ち物\(index)", quantity: "1個")
+            item.expiresAt = day(2026, 1, 1).addingTimeInterval(Double(index) * 86_400)
+            return item
+        }
+        var ahead = EvacuationSupply(title: "フード", quantity: "1袋")
+        ahead.expiresAt = day(2027, 3, 1)
+        plan.supplies.append(ahead)
+        let notices = plan.notices(now: day(2026, 11, 9), dismissedAt: Date(timeIntervalSince1970: 0), calendar: tokyo)
+        try check(notices.filter { $0.id.hasPrefix("evacuation.expiry.") }.map(\.id) == ["evacuation.expiry.2027-02-15"],
+                  "the day ahead is set though many days are past")
     }
 }

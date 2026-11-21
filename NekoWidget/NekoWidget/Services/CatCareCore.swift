@@ -519,7 +519,10 @@ enum CatCareLimits {
 
     /// Digits only, exactly 15, or empty. Spaces and hyphens are removed.
     static func normalizedMicrochip(_ value: String) -> String? {
-        let digits = value.filter { !$0.isWhitespace && $0 != "-" }
+        // 11/21: ０–９ (pasted from a vet's paper) count as digits, as in
+        // the weight and the telephone number.
+        let half = value.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? value
+        let digits = half.filter { !$0.isWhitespace && !["-", "ー", "ｰ"].contains($0) }
         if digits.isEmpty { return "" }
         guard digits.count == 15, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         return digits
@@ -720,9 +723,27 @@ enum CatCareImport {
             if case let .photoMemo(noteID) = entry.source { return noteID }
             return nil
         })
-        for weight in source.weights where !known.contains(weight.noteID)
-            && CatCareLimits.gramsRange.contains(weight.grams)
-            && r.activeWeights.count < CatCareLimits.maximumWeights {
+        // 11/21: never a day after today; a memo corrected later corrects the
+        // weight it brought, unless the weight was changed here.
+        let today = CatCareDay(date: now)
+        for weight in source.weights {
+            let valid = CatCareLimits.gramsRange.contains(weight.grams) && today.map { weight.day <= $0 } ?? true
+            if let i = r.weights.firstIndex(where: { entry in
+                if case let .photoMemo(noteID) = entry.source { return noteID == weight.noteID && entry.deletedAt == nil }
+                return false
+            }) {
+                guard r.weights[i].editedBy == by else { continue }
+                if !valid {
+                    r.weights.markDeleted(r.weights[i].id, at: now, by: by)
+                } else if r.weights[i].measuredOn != weight.day || r.weights[i].grams != weight.grams {
+                    r.weights[i].measuredOn = weight.day
+                    r.weights[i].grams = weight.grams
+                    r.weights[i].editedAt = now
+                }
+                continue
+            }
+            guard !known.contains(weight.noteID), valid,
+                  r.activeWeights.count < CatCareLimits.maximumWeights else { continue }
             r.weights.append(.init(measuredOn: weight.day, grams: weight.grams,
                                    source: .photoMemo(noteID: weight.noteID),
                                    editedAt: now, editedBy: by))

@@ -218,19 +218,28 @@ struct EvacuationPlan: Codable, Equatable {
         return added
     }
 
-    mutating func removeCat(_ id: UUID) {
+    /// 11/21: the cats still to take along; one whose 旅立った日 is recorded
+    /// (by its profile or as a tool cat) is not shown, printed or counted.
+    /// The app passes CatFarewell.departedIdentifiers() (this file is also
+    /// built alone by the CI checks, without the app's views).
+    func livingCats(departed: Set<String>) -> [EvacuationCat] {
+        cats.filter { !$0.isDeparted(departed) }
+    }
+
+    mutating func removeCat(_ id: UUID, departed: Set<String> = []) {
         cats.removeAll { $0.id == id }
         let removed = Set(supplies.filter { $0.catID == id }.map(\.id))
         supplies.removeAll { $0.catID == id }
         carriedIDs.subtract(removed)
-        followCatCount()
+        followCatCount(departed: departed)
     }
 
     /// Amounts this app wrote follow the number of cats (one carrier each, food
     /// for each). An amount the owner wrote is never changed. A changed amount
     /// is checked again, like an edited item.
-    mutating func followCatCount() {
-        let count = max(cats.count, 1)
+    mutating func followCatCount(departed: Set<String> = []) {
+        // 11/21: a cat whose 旅立った日 is recorded needs no carrier or food.
+        let count = max(livingCats(departed: departed).count, 1)
         for index in supplies.indices where supplies[index].catID == nil {
             let title = supplies[index].title.trimmingCharacters(in: .whitespacesAndNewlines)
             let current = Self.recommendedQuantity(title, cats: count)
@@ -338,7 +347,8 @@ struct EvacuationPlan: Codable, Equatable {
     /// The notices 「見直しの時期に知らせる」 sets (round 2): the half-year review,
     /// and 14 days before each 期限 (one per day). Text only: no item and no
     /// cat's name, as the app's other notices. Only days still ahead.
-    func notices(now: Date = Date(), dismissedAt: Date, calendar: Calendar = .current) -> [EvacuationScheduledNotice] {
+    func notices(now: Date = Date(), dismissedAt: Date, calendar: Calendar = .current,
+                 departed: Set<String> = []) -> [EvacuationScheduledNotice] {
         func nineOClock(onOrAfter date: Date) -> Date? {
             guard let day = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0,
                                           of: date) else { return nil }
@@ -349,13 +359,21 @@ struct EvacuationPlan: Codable, Equatable {
             result.append(EvacuationScheduledNotice(id: EvacuationScheduledNotice.reviewID, date: at,
                                                     body: "避難の備えを見直す時期です。"))
         }
-        let days = Set(supplies.filter(\.isNeeded).compactMap { item -> Date? in
-            guard let expiry = item.expiryDate(calendar: calendar) else { return nil }
-            return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore, to: expiry)
-        })
-        for day in days.sorted().prefix(EvacuationScheduledNotice.expiryLimit) {
+        // 11/21: an item kept for a departed cat sets no notice.
+        let departedCats = Set(cats.filter { $0.isDeparted(departed) }.map(\.id))
+        let days = Set(supplies.filter { $0.isNeeded && !($0.catID.map(departedCats.contains) ?? false) }
+            .compactMap { item -> Date? in
+                guard let expiry = item.expiryDate(calendar: calendar) else { return nil }
+                return calendar.date(byAdding: .day, value: -EvacuationScheduledNotice.expiryDaysBefore, to: expiry)
+            })
+        // 11/21: days already past are dropped before the limit, so they
+        // never take the places of the days still ahead.
+        let ahead = days.compactMap { day -> (Date, Date)? in
             guard let at = calendar.date(bySettingHour: EvacuationScheduledNotice.hour, minute: 0, second: 0, of: day),
-                  at > now else { continue }
+                  at > now else { return nil }
+            return (day, at)
+        }.sorted { $0.0 < $1.0 }
+        for (day, at) in ahead.prefix(EvacuationScheduledNotice.expiryLimit) {
             let parts = calendar.dateComponents([.year, .month, .day], from: day)
             let id = EvacuationScheduledNotice.expiryPrefix
                 + String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
@@ -548,5 +566,16 @@ struct EvacuationDisclosure: Equatable {
         if medical { add("病歴・薬", cat.medicalText) }
         if contact { add("飼い主の連絡先", plan.contact) }
         return result
+    }
+}
+
+extension EvacuationCat {
+    /// 11/21: its 旅立った日 is recorded, under its profile or as a tool cat
+    /// (the keys CatCareSubject uses).
+    func isDeparted(_ departed: Set<String>) -> Bool {
+        // Identifiers are UUID text; their case is not relied on.
+        let keys = Set(departed.map { $0.lowercased() })
+        if let profileID, keys.contains(profileID.lowercased()) { return true }
+        return keys.contains("tool-" + (toolCatID ?? id).uuidString.lowercased())
     }
 }

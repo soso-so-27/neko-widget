@@ -391,7 +391,7 @@ struct PhotoMemoryNoteEditor: View {
                             .accessibilityIdentifier("memo-weight-cat-picker")
                     }
                     Toggle("測定日を指定", isOn: $weightDateKnown).accessibilityIdentifier("memo-weight-date-toggle")
-                    if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
+                    if weightDateKnown { DatePicker("測定日", selection: $weightDate, in: ...Date(), displayedComponents: .date) }
                 }
             }
                 .disabled(isSaving)
