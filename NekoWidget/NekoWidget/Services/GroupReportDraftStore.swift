@@ -117,6 +117,14 @@ final class GroupReportDraftStore {
         }
         return value
     }
+    /// 11/21e: one draft that is no longer needed (ProductionGroupReporting.pruneDrafts).
+    func remove(_ id: String) throws {
+        guard UUID(uuidString: id) != nil else { throw GroupSafetyError.invalidResponse }
+        let query = try statement("DELETE FROM reports WHERE id=?1")
+        defer { sqlite3_finalize(query) }
+        guard id.withCString({ sqlite3_bind_text(query, 1, $0, -1, transient) }) == SQLITE_OK,
+              sqlite3_step(query) == SQLITE_DONE else { throw GroupSafetyError.storageUnavailable }
+    }
     func write(_ value: GroupReportDraft, createOnly: Bool = false) throws {
         guard UUID(uuidString: value.record.id) != nil else { throw GroupSafetyError.invalidResponse }
         let encoder = PropertyListEncoder(); encoder.outputFormat = .binary

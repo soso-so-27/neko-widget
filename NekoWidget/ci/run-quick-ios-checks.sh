@@ -175,6 +175,7 @@ python3 ci/test-app-bugs-1121.py
 python3 ci/test-cats-1121b.py
 python3 ci/test-plus-1121c.py
 python3 ci/test-tools-1121d.py
+python3 ci/test-mado-1121e.py
 python3 ci/test-family-cat-link.py
 python3 ci/test-family-cat-order.py
 python3 ci/test-record-commit-notice-hang.py
