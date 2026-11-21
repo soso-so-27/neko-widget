@@ -665,7 +665,7 @@ private struct CatProfileCreationFlow: ViewModifier {
                 guard started else { return }
                 isStarted = false
                 guard CatProfileLimit.canAdd(presentation.profiles.map(\.identifier),
-                                             departed: Set(CatFarewell.days(farewellJSON).keys)) else {
+                                             departed: ToolCatDeparture.departed(farewellJSON)) else {
                     showsLimit = true
                     return
                 }
@@ -900,8 +900,9 @@ struct ToolCatPicker<Legacy: View>: View {
         Group {
             // 「猫」: the app shows no screen called 猫のプロフィール in ツール (11/7).
             Section {
-                // A cat whose day was recorded is not offered for a new plan.
-                ForEach(profiles.filter { CatFarewell.days(farewellJSON)[$0.identifier] == nil }) { profile in
+                // A cat whose day was recorded (here or by the family) is
+                // not offered for a new plan.
+                ForEach(profiles.filter { !ToolCatDeparture.isDeparted(id: $0.identifier, in: farewellJSON) }) { profile in
                     // A row that opens the cat's page: black text and a chevron, like a link.
                     Button { select(profile) } label: {
                         HStack {
@@ -918,7 +919,7 @@ struct ToolCatPicker<Legacy: View>: View {
                     // The same add screen as ツールの「＋」 when the cats are known.
                     if presentation != nil { addsCatWithPhoto = true }
                     else if !CatProfileLimit.canAdd(profiles.map(\.identifier),
-                                                    departed: Set(CatFarewell.days(farewellJSON).keys)) {
+                                                    departed: ToolCatDeparture.departed(farewellJSON)) {
                         showsLimit = true // 11/14: no name field at 10 cats
                     } else { name = ""; addsCat = true }
                 }
@@ -981,8 +982,26 @@ struct ToolStripCat: Identifiable, Equatable {
 
     /// A cat whose farewell day is recorded. A tool never opens it by itself,
     /// since opening makes a new record; the row and lists leave it out too (11/7).
+    /// 11/21: a cat without a profile and a day the family shared count too.
     func isDeparted(_ farewellJSON: String) -> Bool {
-        profile.map { CatFarewell.days(farewellJSON)[$0.identifier] != nil } ?? false
+        ToolCatDeparture.isDeparted(id: profile?.identifier ?? id, in: farewellJSON)
+    }
+}
+
+/// 11/21: the departed cats as the model counts them
+/// (CatFarewell.departedIdentifiers: this iPhone's days and the family's),
+/// with this iPhone's days read from the view's own @AppStorage copy so the
+/// view redraws when one is recorded. Keys are a profile's identifier or
+/// "tool-<id>" for a cat without a profile (CatHomeCat.farewellKey).
+enum ToolCatDeparture {
+    static func departed(_ farewellJSON: String) -> Set<String> {
+        Set(CatFarewell.days(farewellJSON).keys).union(CatFarewell.familyDays.keys)
+    }
+
+    static func isDeparted(id: String, in farewellJSON: String) -> Bool {
+        let keys = Set(departed(farewellJSON).map { $0.uppercased() })
+        let key = id.uppercased()
+        return keys.contains(key) || (UUID(uuidString: id) != nil && keys.contains("TOOL-" + key))
     }
 }
 
@@ -998,10 +1017,7 @@ struct ToolCatStrip: View {
     /// A cat whose day was recorded leaves the row, unless its page is the
     /// one open. Its plans stay; only the row stops offering it.
     private var shown: [ToolStripCat] {
-        let farewells = CatFarewell.days(farewellJSON)
-        return cats.filter { cat in
-            cat.id == selectedID || cat.profile.map { farewells[$0.identifier] == nil } ?? true
-        }
+        cats.filter { cat in cat.id == selectedID || !cat.isDeparted(farewellJSON) }
     }
 
     var body: some View {
