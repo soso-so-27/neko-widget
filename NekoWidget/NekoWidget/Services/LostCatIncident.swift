@@ -87,21 +87,42 @@ enum LostCatOffice: String, CaseIterable, Identifiable, Sendable {
 struct LostCatContactedOffice: Codable, Equatable, Sendable {
     var office: String
     var contactedAt: Date
+    /// 11/21: the calendar day shown when it was marked (yyyy-MM-dd), so the
+    /// day stays the same in another time zone. Absent on older drafts.
+    var contactedOn: String? = nil
 }
 
 /// What happened since the cat went missing. Every field is optional, so a
 /// later field can be added the same way.
 struct LostCatIncidentLog: Codable, Equatable, Sendable {
     var contactedOffices: [LostCatContactedOffice]? = nil
-    var nextCheckAt: Date? = nil
+    /// Saved under "nextCheckAt" as before. Read through `nextCheckAt`.
+    var savedNextCheckAt: Date? = nil
+    /// 11/21: the day chosen (yyyy-MM-dd), so it stays that day in another
+    /// time zone. Absent on older drafts: the saved instant is used.
+    var nextCheckOn: String? = nil
     var foundMessage: String? = nil
 
+    private enum CodingKeys: String, CodingKey {
+        case contactedOffices, savedNextCheckAt = "nextCheckAt", nextCheckOn, foundMessage
+    }
+
+    /// The next day to check, as a day on this iPhone's calendar.
+    var nextCheckAt: Date? {
+        get { savedNextCheckAt.map { LostCatText.shownDay($0, savedDay: nextCheckOn) } }
+        set {
+            savedNextCheckAt = newValue
+            nextCheckOn = newValue.map { LostCatText.dayKey($0) }
+        }
+    }
+
     var isEmpty: Bool {
-        (contactedOffices ?? []).isEmpty && nextCheckAt == nil && (foundMessage ?? "").isEmpty
+        (contactedOffices ?? []).isEmpty && savedNextCheckAt == nil && (foundMessage ?? "").isEmpty
     }
 
     func contactedAt(_ office: LostCatOffice) -> Date? {
-        contactedOffices?.last { $0.office == office.rawValue }?.contactedAt
+        guard let entry = contactedOffices?.last(where: { $0.office == office.rawValue }) else { return nil }
+        return LostCatText.shownDay(entry.contactedAt, savedDay: entry.contactedOn)
     }
 
     /// Offices this version knows; a code saved by a later version is kept, not counted.
@@ -113,7 +134,9 @@ struct LostCatIncidentLog: Codable, Equatable, Sendable {
                                calendar: Calendar = LostCatText.calendar) {
         let first = contactedCount == 0
         var list = (contactedOffices ?? []).filter { $0.office != office.rawValue }
-        if let day { list.append(LostCatContactedOffice(office: office.rawValue, contactedAt: day)) }
+        if let day {
+            list.append(LostCatContactedOffice(office: office.rawValue, contactedAt: day, contactedOn: LostCatText.dayKey(day)))
+        }
         contactedOffices = list.isEmpty ? nil : list
         if first, day != nil, nextCheckAt == nil {
             nextCheckAt = Self.nextDay(after: now, calendar: calendar)
@@ -149,6 +172,27 @@ enum LostCatText {
         var value = Calendar(identifier: .gregorian)
         value.locale = Locale(identifier: "ja_JP")
         return value
+    }
+
+    /// 11/21: the day a date shows on this iPhone, as yyyy-MM-dd.
+    static func dayKey(_ date: Date, calendar: Calendar = LostCatText.calendar) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    /// The saved instant while it still falls on the saved day here; after a
+    /// time-zone change, the start of the saved day on this calendar. A
+    /// missing or unreadable day keeps the instant (older drafts).
+    static func shownDay(_ instant: Date, savedDay: String?, calendar: Calendar = LostCatText.calendar) -> Date {
+        guard let savedDay, dayKey(instant, calendar: calendar) != savedDay else { return instant }
+        let parts = savedDay.split(separator: "-", omittingEmptySubsequences: false)
+        guard savedDay.count == 10, parts.count == 3,
+              let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              (1...9999).contains(year), (1...12).contains(month), (1...31).contains(day) else { return instant }
+        let components = DateComponents(year: year, month: month, day: day)
+        guard let date = calendar.date(from: components),
+              dayKey(date, calendar: calendar) == savedDay else { return instant }
+        return date
     }
 
     /// 「11月9日」, whatever the iPhone's region.

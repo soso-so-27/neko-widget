@@ -326,13 +326,23 @@ enum ReadablePreservationText {
         // 11/13: when the lost-cat flyer or post was last made.
         "flyerMadeAt": "チラシを作った日",
         // Round 2 (11/9): 避難に備えるの持ち物の期限.
-        "expiresAt": "期限"]
+        "expiresAt": "期限",
+        // 11/21: fields added since, and older ones that still read as English.
+        "expirySetAt": "期限を決めた日", "reviewRestartedAt": "見直しを始め直した日",
+        "madePeriod": "前のメモに書いた期間", "madeRequest": "前のメモに書いたお願い",
+        "contactSuggestion": "連絡先", "detachedPhotos": "残した写真", "entry": "記録", "isApproximate": "おおよそ",
+        "partialWeights": "体重（書きかけ）", "detachedVaccinations": "残したワクチンの記録",
+        "microchipAnswer": "マイクロチップの答え", "vaccinationAnswer": "ワクチンの答え", "numberEdit": "番号"]
     private static let bookkeeping: Set<String> = ["schemaVersion", "version", "revision", "id", "catID", "familyID", "deviceID", "ownerID", "generation", "deletedAt",
         "profileID", "toolCatID", "sourceNoteID", "sourceRevision", "familyRecordID", "familyDetached", "prefilledFields", "prefilledUsualFood", "noticeChoice",
         "mutationRevision", "memberships", "globalExcludedAssets", "legacyUnscoped", "mode", "photoAlbumLink", "keyPhotoLocalIdentifier",
         "archiveBindings", "sharedWindowIDs", "editedBy", "editedAt", "sourceAssetID", "origin", "sourcePhotoIdentifier", "source", "order", "status",
         // 11/20: expiresOn is the same 期限 as expiresAt, which is shown.
         "expiresOn",
+        // 11/21: the same day as the date beside it, which is shown; and
+        // links to the family's copy or the photo library.
+        "createdOn", "contactedOn", "nextCheckOn", "familyPhotoLink", "familyContext", "familyRetained",
+        "photoCloudIdentifier", "observedVaccinationIDs", "visitID",
         "recommendedFromCount", "photoRemoved", "pendingPhotoCleanup"]
     /// Stored codes shown as words (11/8: 「shelter」 read as English).
     private static let valueWords: [String: [String: String]] = [
@@ -369,6 +379,7 @@ enum ReadablePreservationText {
             else if let number = value as? NSNumber {
                 if CFGetTypeID(number) == CFBooleanGetTypeID() { lines.append(indentation + (number.boolValue ? "はい" : "いいえ")) }
                 else if let key, ["createdAt", "updatedAt", "writtenAt", "capturedAt", "date", "completedAt", "reviewedAt", "checkedAt", "confirmedAt", "lastSeenAt", "flyerMadeAt",
+                                        "expirySetAt", "reviewRestartedAt",
                                         "lastMadeAt", "expiresAt", "checkStartedAt", "lastCheckedAt", "contactedAt", "nextCheckAt"].contains(key) {
                     lines.append(indentation + ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: number.doubleValue)))
                 } else { lines.append(indentation + number.stringValue) }

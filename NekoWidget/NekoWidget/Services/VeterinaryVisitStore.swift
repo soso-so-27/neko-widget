@@ -49,6 +49,10 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
     /// When the memo was started and last edited. Absent on older memos.
     var createdAt: Date? = nil
     var updatedAt: Date? = nil
+    /// 11/21: the calendar day the memo was started, written with
+    /// `createdAt`, so 「書き始めた日」 stays that day in another time zone.
+    /// Absent on older memos: `createdDay` falls back to the instant.
+    var createdOn: String? = nil
 
     /// The day the memo was last edited, or started when never edited.
     var lastEditedAt: Date? { updatedAt ?? createdAt }
@@ -64,6 +68,11 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
             if first != second { return (first ?? "9999-12-31") < (second ?? "9999-12-31") }
             return $0.id.uuidString < $1.id.uuidString
         }
+    }
+    /// 「書き始めた日」 as yyyy-MM-dd: the stored day, else the instant's day here.
+    var createdDay: String? {
+        if let createdOn, PhotoMemoWeightValue.validDay(createdOn) { return createdOn }
+        return createdAt.map(Self.day)
     }
     /// Whole seconds, so a saved time reads back exactly the same.
     static func now() -> Date { Date(timeIntervalSinceReferenceDate: Date().timeIntervalSinceReferenceDate.rounded(.down)) }
@@ -306,7 +315,7 @@ actor VeterinaryVisitStore {
         received.map { visit in
             guard let old = local.first(where: { $0.id == visit.id }) else { return visit }
             var kept = visit
-            kept.createdAt = old.createdAt; kept.updatedAt = old.updatedAt
+            kept.createdAt = old.createdAt; kept.updatedAt = old.updatedAt; kept.createdOn = old.createdOn
             var unchanged = kept; unchanged.revision = old.revision
             return unchanged == old ? old : kept
         }
@@ -324,8 +333,9 @@ actor VeterinaryVisitStore {
         guard state.visits.filter({ $0.catID == catID && $0.completedAt != nil }).count < Self.maximumFinishedPerCat else {
             throw VeterinaryVisitError.visitLimit
         }
-        let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
+        var visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil, createdAt: VeterinaryVisit.now())
+        visit.createdOn = visit.createdAt.map(VeterinaryVisit.day)
         try create {
             state.visits.append(visit); try commit(state)
         }
@@ -355,7 +365,7 @@ actor VeterinaryVisitStore {
         } else {
             guard current.entries == draft.entries, current.catName == draft.catName else { throw VeterinaryVisitError.changed }
         }
-        next.createdAt = current.createdAt
+        next.createdAt = current.createdAt; next.createdOn = current.createdOn
         next.revision = UUID(); next.updatedAt = VeterinaryVisit.now()
         try validate(next); state.visits[index] = next; try commit(state)
         return next

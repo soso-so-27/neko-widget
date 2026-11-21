@@ -7557,8 +7557,10 @@ class LostCatRoundTwoTests(unittest.TestCase):
         self.assertIn("static let schemaVersion = 1", draft)
         self.assertIn("var incident: LostCatIncidentLog? = nil", draft)
         log = section(self.model, "struct LostCatIncidentLog: Codable, Equatable, Sendable {", "enum LostCatText {")
-        for field in ("var contactedOffices: [LostCatContactedOffice]? = nil", "var nextCheckAt: Date? = nil",
-                      "var foundMessage: String? = nil"):
+        # 11/21: the next day is saved under the same key, with its day beside it.
+        self.assertIn('savedNextCheckAt = "nextCheckAt"', log)
+        for field in ("var contactedOffices: [LostCatContactedOffice]? = nil", "var savedNextCheckAt: Date? = nil",
+                      "var nextCheckOn: String? = nil", "var foundMessage: String? = nil"):
             self.assertIn(field, log)
         self.assertNotIn("init(from decoder", self.model)
         # The readable backup names every new field in Japanese, and the offices as words.
