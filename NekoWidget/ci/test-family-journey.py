@@ -982,7 +982,7 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
         resume = section(local, "static func resumeIfNeeded() async {", "\n    }\n")
         self.assertLess(resume.index("guard await remove(record) else { return }"),
                         resume.index("try? await client.markIdentityDeletionLocalCleanupDone()"))
-        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {", "\n    }\n")
+        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion, keepsSharedCopies: Bool = false) async -> Bool {", "\n    }\n")
         self.assertIn("guard deletion.acceptedAt != nil else { return false }", remove)
         # A record from before 11/20 removes nothing more; a running notebook
         # pass ends first; a removed copy's binding goes before the files.
@@ -992,7 +992,9 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
         self.assertLess(remove.index("UserDefaults.standard.removeObject(forKey: FamilyNotebookLocalBinding.key)"),
                         remove.index("local.removeAfterIdentityDeletion("))
         # The shared copies only when no other identity (機種変更) remains.
-        shared = section(remove, "if !outcome.otherIdentityRemains {", "\n        }\n")
+        # 11/21: nor while the usual person remains after the recovered one went.
+        self.assertIn("let othersRemain = outcome.otherIdentityRemains || keepsSharedCopies", remove)
+        shared = section(remove, "if !othersRemain {", "\n        }\n")
         self.assertIn("for key in defaultsKeys { UserDefaults.standard.removeObject(forKey: key) }", shared)
         self.assertIn("local.removeSharedCopies(keychainCopies)", shared)
         self.assertNotIn("recoveryLinkSuffix", section(local, "static let keychainCopies", "]"))
@@ -1040,15 +1042,15 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
         self.assertNotIn("removeItem(at: outboxDirectory", transport)
         self.assertNotIn("http-operations", transport)
         # UserDefaults: the person's own marks always; the shared ones only when no other identity remains.
-        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion) async -> Bool {", "\n    }\n")
+        remove = section(local, "static func remove(_ deletion: GroupIdentityDeletion, keepsSharedCopies: Bool = false) async -> Bool {", "\n    }\n")
         self.assertLess(remove.index("local.removeAfterIdentityDeletion("),
                         remove.index("removeDefaults(prefixes: [personDefaultsPrefix(person)])"))
         self.assertLess(remove.index("removeDefaults(prefixes: [personDefaultsPrefix(person)])"),
-                        remove.index("if !outcome.otherIdentityRemains {"))
-        shared = section(remove, "if !outcome.otherIdentityRemains {", "\n        }\n")
+                        remove.index("if !othersRemain {"))
+        shared = section(remove, "if !othersRemain {", "\n        }\n")
         self.assertIn("for key in sharedDefaultsKeys { UserDefaults.standard.removeObject(forKey: key) }", shared)
         self.assertIn("removeDefaults(prefixes: sharedDefaultsPrefixes)", shared)
-        self.assertIn("if !outcome.otherIdentityRemains, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {", remove)
+        self.assertIn("if !othersRemain, !(await GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()) {", remove)
         self.assertLess(remove.index("FamilyNotebookSharing.shared.restartSession()"),
                         remove.index("GroupWindowLocalPhotoStore.shared.forgetIdentityChoices()"))
         self.assertIn('static func personDefaultsPrefix(_ personID: String) -> String { "familyNotebook.seen.v1." + personID + "." }', local)
@@ -1085,10 +1087,10 @@ class IdentityDeletionAndLeaving1120Tests(unittest.TestCase):
         self.assertIn("guard (try? store.pendingOperations().isEmpty) == false else { return false }", send)
         self.assertEqual(send.count("sync.synchronize("), 1)
         self.assertIn("} catch {}", send)
-        # What waited before an unconfirmed end still does not start again (#1067).
+        # 11/21: what waited before an unconfirmed end is kept and sent after it comes back.
         store = read("NekoWidget/Services/FamilyNotebookStore.swift")
         resume = section(store, "func resumeSharingAfterUnconfirmedEnd() throws -> FamilyNotebookSnapshot {", "\n    }\n")
-        self.assertIn("state.outboxIDs = []", resume)
+        self.assertNotIn("state.outboxIDs = []", resume)
 
 
 if __name__ == "__main__":

@@ -60,9 +60,11 @@ class RecoveredPersonDeletionTests(unittest.TestCase):
 
     def test_only_another_person(self):
         start = FACTORY.index("static func deleteRecoveredPerson(")
-        body = FACTORY[start:start + 1600]
-        self.assertIn("recovered.personID != usual", body)
-        self.assertIn("GroupIdentityDeletionLocalData.remove(record)", body)
+        body = FACTORY[start:FACTORY.index("static let recoveredDeletionAccount")]
+        # 11/21: the same person only when the usual device was taken off.
+        self.assertIn("if recovered.personID == usual {", body)
+        self.assertIn("GroupDeviceRevocation.isMarked(", body)
+        self.assertIn("GroupIdentityDeletionLocalData.remove(record, keepsSharedCopies: record.personID != usual)", body)
 
 
 STORE = (ROOT / "NekoWidget/Services/CatCareStore.swift").read_text(encoding="utf-8")

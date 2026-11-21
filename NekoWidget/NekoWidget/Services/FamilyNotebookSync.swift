@@ -259,7 +259,7 @@ actor FamilyNotebookSync {
     /// pass; no head/cursor is marked complete until all preceding edits land.
     /// The caller retains trusted rosters/keys across calls and app restarts.
     func synchronize(current: VerifiedFamilyNotebookRoster, history: [Int: SignedFamilyNotebookRoster],
-                     keys: [Int: Data], retryHeld: Bool = false) async throws -> FamilyNotebookSyncResult {
+                     keys: [Int: Data], retryHeld: Bool = false, uploads: Bool = true) async throws -> FamilyNotebookSyncResult {
         guard !isRunning else { throw FamilyNotebookTransportError.operationInFlight }
         isRunning = true; defer { isRunning = false }
         guard try !store.snapshot().sharingEnded else { throw FamilyNotebookError.sharingEnded }
@@ -334,7 +334,9 @@ actor FamilyNotebookSync {
         }
         // Download/reading remains available during a Plus pause or while a
         // new participant waits for key rotation. No outbox entry is removed.
-        if !paused && state.ready {
+        // 11/21: `uploads` false: the keys' pass is not finished (a newly
+        // approved person waits to be signed in): read only, send later.
+        if uploads && !paused && state.ready {
             if let capability = state.writeContract, !capability.canWrite {
                 throw FamilyNotebookTransportError.upgradeRequired
             }

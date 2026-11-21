@@ -33,6 +33,7 @@ struct VerifyFamilyNotebook {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try convergence(root.appendingPathComponent("convergence"))
+        try newerOfflineEdit(root.appendingPathComponent("newer-offline"))
         try deletion(root.appendingPathComponent("deletion"))
         try acknowledgements(root.appendingPathComponent("ack"))
         try persistence(root.appendingPathComponent("persistence"))
@@ -281,13 +282,13 @@ struct VerifyFamilyNotebook {
                   && resumed.acknowledgements == before.acknowledgements && resumed.clock == before.clock,
                   "reopening keeps history, links, receipts and clock")
         try check(resumed.acknowledgements.contains { $0.operationID == sent.id }, "reopening keeps what was confirmed")
-        try check(resumed.outbox.isEmpty && (try reopenedFile.pendingOperations().isEmpty),
-                  "reopening does not send what was waiting by itself")
+        try check(resumed.outbox.map(\.id) == [queued.id] && (try reopenedFile.pendingOperations().map(\.id)) == [queued.id],
+                  "reopening keeps what was waiting to be sent (11/21)")
         struct Header: Decodable { let schemaVersion: Int }
         try check(try JSONDecoder().decode(Header.self, from: Data(contentsOf: root.appendingPathComponent("absent/family-notebook.json"))).schemaVersion == 1,
                   "a reopened notebook is an active schema-1 file again")
         let fresh = try reopenedFile.edit(target: water, value: .text("戻ってから"), author: a, editedAt: day)
-        try check(try reopenedFile.pendingOperations().map(\.id) == [fresh.id], "new writing after reopening is sent")
+        try check(try reopenedFile.pendingOperations().map(\.id) == [queued.id, fresh.id], "new writing after reopening is sent")
 
         // Ended before 11/18: no reason saved. The same rule as an absence end.
         let (legacy, _, _) = try prepared("legacy")
@@ -355,6 +356,33 @@ struct VerifyFamilyNotebook {
         let cleared = try left.edit(target: water, value: .clear, author: a, editedAt: day)
         _ = try right.receive([cleared])
         try check(try right.snapshot().fieldState(for: water)?.operation.value == .clear, "explicit blank survives merge")
+    }
+
+    /// 11/21: an offline edit of this iPhone, newer than one written on an
+    /// iPhone that had seen more (a higher clock), is not lost when that
+    /// older one arrives through the real receive path: this iPhone writes
+    /// it again, and both iPhones settle on it.
+    static func newerOfflineEdit(_ path: URL) throws {
+        let left = try store(path.appendingPathComponent("a"), "device-a")
+        let right = try store(path.appendingPathComponent("b"), "device-b")
+        for index in 0..<5 { _ = try right.edit(target: water, value: .text("水 \(index)"), author: b, editedAt: day) }
+        let older = try right.edit(target: name, value: .text("古い名前"), author: b, editedAt: day)
+        let newer = try left.edit(target: name, value: .text("新しい名前"), author: a, editedAt: day.addingTimeInterval(600))
+        try check(older.version.clock > newer.version.clock, "the older edit has the higher clock")
+        try left.receiveRetaining(right.snapshot().operations.map { .known($0) })
+        let settled = try left.snapshot().fieldState(for: name)
+        try check(settled?.operation.value == .text("新しい名前") && settled?.status != .conflict,
+                  "the newer offline edit stays and has seen the older one")
+        try check(try left.pendingOperations().contains { $0.id == settled?.operation.id }, "the newer value is sent again")
+        try check(try left.snapshot().operations.contains { $0.id == older.id }, "the older value stays in history")
+        let sent = try left.pendingOperations(), before = try right.snapshot().operations.count
+        try right.receiveRetaining(sent.map { .known($0) })
+        try check(try right.snapshot().fieldState(for: name)?.operation.id == settled?.operation.id, "both iPhones settle on the newer edit")
+        try check(try right.snapshot().operations.count == before + sent.count, "the other iPhone writes nothing again")
+        // Received again: nothing more is written.
+        let count = try left.snapshot().operations.count
+        try left.receiveRetaining(right.snapshot().operations.map { .known($0) })
+        try check(try left.snapshot().operations.count == count, "a replay writes nothing again")
     }
 
     static func deletion(_ path: URL) throws {

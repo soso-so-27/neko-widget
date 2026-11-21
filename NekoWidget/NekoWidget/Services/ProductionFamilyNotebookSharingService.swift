@@ -106,7 +106,7 @@ final class FamilyNotebookSession {
         return snapshot.sharingEnded && FamilyNotebookEndReason.mayResume(snapshot.endedReason)
     }
     /// Reopen it once `roster` (verified against this iPhone's pin) lists this
-    /// person and this device. Queued sends do not start again by themselves.
+    /// person and this device. What waited to be sent goes again (11/21).
     func resume(family: UUID, admittedGeneration: Int64, roster: VerifiedFamilyNotebookRoster) throws {
         guard try mayResume(family: family, admittedGeneration: admittedGeneration), let notebook,
               roster.roster.familyID == family,
@@ -155,6 +155,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     /// 11/20: a call is running (FamilyNotebookSharing.stopForIdentityDeletion waits for it).
     var callRunning: Bool { working }
     private(set) var needsAnotherPass = false
+    /// 11/21: writing waits for a newly approved person to be signed into the
+    /// family's roster (the notebook says so in one line); reading goes on.
+    private(set) var awaitingNewMember = false
     /// 11/15 (1115q): what the last key pass saw; a changed value is progress.
     private(set) var lastKeyObservation = ""
     /// 11/16: what the last whole read did about this iPhone's writing (nil:
@@ -378,7 +381,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         if let error = error as? FamilySharingError { return error }
         if let error = error as? FamilyNotebookTransportError, case .server(let code, _) = error {
             switch code {
-            case "family_notebook_invitation_unavailable": return .invitationExpired
+            // 11/21: expired, replaced by a newer invitation, or the family
+            // ended: the link is dead either way.
+            case "family_notebook_invitation_unavailable": return .invitationRevoked
             case "family_notebook_already_in_family": return .alreadyInFamily
             case "family_notebook_member_limit": return .memberLimit
             default: break
@@ -422,7 +427,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         do {
         return try await run { context in
           do {
-            needsAnotherPass = false
+            needsAnotherPass = false; awaitingNewMember = false
             try await context.admission.resumePending()
             try await context.membership.resumePending(notebook: context.notebook)
             let directory = try await context.admission.directory()
@@ -475,7 +480,20 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             if let resumedMaterial { prepared = resumedMaterial } else { prepared = try await context.keys.prepare(family: family.familyID) }
             lastKeyObservation = await context.keys.observation
             guard let material = prepared else { needsAnotherPass = true; return .waitingForKeys }
-            guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
+            guard material.ready, !material.moreWork else {
+                needsAnotherPass = true
+                // 11/21: approving a person stopped every member's sync until
+                // they opened the app and the approving iPhone signed them in.
+                // A member whose roster verifies and who holds every key reads
+                // on (no write: the outbox waits) and keeps the notebook open.
+                guard material.readable else { return .waitingForKeys }
+                awaitingNewMember = material.awaitsMember
+                let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
+                    network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
+                _ = try await sync.synchronize(current: material.current, history: material.history,
+                                               keys: material.keys, uploads: false)
+                return .inFamily(.init(role: state.role == .payer ? .payer : .member))
+            }
             photoMaterial = .init(familyID: family.familyID, generation: members.generation, material: material)
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
                 network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
@@ -637,13 +655,21 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     func previewInvitation(_ link: URL?) async throws -> FamilyInvitationPreview {
         guard let link else { throw FamilySharingError.invitationExpired }
         try await renewIfRevoked()
-        return try await run { try await $0.admission.preview(link) }
+        return try await run { context in
+            // 11/21: the invitation was made at a family generation that has
+            // moved (someone was let in, or a newer invitation): the link no
+            // longer opens. It used to say 「アプリを最新に」.
+            do { return try await context.admission.preview(link) }
+            catch FamilyNotebookCryptoError.stale { throw FamilySharingError.invitationRevoked }
+        }
     }
     func join(_ invitation: FamilyInvitationPreview, operationID: UUID) async throws -> FamilyJoinResult {
         try await renewIfRevoked()
         return try await run { context in
             try await admissionAllowed(context)
-            try await context.admission.join(invitation, name: displayName(), operation: operationID)
+            do { try await context.admission.join(invitation, name: displayName(), operation: operationID) }
+            catch FamilyNotebookCryptoError.stale { throw FamilySharingError.invitationRevoked }
+            catch FamilyNotebookTransportError.stale { throw FamilySharingError.invitationRevoked }
             return .pendingApproval
         }
     }
@@ -968,6 +994,14 @@ extension ProductionFamilyNotebookSharingService {
             photoRetries[familyCatID] = nil
             photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
         }
+        // 11/21: sealed for a family generation or key that has moved on (a
+        // person let in since): the relay refuses it every time. Forgotten,
+        // so the next try starts over from the photo instead of failing on.
+        guard pending.reservation.expectedGeneration == context.material.generation,
+              pending.reservation.keyEpoch == context.material.material.current.roster.epoch else {
+            photoRetries[familyCatID] = nil
+            photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
+        }
         try await send(pending, context.client, context.store, context.material.material)
         photoRetries[familyCatID] = nil
     }
@@ -976,6 +1010,12 @@ extension ProductionFamilyNotebookSharingService {
                       _ store: FamilyNotebookStore, _ material: FamilyNotebookKeyMaterial) async throws {
         do { try await client.deliver(pending, trace: photoTrace) }
         catch {
+            // 11/21: the relay's final no to this sealed delivery: it is not
+            // sent again (「もう一度」 starts over from the photo).
+            if case FamilyNotebookTransportError.server(let code, _) = error,
+               ["key_epoch_pending", "revision_conflict", "photo_retired"].contains(code) {
+                photoRetries = photoRetries.filter { $0.value != pending.reservation.operationID }
+            }
             notePhotoServer(error)
             photoTrace(.init(stage: .deliveryFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
             throw Self.photoFailure(error)
