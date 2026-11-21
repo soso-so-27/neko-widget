@@ -953,9 +953,24 @@ private struct CareActivitySheet: UIViewControllerRepresentable {
     /// Round 2 (11/8): 「文字で送る」. The memo as text, to paste into LINE.
     var text = ""
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: (items as [Any]) + (text.isEmpty ? [] : [text]), applicationActivities: nil)
+        UIActivityViewController(activityItems: (items as [Any]) + (text.isEmpty ? [] : [CareMemoText(text)]), applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// 11/21: the text goes only where text is what is sent (コピー, メッセージ,
+/// メール, which keep the file too). Every other place gets the file alone:
+/// an app given both kept only one of them, sometimes not the file.
+private final class CareMemoText: NSObject, UIActivityItemSource {
+    static let textActivities: Set<UIActivity.ActivityType> = [.copyToPasteboard, .message, .mail]
+    let text: String
+    init(_ text: String) { self.text = text }
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any { text }
+    func activityViewController(_ controller: UIActivityViewController,
+                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        guard let activityType, Self.textActivities.contains(activityType) else { return nil }
+        return text
+    }
 }
 
 /// The tool's one safety sentence, shown as it is (11/7: it was folded under

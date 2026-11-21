@@ -169,12 +169,20 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private(set) var currentFamilyID: UUID?
     private(set) var memberNames: [String: String] = [:]
     private(set) var lastJoinResults: [FamilyNotebookAdmissionClient.JoinResult] = []
+    /// 11/21: requests waiting on this person's invitation from another
+    /// iPhone (FamilyNotebookAdmissionClient.Requests.elsewhere), last read.
+    private(set) var requestsElsewhere = 0
     private(set) var lastMembers: [FamilyNotebookAdmissionClient.Member] = []
     // 11/17: the family's representative photo (FamilyNotebookRepresentativePhoto).
     // The roster and keys of the last read stay in this service; the screens
     // get only pixels to show and what happened (the extension below).
     fileprivate struct PhotoMaterial { let familyID: UUID; let generation: Int64; let material: FamilyNotebookKeyMaterial }
     fileprivate var photoMaterial: PhotoMaterial?
+    /// 11/21: the last pass read without writing (keys not ready: a newly
+    /// approved person not signed in yet). The photo is not prepared or sent
+    /// then: the relay refuses it for good once the family moves on, and the
+    /// sealed copy stayed behind.
+    fileprivate var photoWritesWait = false
     private var photoClient: (familyID: UUID, client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore)?
     /// The pixels last shown for each asset: a report sends exactly these.
     private var shownPhotos: [UUID: Data] = [:]
@@ -439,6 +447,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 guard try context.observedOutsideFamily(now: now()) else { throw FamilySharingError.serviceUnavailable }
                 if let left = currentFamilyID { await removePush(context, family: left) }
                 currentFamilyID = nil; lastMembers = []; photoMaterial = nil
+                // 11/21: no family: no photo delivery of this iPhone can be sent.
+                discardPhotoDeliveries(context)
                 // 11/19: waiting to be let in, the relay tells this iPhone so.
                 await syncPush(context, families: Array(Set(directory.pendingRequests.map(\.familyID)).sorted { $0.uuidString < $1.uuidString }.prefix(4)))
                 return directory.pendingRequests.isEmpty ? .notInFamily : .pendingApproval
@@ -479,9 +489,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let prepared: FamilyNotebookKeyMaterial?
             if let resumedMaterial { prepared = resumedMaterial } else { prepared = try await context.keys.prepare(family: family.familyID) }
             lastKeyObservation = await context.keys.observation
-            guard let material = prepared else { needsAnotherPass = true; return .waitingForKeys }
+            guard let material = prepared else { needsAnotherPass = true; photoWritesWait = true; return .waitingForKeys }
             guard material.ready, !material.moreWork else {
-                needsAnotherPass = true
+                needsAnotherPass = true; photoWritesWait = true
                 // 11/21: approving a person stopped every member's sync until
                 // they opened the app and the approving iPhone signed them in.
                 // A member whose roster verifies and who holds every key reads
@@ -495,6 +505,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 return .inFamily(.init(role: state.role == .payer ? .payer : .member))
             }
             photoMaterial = .init(familyID: family.familyID, generation: members.generation, material: material)
+            photoWritesWait = false
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,
                 network: context.wire, journal: context.journal, endpointID: context.endpoint.absoluteString)
             let result = try await sync.synchronize(current: material.current, history: material.history,
@@ -647,7 +658,14 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         try await run { context in
             try await admissionAllowed(context)
             let family = try await family(context), state = try await context.membership.loadPayer(familyID: family.familyID, minimumGeneration: family.generation)
-            guard let material = try await context.keys.prepare(family: family.familyID), material.ready, !material.moreWork else { throw FamilySharingError.membershipChecking }
+            let prepared = try await context.keys.prepare(family: family.familyID)
+            guard let material = prepared, material.ready, !material.moreWork else {
+                // 11/21: the notebook stays open while a newly approved person
+                // is not signed in (loadState), so 「招待する」 shows; it said
+                // 「Plusを確認しています」 here.
+                if prepared?.awaitsMember == true { throw FamilySharingError.awaitingNewMember }
+                throw FamilySharingError.membershipChecking
+            }
             return try await context.admission.invite(family: family.familyID, generation: state.generation,
                 roster: material.current, payer: state.payerPersonId, name: displayName(), catNames: catNames(), operation: operationID)
         }
@@ -765,6 +783,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     func pendingRequests() async throws -> [FamilyNotebookJoinRequest] {
         try await run { context in
             let family = try await family(context), result = try await context.admission.requests(family.familyID)
+            requestsElsewhere = result.elsewhere
             return try await result.requests.asyncNames(context.admission, family: family.familyID, generation: result.generation)
         }
     }
@@ -816,7 +835,22 @@ extension ProductionFamilyNotebookSharingService {
     /// 11/19: the creator's photo can be written now (the family's keys of
     /// the last pass are here); no network.
     var representativePhotoWritable: Bool {
-        representativePhotosEnabled && photoMaterial != nil && session?.notebook != nil
+        representativePhotosEnabled && photoMaterial != nil && !photoWritesWait && session?.notebook != nil
+    }
+
+    /// 11/21: a delivery this session cannot send again is let go from the
+    /// photo journal (up to ~200 KB each, kept for good before): delivered,
+    /// replaced by a newer one, refused for good, or of a family this iPhone
+    /// is no longer in. Only deliveries; reports, choices and the cache stay.
+    fileprivate func discardPhotoDeliveries(_ session: FamilyNotebookSession) {
+        let folder = photoJournalDirectory(session)
+        guard FileManager.default.fileExists(atPath: folder.path),
+              let journal = try? GroupOperationStore(directory: folder, maximumRecordBytes: 2_100_000) else { return }
+        try? FamilyNotebookRepresentativePhotoClient.discardDeliveries(in: journal, except: [])
+        photoRetries = [:]
+    }
+    fileprivate func photoJournalDirectory(_ session: FamilyNotebookSession) -> URL {
+        session.directory.deletingLastPathComponent().appendingPathComponent("representative-photo", isDirectory: true)
     }
 
     /// 11/19: an answer from the relay's photo routes. A served call opens
@@ -852,11 +886,13 @@ extension ProductionFamilyNotebookSharingService {
         // person's 「表示しない」, never the notebook's keys. 11/20: the
         // 「表示しない」 and reported photos also in the notebook's Keychain,
         // so deleting the app does not show them again.
-        let journal = try GroupOperationStore(directory: session.directory.deletingLastPathComponent()
-            .appendingPathComponent("representative-photo", isDirectory: true), maximumRecordBytes: 2_100_000)
+        let journal = try GroupOperationStore(directory: photoJournalDirectory(session), maximumRecordBytes: 2_100_000)
         let client = FamilyNotebookRepresentativePhotoClient(familyID: material.familyID, endpoint: session.endpoint,
             identity: session.identity, transport: photoTransport, journal: journal, runtimeEnabled: photoRuntimeEnabled,
             kept: session.secrets)
+        // 11/21: what this session cannot send again (another family's, or
+        // one from before this launch: 「もう一度」 sends only this session's).
+        try? FamilyNotebookRepresentativePhotoClient.discardDeliveries(in: journal, except: Set(photoRetries.values))
         photoClient = (material.familyID, client, journal)
         return (session, store, material, client, journal)
     }
@@ -945,7 +981,12 @@ extension ProductionFamilyNotebookSharingService {
         let trace = photoTrace
         let context: (session: FamilyNotebookSession, store: FamilyNotebookStore, material: PhotoMaterial,
                       client: FamilyNotebookRepresentativePhotoClient, journal: any GroupSecretStore)
-        do { context = try photoContext() }
+        do {
+            context = try photoContext()
+            // 11/21: keys not ready (a newly approved person not signed in):
+            // nothing is sealed now; a later pass that writes sends it.
+            guard !photoWritesWait else { throw FamilySharingError.membershipChecking }
+        }
         catch { trace(.init(stage: .contextUnavailable, code: Self.photoTraceCode(error))); throw error }
         guard let author else { trace(.init(stage: .authorMissing)); throw FamilySharingError.signInExpired }
         let snapshot = try context.store.snapshot()
@@ -975,6 +1016,8 @@ extension ProductionFamilyNotebookSharingService {
                 epochKey: key, observedOperationIDs: FamilyNotebookCore.observedFrontier(target: target, operations: snapshot.operations))
         } catch { trace(.init(stage: .prepareFailed, code: FamilyPhotoDeliveryLog.code(of: error))); throw error }
         trace(.init(stage: .imagePrepared))
+        // 11/21: a newer photo of the cat replaces the one still waiting.
+        if let replaced = photoRetries[familyCatID] { try? await context.client.discardDelivery(replaced) }
         photoRetries[familyCatID] = pending.reservation.operationID
         try await send(pending, context.client, context.store, context.material.material)
         photoRetries[familyCatID] = nil
@@ -987,6 +1030,7 @@ extension ProductionFamilyNotebookSharingService {
     /// waiting, it is forgotten (the next try starts over from the photo).
     func retryRepresentativePhoto(familyCatID: UUID) async throws {
         let context = try photoContext()
+        guard !photoWritesWait else { throw FamilySharingError.membershipChecking }
         guard let id = photoRetries[familyCatID] else {
             photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
         }
@@ -999,6 +1043,7 @@ extension ProductionFamilyNotebookSharingService {
         // so the next try starts over from the photo instead of failing on.
         guard pending.reservation.expectedGeneration == context.material.generation,
               pending.reservation.keyEpoch == context.material.material.current.roster.epoch else {
+            try? await context.client.discardDelivery(id)
             photoRetries[familyCatID] = nil
             photoTrace(.init(stage: .retryNothingPending)); throw FamilyNotebookPhotoFailure.failed
         }
@@ -1015,11 +1060,16 @@ extension ProductionFamilyNotebookSharingService {
             if case FamilyNotebookTransportError.server(let code, _) = error,
                ["key_epoch_pending", "revision_conflict", "photo_retired"].contains(code) {
                 photoRetries = photoRetries.filter { $0.value != pending.reservation.operationID }
+                // 11/21: and its sealed copy leaves the journal.
+                try? await client.discardDelivery(pending.reservation.operationID)
             }
             notePhotoServer(error)
             photoTrace(.init(stage: .deliveryFailed, status: Self.photoTraceStatus(error), code: FamilyPhotoDeliveryLog.code(of: error)))
             throw Self.photoFailure(error)
         }
+        // 11/21: delivered: its record is not needed again (only 「もう一度」
+        // of this session would send the same one).
+        try? await client.discardDelivery(pending.reservation.operationID)
         // Into this copy at once, as a received operation: its clock moves
         // past it, and the next read finds the reference here.
         if let key = material.keys[pending.reservation.keyEpoch],
@@ -1027,6 +1077,15 @@ extension ProductionFamilyNotebookSharingService {
            let received = try? FamilyNotebookOperationCrypto.openRetaining(pending.operation, roster: roster, key: key) {
             try? store.receiveRetaining([received])
         }
+    }
+
+    /// 11/21: a 4xx answer to a report that sending the same one again can
+    /// never change (not sign-in, not too many, not an upgrade).
+    static func reportRefusedForGood(_ error: Error) -> Bool {
+        guard case FamilyNotebookTransportError.server(let code, let status) = error,
+              (400...499).contains(status), ![401, 403, 408, 429].contains(status) else { return false }
+        return !["rate_limited", "invalid_authentication", "report_gate_changed", "upgrade_required",
+                 "photo_protocol_upgrade_required"].contains(code)
     }
 
     private static func photoTraceStatus(_ error: Error) -> Int? {
@@ -1088,7 +1147,17 @@ extension ProductionFamilyNotebookSharingService {
                 moderationKeyID: recipient.keyID, moderationPublicKey: recipient.publicKey)
             try context.journal.write(GroupWire.encode(pending), account: account, createOnly: true)
         }
-        let receipt = try await context.client.report(pending)
+        let receipt: FamilyNotebookRepresentativePhotoClient.ReportReceipt
+        do { receipt = try await context.client.report(pending) }
+        catch {
+            // 11/21: the relay's final no to this kept report (too old a
+            // consent, the photo no longer reportable, a retired key...): it
+            // is let go, so the next 「送る」 makes a new one from the photo
+            // shown, and the report sheet says it once. Kept otherwise.
+            guard Self.reportRefusedForGood(error) else { throw error }
+            try? context.journal.remove(account)
+            throw FamilyNotebookPhotoFailure.unavailable
+        }
         try? context.journal.remove(account)
         shownPhotos[assetID] = nil
         return receipt.reportID

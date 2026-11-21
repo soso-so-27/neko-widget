@@ -216,6 +216,12 @@ struct VeterinaryVisitsView: View {
     }
     private func open(_ cat: PhotoMemoryNoteCat) async {
         let access = actionAccess
+        // 11/21: a departed cat gets no new memo: its open one, else its newest.
+        if ToolCatDeparture.isDeparted(id: cat.id.uuidString, in: farewellJSON),
+           !visits.contains(where: { $0.catID == cat.id && $0.completedAt == nil }) {
+            current = visits.last { $0.catID == cat.id }
+            return
+        }
         do {
             current = try await store.current(catID: cat.id, catName: cat.name) { commit in
                 try access.perform(for: .createVeterinaryVisit, commit)
@@ -226,7 +232,8 @@ struct VeterinaryVisitsView: View {
     }
     private func reload() async {
         do {
-            let loaded = try await store.visits()
+            let stored = try await store.visits()
+            let loaded = await refilingDeletedProfile(stored)
             detachedPhotos = try await store.detachedPhotos()
             let notes: [PhotoMemoryNoteRecord]
             var sourceError: String?
@@ -241,11 +248,16 @@ struct VeterinaryVisitsView: View {
             }
             // Keep each append separately typed; a long chain of overloaded +
             // exceeded the native compiler's expression-checking budget.
+            // 11/21: a cat named only by a photo memo (a deleted cat's) is
+            // offered only while it is still a cat here; choosing it made an
+            // empty memo. Cats with memos stay, so their memos stay reachable.
+            let live = liveCatIDs(savedTools: savedTools)
+            let exists = { (cat: PhotoMemoryNoteCat) -> Bool in live?.contains(cat.id) ?? true }
             var candidates: [PhotoMemoryNoteCat] = known
-            candidates.append(contentsOf: notes.flatMap { $0.note.context?.cats ?? [] })
+            candidates.append(contentsOf: notes.flatMap { $0.note.context?.cats ?? [] }.filter(exists))
             candidates.append(contentsOf: loaded.map { PhotoMemoryNoteCat(id: $0.catID, name: $0.catName) })
             candidates.append(contentsOf: savedTools.map(\.cat))
-            candidates.append(contentsOf: measuredCats)
+            candidates.append(contentsOf: measuredCats.filter(exists))
             candidates.append(contentsOf: detachedPhotos.map { .init(id: $0.catID, name: "名前未設定の猫") })
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
@@ -262,6 +274,35 @@ struct VeterinaryVisitsView: View {
             // being written in it); only the first load has nothing to show.
             self.error = veterinaryErrorMessage(error)
         }
+    }
+
+    /// The cats that exist here, when this page knows them (opened from a
+    /// cat's page with the app's cats); nil in a fixture or a restored file.
+    private func liveCatIDs(savedTools: [SavedToolCatChoices.Choice]) -> Set<UUID>? {
+        guard fixedCatKey != nil || !profiles.isEmpty else { return nil }
+        var ids = Set(profiles.compactMap { UUID(uuidString: $0.identifier) })
+        ids.formUnion(savedTools.map(\.id))
+        for record in CatCareStore.shared.state?.cats ?? [] where record.deletedAt == nil {
+            ids.insert(record.catID)
+            if let profile = record.profileID { ids.insert(profile) }
+        }
+        return ids
+    }
+
+    /// 11/21: a family cat whose profile was deleted, while its cleanup
+    /// (CatProfileDeletionCleanup) has not moved its memos yet: they are
+    /// still filed under the profile, so its page moves them first.
+    private func refilingDeletedProfile(_ loaded: [VeterinaryVisit]) async -> [VeterinaryVisit] {
+        guard let key = fixedCatKey, let catID = UUID(uuidString: key) else { return loaded }
+        var moved = false
+        for job in CatProfileDeletionCleanup.pending() where job.keepsCareRecord && job.careCatID == catID {
+            guard let old = UUID(uuidString: job.profileID),
+                  !profiles.contains(where: { $0.identifier.uppercased() == job.profileID.uppercased() }),
+                  loaded.contains(where: { $0.catID == old }) else { continue }
+            if let count = try? await store.refile(from: old, to: catID), count > 0 { moved = true }
+        }
+        guard moved, let again = try? await store.visits() else { return loaded }
+        return again
     }
 
     private var detachedPhotoRows: some View {
@@ -583,7 +624,9 @@ private struct VeterinaryConsultationView: View {
     }
     /// Written into 「この子のこと」, the record every tool reads; made for this
     /// cat when it has none yet, as 「この子のこと」 itself does.
-    private func recordWeight(_ result: CatCareListEditor.Result, _ visit: VeterinaryVisit) {
+    /// 11/21: nil once saved; else the sheet's one line, and the sheet stays
+    /// open with what was typed (a failed save closed it).
+    private func recordWeight(_ result: CatCareListEditor.Result, _ visit: VeterinaryVisit) -> String? {
         let profile = profiles.first { $0.identifier == visit.catID.uuidString }
         let record = CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)
             ?? (profile != nil ? catCareStore.ensureRecord(profileID: visit.catID, name: profile?.displayName)
@@ -593,11 +636,10 @@ private struct VeterinaryConsultationView: View {
             guard let index = state.cats.firstIndex(where: { $0.catID == id }) else { return }
             outcome = result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }), let applied = outcome else {
-            error = "体重を保存できませんでした。もう一度お試しください。"
-            return
+            return "体重を保存できませんでした。もう一度お試しください。"
         }
         // 11/20: a full weight list refused it; say so with the list's own sentence.
-        if !applied { error = CatCareListEditor.Kind.weight.limitSentence }
+        return applied ? nil : CatCareListEditor.Kind.weight.limitSentence
     }
     /// 「診察メモ」 (11/12): this cat's past memos as one row that opens them,
     /// then starting a new memo, which files the one on the page there. The
@@ -871,9 +913,8 @@ private struct VeterinaryConsultationView: View {
         }
         .sheet(isPresented: $weighing) {
             if let visit {
-                CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil) { result in
-                    recordWeight(result, visit)
-                }
+                CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: nil,
+                                      saving: { result in recordWeight(result, visit) })
                 .environment(\.dynamicTypeSize, typeSize)
             }
         }
@@ -1050,6 +1091,9 @@ private struct VeterinaryRecordPicker: View {
     @State private var capturing = false
     @State private var captureBlocked: String?
     @State private var savingShot = false
+    /// 11/21: a shot that could not be kept, said under 「撮る」 (not at the
+    /// bottom of the list, out of sight).
+    @State private var shotError: String?
     @Environment(\.openURL) private var openURL
 
     private var profile: CatProfilePresentation? { profiles.first { $0.identifier == visit.catID.uuidString } }
@@ -1092,6 +1136,9 @@ private struct VeterinaryRecordPicker: View {
     /// Asks for the camera and for saving to the library first; says why
     /// when either is turned off.
     private func openCamera() async {
+        guard !savingShot else { return }
+        // 11/21: a movie left by a shot never saved (the app closed) goes now.
+        VeterinaryCapture.removeLeftoverMovies()
         captureBlocked = await VeterinaryCapture.blockedReason()
         if captureBlocked == nil { capturing = true }
     }
@@ -1099,6 +1146,11 @@ private struct VeterinaryRecordPicker: View {
     /// for this cat's memo: whose it is is already known.
     private func addShot(_ shot: VeterinaryCapture.Shot) async {
         savingShot = true; defer { savingShot = false }
+        shotError = nil
+        if case .failed = shot {
+            shotError = "撮った動画を残せませんでした。空き容量を確かめてください。"
+            return
+        }
         do {
             let saved = try await VeterinaryCapture.save(shot)
             let note = PhotoMemoryNote(text: "", updatedAt: Date(), revision: UUID().uuidString,
@@ -1108,9 +1160,9 @@ private struct VeterinaryRecordPicker: View {
                 confirmedTarget: VeterinaryRecordConfirmation.belongsOnly(to: visit.catID, source), videoSeconds: saved.seconds))
             error = nil
         } catch let failure as VeterinaryVisitError {
-            error = veterinaryErrorMessage(failure)
+            shotError = veterinaryErrorMessage(failure)
         } catch {
-            self.error = "撮ったものを保存できませんでした。もう一度お試しください。"
+            shotError = "撮ったものを保存できませんでした。もう一度お試しください。"
         }
     }
     @ViewBuilder private var captureRows: some View {
@@ -1118,6 +1170,11 @@ private struct VeterinaryRecordPicker: View {
             Button("撮る", systemImage: "camera") { Task { await openCamera() } }
                 .disabled(savingShot).accessibilityIdentifier("vet-capture")
             if savingShot { ProgressView("保存しています…") }
+            if let shotError {
+                Label(shotError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote).foregroundStyle(.red)
+                    .accessibilityIdentifier("vet-capture-error")
+            }
             if let captureBlocked {
                 Text(captureBlocked).font(.footnote).foregroundStyle(.secondary)
                 Button("設定を開く") {

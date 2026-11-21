@@ -84,7 +84,8 @@ class OfflineEditTests(unittest.TestCase):
         receive = section(STORE, "func receiveRetaining(_ incoming:", "// This models a matching receipt")
         self.assertIn("try reassertNewerOwnEdits(touching: known, state: &state)", receive)
         body = section(STORE, "private func reassertNewerOwnEdits(", "// This models a matching receipt")
-        self.assertIn("own.isConcurrentConflict, own.operation.editedAt > current.operation.editedAt", body)
+        # 11/21 (1121r): an imported value counts from its source date.
+        self.assertIn("own.isConcurrentConflict, written(own.operation) > written(current.operation)", body)
         self.assertIn("current.operation.version.deviceID != deviceID", body)
         self.assertIn("FamilyNotebookField.sharingEnded, .farewellDay, .representativePhoto", body)
         self.assertIn("state.outboxIDs.insert(again.id)", body)

@@ -95,6 +95,9 @@ enum FamilySharingError: Error, Equatable, Sendable {
     case farewellDayMissing, farewellPreviewChanged
     /// Not possible before the family works between iPhones (the prototype).
     case notAvailableYet
+    /// 11/21: a newly approved person is not signed into the family yet, so
+    /// nothing new (an invitation) can be made until they open the app.
+    case awaitingNewMember
 
     enum Recovery: Sendable { case retry, reload, personAction }
 
@@ -131,6 +134,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .upgradeRequired: "この手帳は新しい版で書けます（アプリを更新してください）"
         case .unsupported: "App Storeでアプリを最新にしてください。記録は消えていません。"
         case .notAvailableYet: "いまは、まだ使えません。"
+        case .awaitingNewMember: "新しい家族がアプリを開くと、招待できます。"
         case .farewellDayMissing: "この子の旅立った日は、まだ記録されていません。"
         case .farewellPreviewChanged: "日付か家族の手帳の内容が変わりました。共有する内容をもう一度確かめてください。"
         }
