@@ -39,6 +39,8 @@ struct OnboardingView: View {
     /// のわのまど over the scan page when no cat was found (11/12). nil when
     /// the build has no official window.
     var openNowaWindow: (() -> Void)? = nil
+    /// 11/21: a message that is not about the search, closed by the person.
+    @State private var dismissedOtherMessage: String?
 
     var body: some View {
         Group {
@@ -121,9 +123,41 @@ struct OnboardingView: View {
         }
     }
 
+    /// 11/21: the owner passes every app message shown on page three. Only
+    /// one that comes while the search has stopped or failed is a loading
+    /// failure; any other (a save, a network call) is said once in an alert.
+    private var scanFailureMessage: String? {
+        guard let scanErrorMessage,
+              !scanErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let searchStopped = scan.hasFailed || scan.startupLoadFailed
+            || (!scan.isScanning && !scan.hasPreliminaryResult)
+        return searchStopped ? scanErrorMessage : nil
+    }
+
+    private var otherMessage: String? {
+        guard let scanErrorMessage, scanFailureMessage == nil,
+              !scanErrorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              scanErrorMessage != dismissedOtherMessage else { return nil }
+        return scanErrorMessage
+    }
+
     @ViewBuilder
     private var scanPage: some View {
-        if let scanErrorMessage, !scanErrorMessage.isEmpty, !scan.hasPreliminaryResult {
+        scanPageContent
+            .alert(
+                otherMessage ?? "",
+                isPresented: Binding(
+                    get: { otherMessage != nil },
+                    set: { if !$0 { dismissedOtherMessage = scanErrorMessage } }
+                )
+            ) {
+                Button("閉じる", role: .cancel) { dismissedOtherMessage = scanErrorMessage }
+            }
+    }
+
+    @ViewBuilder
+    private var scanPageContent: some View {
+        if let scanErrorMessage = scanFailureMessage, !scan.hasPreliminaryResult {
             OnboardingScanErrorPage(
                 message: scanErrorMessage,
                 retry: rescan,
@@ -137,7 +171,7 @@ struct OnboardingView: View {
                 scan: scan,
                 previewPhotos: resultPhotos,
                 isLimitedAccess: isLimitedAccess,
-                scanErrorMessage: scanErrorMessage,
+                scanErrorMessage: scanFailureMessage,
                 chooseMorePhotos: chooseMorePhotos,
                 rescan: rescan,
                 openPreviewPhoto: openPhoto,
@@ -457,7 +491,9 @@ private struct OnboardingScanPage: View {
     /// From the first cat on, the title says it was found (11/12).
     private var title: String {
         if isFinalZero { return OnboardingPresentationCopy.scanZeroTitle }
-        return scan.displayedCatCount > 0 || scan.hasFinalResult
+        // 11/21: never 「見つかりました」 over 0 cats (a final 0 while the
+        // search is still finishing flashed it).
+        return scan.displayedCatCount > 0
             ? OnboardingPresentationCopy.scanFoundTitle
             : OnboardingPresentationCopy.scanTitle
     }

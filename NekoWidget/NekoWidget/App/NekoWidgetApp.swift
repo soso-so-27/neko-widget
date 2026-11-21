@@ -53,6 +53,11 @@ struct NekoWidgetApp: App {
             CareHandoffExporter.cleanupOnLaunch()
             LostCatFlyerRenderer.cleanupOnLaunch()
             TemporaryExportFileLifecycle.removeManagedFiles()
+            // 11/21: PDF and ZIP folders left by an export cut short when the
+            // app was closed (only old ones, off the main thread).
+            Task.detached(priority: .background) {
+                StaleExportFolderSweep.removeStaleFolders()
+            }
             Task {
                 // A seasonal movie share sheet also cannot survive relaunch.
                 // The service validates the exact managed UUID directory.

@@ -689,6 +689,15 @@ actor PhotoLibraryScanner {
                         recoveryDiagnostics.merge(.init(
                             evidence: reused.analysisEvidence
                         ))
+                    } else if reused.analysisStatus == .unavailableLocally,
+                              lowFidelityRetryBudget > 0,
+                              ScanRetryPolicy.retriesFailedPhoto(
+                                  lastAttempt: reused.analyzedAt, now: scanStartedAt) {
+                        // 11/21: a photo that was only in iCloud may be on
+                        // this iPhone now. Read again once a day, within the
+                        // same small per-pass budget (still network-disabled).
+                        lowFidelityRetryBudget -= 1
+                        pending.append((index, asset, previous, .full))
                     } else if reused.analysisStatus == .unavailableLocally {
                         // Build 19 already exhausted both network-disabled
                         // local requests. Keep that durable result until an

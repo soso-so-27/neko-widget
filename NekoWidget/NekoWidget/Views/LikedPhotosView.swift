@@ -804,9 +804,10 @@ struct CuratedAlbumDetailView: View {
                 photoIdentifiers: pendingAssignmentIdentifiers,
                 profiles: profiles,
                 initialAssignmentsByPhotoIdentifier: Dictionary(
-                    uniqueKeysWithValues: pendingAssignmentIdentifiers.map {
+                    pendingAssignmentIdentifiers.map {
                         ($0, assignmentsByPhotoIdentifier[$0] ?? [])
-                    }
+                    },
+                    uniquingKeysWith: { first, _ in first }
                 ),
                 save: { values in
                     let saved = await replaceProfileAssignments(values)
@@ -1828,6 +1829,8 @@ struct SavedMemoriesGalleryView: View {
     @State private var photoBookExport: LikedPhotoBookExportFile?
     @State private var photoBookExportDirectory: URL?
     @State private var photoBookErrorMessage: String?
+    /// 11/21: photos that could not be read in time (iCloud) can be tried again.
+    @State private var photoBookErrorCanRetry = false
     /// 11/20: photos the PDF could not include, said once the share sheet
     /// closes, with the scan's own sentence.
     @State private var pendingPhotoBookOmittedCount = 0
@@ -1949,6 +1952,12 @@ struct SavedMemoriesGalleryView: View {
                 }
             )
         ) {
+            if photoBookErrorCanRetry {
+                Button("もう一度") {
+                    photoBookErrorMessage = nil
+                    createPhotoBookPDF()
+                }
+            }
             Button("閉じる", role: .cancel) {
                 photoBookErrorMessage = nil
             }
@@ -2251,6 +2260,7 @@ struct SavedMemoriesGalleryView: View {
             } catch is CancellationError {
                 return
             } catch {
+                photoBookErrorCanRetry = (error as? PhotoBookPDFExportError) == .photosNotReadable
                 if let exportError = error as? PhotoBookPDFExportError {
                     photoBookErrorMessage = exportError.errorDescription
                         ?? "写真のPDFを作れませんでした。写真へのアクセスを確かめて、もう一度お試しください。"
@@ -2740,15 +2750,14 @@ struct PhotoBrowserView: View {
         self.rediscoveryStore = rediscoveryStore
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
+        // 11/21: makeBrowserPhotos already drops repeated IDs; never trap on user data.
         browserPhotoByIdentifier = Dictionary(
-            uniqueKeysWithValues: browserPhotos.map {
-                ($0.localIdentifier, $0)
-            }
+            browserPhotos.map { ($0.localIdentifier, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
         browserIndexByIdentifier = Dictionary(
-            uniqueKeysWithValues: browserPhotos.enumerated().map {
-                ($0.element.localIdentifier, $0.offset)
-            }
+            browserPhotos.enumerated().map { ($0.element.localIdentifier, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
         )
         _performanceProbe = StateObject(
             wrappedValue: PhotoBrowserPerformanceProbe(
@@ -3652,15 +3661,14 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
                 zoomedPhotoIdentifier = nil
                 setPagingEnabled(true)
             }
+            // 11/21: never trap on user data; a repeated ID keeps its first page.
             photoByIdentifier = Dictionary(
-                uniqueKeysWithValues: parent.photos.map {
-                    ($0.localIdentifier, $0)
-                }
+                parent.photos.map { ($0.localIdentifier, $0) },
+                uniquingKeysWith: { first, _ in first }
             )
             indexByIdentifier = Dictionary(
-                uniqueKeysWithValues: parent.photos.enumerated().map {
-                    ($0.element.localIdentifier, $0.offset)
-                }
+                parent.photos.enumerated().map { ($0.element.localIdentifier, $0.offset) },
+                uniquingKeysWith: { first, _ in first }
             )
 
             guard !parent.photos.isEmpty else {

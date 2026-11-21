@@ -261,6 +261,9 @@ struct AlbumPrototypeView: View {
     /// 11/7: false while the works are still being built at launch; then the
     /// shelf stands alone instead of 「まだ作品はありません」.
     var lettersAreFinal = true
+    /// 11/21: the photos are still being read or searched for the first
+    /// works; the empty shelf says so instead of saying nothing.
+    var lettersAreLoading = false
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
@@ -345,7 +348,17 @@ struct AlbumPrototypeView: View {
                         newMovieCard(movie)
                     }
                     yearShelf
-                    if letters.isEmpty && lettersAreFinal { noWorkYet }
+                    if letters.isEmpty && lettersAreFinal {
+                        noWorkYet
+                    } else if letters.isEmpty && lettersAreLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("作品を準備しています").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("album-prototype-loading")
+                    }
                 }
             }
             .padding(16)
