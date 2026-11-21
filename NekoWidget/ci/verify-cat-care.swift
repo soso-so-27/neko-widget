@@ -218,9 +218,13 @@ struct VerifyCatCare {
         try check(oldCat["vaccinationAnswer"] == nil, "untouched legacy JSON gains no optional key")
         try check(CatCareLimits.normalizedMicrochip("なし") == nil, "15-digit validator remains strict")
         try check(!cat.setMicrochip(status: .recorded, number: "なし", editedAt: t1, editedBy: "a"), "negative answer cannot be a number")
-        for invalid in ["", "123", "３９２１４１０００１２３４５６", "39214100012345x"] {
+        for invalid in ["", "123", "３９２１４１０００１２３４５", "39214100012345x"] {
             try check(!cat.setMicrochip(status: .recorded, number: invalid, editedAt: t1, editedBy: "a"), "invalid chip rejected")
         }
+        // 11/21: 15 full-width digits are the same number; it is stored in ASCII.
+        var pasted = CatCareRecord(catID: UUID())
+        try check(pasted.setMicrochip(status: .recorded, number: "３９２１４１０００１２３４５６", editedAt: t1, editedBy: "a")
+                  && pasted.microchip?.value == "392141000123456", "full-width digits are stored as ASCII digits")
         try check(cat.setMicrochip(status: .none, editedAt: t1, editedBy: "a"), "explicit no chip saved")
         try check(cat.microchipStatus == .none && cat.microchip?.value == "", "negative answer never enters legacy number slot")
         try check(CatCareLimits.normalizedMicrochip(cat.microchip!.value) == "", "legacy number form still accepts its value")
