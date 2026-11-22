@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { DurableAuth } from '../src/auth';
 import { deviceBinding } from '../src/device-proof';
-import { type AuthDependencies, type IdentityVerifier, type VerifiedIdentity, ServiceError } from '../src/contracts';
+import { type AuthDependencies, type IdentityVerifier, type VerifiedIdentity, ServiceError, randomToken, sha256 } from '../src/contracts';
 import { route, type Services } from '../src/index';
 import { ownerD1DeleteOrder } from '../src/owner-d1-residue';
 
@@ -406,6 +406,34 @@ describe('device-bound preservation sessions', () => {
     const { origin: ignoredAgain, ...revoke } = await f.signed('revoke');
     const result = await call('/v1/auth/session-revocations', revoke);
     expect(result.status).toBe(204); expect(await result.text()).toBe('');
+  });
+
+  it('needs the active session device to sign this deletion receipt once before entering the journal', async () => {
+    const f = await fixture();
+    const token = f.session.token;
+    const receipt = randomToken();
+    const path = '/v1/account-deletion';
+    const subject = await sha256(`neko-owner-deletion-v1\n${await sha256(token)}\n${await sha256(receipt)}`);
+    const other = await f.auth.establish(f.identity);
+    const proof = await f.signed('revoke', { sub: subject, htu: ORIGIN + path });
+    let accepted = 0;
+    const services = { auth: f.auth, verifier: f.verifier, ownerDeletion: { request: async () => {
+      accepted++;
+      return { state: 'processing' };
+    } } } as unknown as Services;
+    const submit = (bearer: string, target: string, deviceProof: string) => route(new Request(ORIGIN + path, {
+      method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmation: 'delete-service-account', receipt: target, challengeId: proof.challengeId, deviceProof }),
+    }), services);
+    for (const [bearer, target, signature] of [
+      [token, randomToken(), proof.deviceProof], [other.token, receipt, proof.deviceProof],
+      [token, receipt, (await f.signed('revoke')).deviceProof],
+    ]) await expect(submit(bearer!, target!, signature!)).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(accepted).toBe(0);
+    const results = await Promise.allSettled([submit(token, receipt, proof.deviceProof), submit(token, receipt, proof.deviceProof)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toMatchObject([{ value: { status: 202 } }]);
+    expect(results.filter(result => result.status === 'rejected')).toMatchObject([{ reason: { code: 'unauthorized' } }]);
+    expect(accepted).toBe(1);
   });
 
   it('lists only the owner’s devices and revokes all sessions for one other device with a target-bound proof', async () => {

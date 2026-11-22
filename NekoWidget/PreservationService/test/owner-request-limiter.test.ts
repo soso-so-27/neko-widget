@@ -228,10 +228,13 @@ it('counts failed attempts and permits logout after rollover without resetting t
 
 it('admits owner deletion after rollover and polls a receipt without requiring the invalidated login', async () => {
   const f = await fixture(); const receipt = randomToken();
-  const deletion = () => request(f.first.token, '/v1/account-deletion', 'POST', { confirmation: 'delete-service-account', receipt });
+  const proof = vi.spyOn(f.auth.devices, 'authorizeOwnerDeletion').mockResolvedValueOnce(undefined);
+  const deletion = () => request(f.first.token, '/v1/account-deletion', 'POST', { confirmation: 'delete-service-account',
+    receipt, challengeId: randomToken(), deviceProof: 'synthetic-test-proof' });
   await awayFromBoundary(); await exhaust(f.first.ownerId);
   await expect(route(deletion(), f.services)).rejects.toMatchObject({ code: 'RATE_LIMITED' });
   expect(await f.journal.request(f.first.ownerId)).toBeNull();
+  expect(proof).not.toHaveBeenCalled();
   await nextWindow(f.first.ownerId); expect((await route(deletion(), f.services)).status).toBe(202);
   expect(await count(f.first.ownerId)).toBe(1);
   await expect(route(request(f.first.token), f.services)).rejects.toMatchObject({ code: 'OWNER_DELETION_PENDING' });

@@ -187,10 +187,14 @@ export async function route(request: Request, services: Services, context?: Pick
   }
   if (request.method === 'POST' && path === '/v1/account-deletion') {
     if (!services.ownerDeletion) throw new ServiceError('OWNER_DELETION_DISABLED', 503);
-    const input = await body(request, 1024);
-    if (Object.keys(input).sort().join(',') !== 'confirmation,receipt'
+    const input = await body(request, 12 * 1024);
+    if (Object.keys(input).sort().join(',') !== 'challengeId,confirmation,deviceProof,receipt'
       || input.confirmation !== 'delete-service-account') throw new ServiceError('INVALID_REQUEST');
-    return response(await services.ownerDeletion.request(token, input.receipt), 202);
+    const receipt = string(input.receipt);
+    await services.auth.devices.authorizeOwnerDeletion(await services.auth.requireSession(token), {
+      receipt, challengeId: string(input.challengeId), deviceProof: string(input.deviceProof), origin: url.origin,
+    });
+    return response(await services.ownerDeletion.request(token, receipt), 202);
   }
   if (request.method === 'GET' && path === '/v1/notice-contact') {
     return response({ version: 1, ...await services.auth.noticeContact(token) });
