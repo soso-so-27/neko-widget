@@ -15,7 +15,7 @@ private struct UsageReportVerifier {
             "app_opened", "onboarding_completed", "photo_access_granted", "cats_found", "widget_guide_opened",
             "album_work_opened", "seasonal_movie_opened", "nine_exported", "showcase_opened",
             "photo_favorited", "photo_memo_written", "related_photos_opened",
-            "mado_opened", "mado_photo_sent", "mado_heart", "official_window_started",
+            "mado_opened", "mado_photo_sent", "mado_heart", "official_window_started", "mado_cloudy_cleared",
             "cat_care_edited", "tool_care_handoff", "tool_vet_visit", "tool_lost_cat", "tool_evacuation",
             "mado_created", "mado_invite_shared", "mado_joined",
             "family_created", "family_invite_shared", "family_joined", "app_recommended",
@@ -102,6 +102,32 @@ private struct UsageReportVerifier {
         require(afterSend.days.contains { $0.day == "2026-11-06" }, "Another batch does not remove the day")
         afterSend.remove(day: "2026-11-06", batch: yesterday.batch)
         require(!afterSend.days.contains { $0.day == "2026-11-06" }, "The sent day is removed")
+
+        // くもりのまど clears (11/23): once each, on the day of the clear.
+        var cloudy = UsageLedger()
+        let noon = ISO8601DateFormatter().date(from: "2026-11-07T03:00:00Z")!
+        let earlier = noon.addingTimeInterval(-86_400)
+        cloudy.recordCloudyClears([earlier], now: noon, calendar: tokyo)
+        require(cloudy.days.isEmpty && cloudy.cloudyClearedThrough == noon,
+                "the first look only sets the mark; earlier clears are not counted")
+        let lateNight = ISO8601DateFormatter().date(from: "2026-11-07T14:59:00Z")!  // 23:59 JST
+        let nextMorning = ISO8601DateFormatter().date(from: "2026-11-07T23:00:00Z")!  // 11/8 08:00 JST
+        let future = nextMorning.addingTimeInterval(3_600)
+        cloudy.recordCloudyClears([earlier, lateNight, nextMorning, future], now: nextMorning, calendar: tokyo)
+        cloudy.recordCloudyClears([earlier, lateNight, nextMorning], now: nextMorning.addingTimeInterval(60), calendar: tokyo)
+        func cleared(_ day: String) -> Int? { cloudy.days.first { $0.day == day }?.counts["mado_cloudy_cleared"] }
+        require(cleared("2026-11-07") == 1 && cleared("2026-11-08") == 1,
+                "each clear once, on its own local day, never twice")
+        cloudy.recordCloudyClears([earlier, lateNight, nextMorning, future], now: future, calendar: tokyo)
+        require(cleared("2026-11-08") == 2 && cloudy.cloudyClearedThrough == future, "a later time waits until it has passed")
+        let reloaded = try JSONDecoder().decode(UsageLedger.self, from: try JSONEncoder().encode(cloudy))
+        require(reloaded == cloudy, "the mark is saved with the counts")
+        var reloadedAgain = reloaded
+        reloadedAgain.recordCloudyClears([earlier, lateNight, nextMorning, future], now: future, calendar: tokyo)
+        require(reloadedAgain == cloudy, "after a restart the same clears are not counted again")
+        let cloudyPayload = UsagePayloadCheck.payload(cloudy.days.first { $0.day == "2026-11-08" }!, state: state)
+        let cloudyJSON = try JSONSerialization.jsonObject(with: try cloudyPayload.body()) as! [String: Any]
+        require((cloudyJSON["counts"] as! [String: Int]) == ["mado_cloudy_cleared": 2], "only the count leaves")
 
         // Review prompt (11/10): 3 西暦 days kept, then once; free users reach it.
         var japanese = Calendar(identifier: .japanese); japanese.timeZone = TimeZone(identifier: "Asia/Tokyo")!

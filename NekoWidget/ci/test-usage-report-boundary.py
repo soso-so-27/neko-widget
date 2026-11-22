@@ -52,7 +52,10 @@ class UsageReportBoundaryTests(unittest.TestCase):
         record = block(report, "struct UsageDayRecord: Codable, Equatable, Sendable {")
         self.assertEqual(stored_properties(record), {"day", "batch", "counts", "state"})
         ledger = block(report, "struct UsageLedger: Codable, Equatable, Sendable {")
-        self.assertEqual(stored_properties(ledger), {"days"})
+        # 11/23: the くもりのまど mark stays on the iPhone (the payload's fields are pinned above).
+        self.assertEqual(stored_properties(ledger), {"days", "cloudyClearedThrough"})
+        self.assertIn("record(.madoCloudyCleared, day: UsageDayKey.string(for: time, calendar: calendar))", report)
+        self.assertIn("$0 > mark && $0 <= now", report)
         # Counts are keyed only by the closed event list.
         self.assertEqual(len(re.findall(r"\.counts\[", report)), 2)
         self.assertIn("days[position].counts[event.name, default: 0]", report)

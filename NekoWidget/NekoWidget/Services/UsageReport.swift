@@ -32,7 +32,7 @@ enum UsageEvent: Hashable, Sendable {
     case albumWorkOpened, seasonalMovieOpened, nineExported, showcaseOpened
     case photoFavorited, photoMemoWritten, relatedPhotosOpened
     // まど
-    case madoOpened, madoPhotoSent, madoHeart, officialWindowStarted
+    case madoOpened, madoPhotoSent, madoHeart, officialWindowStarted, madoCloudyCleared
     // 記録する
     case catCareEdited, toolCareHandoff, toolVetVisit, toolLostCat, toolEvacuation
     // 広げる
@@ -61,6 +61,7 @@ enum UsageEvent: Hashable, Sendable {
         case .madoPhotoSent: "mado_photo_sent"
         case .madoHeart: "mado_heart"
         case .officialWindowStarted: "official_window_started"
+        case .madoCloudyCleared: "mado_cloudy_cleared"
         case .catCareEdited: "cat_care_edited"
         case .toolCareHandoff: "tool_care_handoff"
         case .toolVetVisit: "tool_vet_visit"
@@ -85,7 +86,7 @@ enum UsageEvent: Hashable, Sendable {
         .onboardingCompleted, .photoAccessGranted, .catsFound, .widgetGuideOpened,
         .albumWorkOpened, .seasonalMovieOpened, .nineExported, .showcaseOpened,
         .photoFavorited, .photoMemoWritten, .relatedPhotosOpened,
-        .madoOpened, .madoPhotoSent, .madoHeart, .officialWindowStarted,
+        .madoOpened, .madoPhotoSent, .madoHeart, .officialWindowStarted, .madoCloudyCleared,
         .catCareEdited, .toolCareHandoff, .toolVetVisit, .toolLostCat, .toolEvacuation,
         .madoCreated, .madoInviteShared, .madoJoined,
         .familyCreated, .familyInviteShared, .familyJoined, .appRecommended,
@@ -217,6 +218,10 @@ enum UsageDayKey {
 struct UsageLedger: Codable, Equatable, Sendable {
     static let retentionDays = 7
     private(set) var days: [UsageDayRecord] = []
+    /// 11/23: the newest くもりのまど clear already counted. Kept only on this
+    /// iPhone, in the same file as the counts, so a count and its mark are
+    /// saved (or lost) together. Never part of the payload.
+    private(set) var cloudyClearedThrough: Date?
 
     init() { }
 
@@ -230,13 +235,31 @@ struct UsageLedger: Codable, Equatable, Sendable {
             record.counts = record.counts.filter { UsageEvent.allNames.contains($0.key) && $0.value > 0 }
             return record
         }
+        cloudyClearedThrough = try container.decodeIfPresent(Date.self, forKey: .cloudyClearedThrough)
     }
 
-    var isEmpty: Bool { days.isEmpty }
+    var isEmpty: Bool { days.isEmpty && cloudyClearedThrough == nil }
 
     mutating func record(_ event: UsageEvent, day: String) {
         let position = slot(for: day)
         days[position].counts[event.name, default: 0] &+= 1
+    }
+
+    /// 11/23 `mado_cloudy_cleared`: every clear time (`revealedAt`, never
+    /// rewritten by a repeated tap) newer than the mark is counted once, on
+    /// the local day it happened. The first look only sets the mark, so
+    /// clears from before counting began are not counted. A time after
+    /// `now` (a clock set back) waits until it has passed.
+    mutating func recordCloudyClears(_ times: [Date], now: Date, calendar: Calendar) {
+        guard let mark = cloudyClearedThrough else {
+            cloudyClearedThrough = now
+            return
+        }
+        let new = times.filter { $0 > mark && $0 <= now }
+        for time in new {
+            record(.madoCloudyCleared, day: UsageDayKey.string(for: time, calendar: calendar))
+        }
+        if let latest = new.max() { cloudyClearedThrough = latest }
     }
 
     /// `app_opened` is 1 on any day the app was opened, however often.

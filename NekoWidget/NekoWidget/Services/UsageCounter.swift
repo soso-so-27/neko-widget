@@ -64,12 +64,17 @@ final class UsageCounter: @unchecked Sendable {
         let lastWidget = locked { widgetPlaced }
         let widget = await Self.anyWidgetPlaced() ?? lastWidget
         let state = Self.state(viewModel: viewModel, plus: plus, widget: widget)
-        let today = UsageDayKey.string(for: .now, calendar: calendar)
+        // 11/23: clears are made in the Widget, which cannot count; their
+        // times are read here, before any day is sent (times only).
+        let cleared = CloudyWindowStore.shared.clearedTimes()
+        let now = Date.now
+        let today = UsageDayKey.string(for: now, calendar: calendar)
         let endpoint = Self.endpoint()
         let jobs: [UsageDayRecord] = locked {
             widgetPlaced = widget
             guard enabled else { return [] }
             loadLocked()
+            ledger?.recordCloudyClears(cleared, now: now, calendar: calendar)
             ledger?.markOpened(day: today)
             ledger?.setState(state, day: today)
             ledger?.prune(today: today, calendar: calendar)

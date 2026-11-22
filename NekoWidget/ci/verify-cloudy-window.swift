@@ -391,6 +391,7 @@ private enum CloudyWindowVerifier {
                                  now: baseline.addingTimeInterval(2)), "repeat action is idempotent")
         let later = try reopened.timeline(scopeID: first.scopeID, now: baseline.addingTimeInterval(3))
         try check(later[0].selection.revealedAt == baseline, "duplicate action does not rewrite reveal time")
+        try check(reopened.clearedTimes() == [baseline], "one clear is one time for the usage count (11/23)")
         let tomorrow = entries[1].date.addingTimeInterval(1)
         try check(!reopened.reveal(selectionID: first.id, scopeID: first.scopeID, photoID: first.photoID, now: tomorrow), "stale action cannot reveal next day")
         let next = try reopened.timeline(scopeID: first.scopeID, now: tomorrow)
