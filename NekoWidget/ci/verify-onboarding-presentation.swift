@@ -238,6 +238,11 @@ enum OnboardingPresentationVerifier {
             OnboardingPresentationCopy.purposeInvitationLine == "招待を受けた方は、届いたリンクをもう一度開いてください。",
             "page-one invitation line changed"
         )
+        // 11/22 (A7): the quiet way back for a new iPhone, named for what it does.
+        try require(
+            OnboardingPresentationCopy.purposeRestoreAction == "前のiPhoneから戻す",
+            "page-one restore action changed"
+        )
         // 11/10: page two has no title of its own; it repeated page one.
         // The privacy promise is said once (page one, purposeBody); page two
         // no longer repeats it as bullets or a limited-access note (11/8).

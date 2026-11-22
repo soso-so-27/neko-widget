@@ -39,6 +39,9 @@ struct OnboardingView: View {
     /// のわのまど over the scan page when no cat was found (11/12). nil when
     /// the build has no official window.
     var openNowaWindow: (() -> Void)? = nil
+    /// 11/22 (A7): 「前のiPhoneから戻す」 under 「猫を探す」 opens 自動保存 over
+    /// page one. nil when the build has no 自動保存.
+    var openRestore: (() -> Void)? = nil
     /// 11/21: a message that is not about the search, closed by the person.
     @State private var dismissedOtherMessage: String?
 
@@ -46,7 +49,8 @@ struct OnboardingView: View {
         Group {
             switch page {
             case .purpose:
-                OnboardingPurposePage(continueAction: { page = .photoPermission })
+                OnboardingPurposePage(continueAction: { page = .photoPermission },
+                                      restoreAction: openRestore)
 
             case .photoPermission:
                 photoPermissionPage
@@ -251,6 +255,7 @@ private struct OnboardingScanErrorPage: View {
 /// so the windows hold the app's own cat.
 private struct OnboardingPurposePage: View {
     let continueAction: () -> Void
+    var restoreAction: (() -> Void)? = nil
 
     /// 11/12 (iPhone SE): the windows shrink to the room left by the words,
     /// so the promise is never under the button. Only when the words alone
@@ -271,6 +276,16 @@ private struct OnboardingPurposePage: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding-purpose-start")
+                // 11/22 (A7): a new iPhone's way back, quiet grey text like
+                // 「あとで」. Only where 自動保存 exists (as 設定's row).
+                if let restoreAction {
+                    Button(OnboardingPresentationCopy.purposeRestoreAction, action: restoreAction)
+                        .buttonStyle(.plain)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("onboarding-purpose-restore")
+                }
                 // 11/14 (A1): one quiet line for people who installed from an
                 // invitation. It names who it is for, so everyone else reads
                 // past it (11/12's "what link?"); not a button. Only in builds
