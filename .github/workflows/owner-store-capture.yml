@@ -168,7 +168,8 @@ jobs:
             git fetch --no-tags origin "$release_sha" --depth=1
             (cd "$GITHUB_WORKSPACE"; git diff --exit-code "$release_sha" "$GITHUB_SHA" -- NekoWidget \
               ':(exclude)NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift' \
-              ':(exclude)NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift')
+              ':(exclude)NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift' \
+              ':(exclude)NekoWidget/ci/test-cat-home-care.py')
             if [[ "$SYNTHETIC" == 'false' ]]; then
               [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
               gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" --jq '
@@ -201,7 +202,13 @@ jobs:
                 | select(.conclusion == "success" and
                   (.name == "Build before decrypting owner media" or .name == "Upload ciphertext only (including failures)"))] | length' | grep -Fxq 2
             else
-              (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget ':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+              capture_exclusions=(':(exclude)NekoWidget/ci/test-private-store-capture.py' ':(exclude)NekoWidget/ci/native-ui-inventory.py')
+              if [[ "$REFRESH_STORE_SCREENS_406" == 'true' ]]; then
+                # This screenshot assertion does not enter the compiler.
+                capture_exclusions+=(':(exclude)NekoWidget/ci/test-cat-home-care.py')
+              fi
+              (cd "$GITHUB_WORKSPACE"; git diff --quiet "$build_sha" "$GITHUB_SHA" -- NekoWidget \
+                "${capture_exclusions[@]}")
             fi
             mkdir "$PRIVATE_ROOT/reuse"
             gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" \

@@ -534,8 +534,10 @@ class Captures(unittest.TestCase):
         self.assertNotIn("10e_cat_home_records", REVIEW + COLLECT)
         self.assertIn('"--app-store-screenshot-cat-care", "--cat-home-care-fixture"', REVIEW)
         self.assertIn('["cat-home-care-vet"]', REVIEW)
-        # The App Store captures never get the fixture.
-        self.assertNotIn("--cat-home-care-fixture", STORE_SHOTS)
+        # Only the explicit encrypted owner capture of this page gets the care fixture.
+        owner_capture = block(STORE_SHOTS, "private func launchOwnerCapture(_ screen: String) throws -> XCUIApplication {")
+        self.assertIn('if screen == "konoko" { app.launchArguments.append("--cat-home-care-fixture") }', owner_capture)
+        self.assertEqual(STORE_SHOTS.count('"--cat-home-care-fixture"'), 1)
         seed = block(FIXTURE, "static func seedCatHomeCareIfRequested() async {")
         self.assertIn("guard showsCatHomeCare,", seed)
         self.assertIn("!visits.contains(where: { $0.catID == catID })", seed)
