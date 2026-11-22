@@ -55,3 +55,7 @@ __pycache__/
 # App Store owner-only release inputs (never commit contact or legal answers)
 NekoWidget/docs/app-store/local-only-owner-input.json
 NekoWidget/docs/app-store/local-only-contact-approval.json
+
+# LP: the App Store screenshots show the owner's real cat photos.
+# Keep them out of this public repository; they are deployed from outside it.
+lp/images/store/
