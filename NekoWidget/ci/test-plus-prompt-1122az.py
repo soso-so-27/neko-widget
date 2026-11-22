@@ -80,7 +80,8 @@ class MonthNoticeRestTests(unittest.TestCase):
         rest = schedule.index("let resting = restsAfterShownNotices()")
         self.assertLess(schedule.index("removePendingNotificationRequests"), rest)
         self.assertIn("let month = resting ? nil : month", schedule)
-        self.assertIn("let year = resting ? nil : year", schedule)
+        # The year's work notice is never rested (once a year).
+        self.assertNotIn("let year = resting ? nil : year", schedule)
         self.assertLess(rest, schedule.index("guard month != nil || year != nil"))
         # The words of the notice are unchanged.
         self.assertIn('"\\(number)月の作品がとどきました。"', schedule)
