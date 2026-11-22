@@ -44,7 +44,11 @@ import CoreImage
 #endif
 
 struct NekoWidgetView: View {
+#if DEBUG && LP_ASSET_CAPTURE
+    private let family: WidgetFamily = .systemMedium
+#else
     @Environment(\.widgetFamily) private var family
+#endif
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let entry: NekoWidgetEntry
@@ -1521,7 +1525,6 @@ extension NekoWidgetView {
     @MainActor static func lpRender(_ entry: NekoWidgetEntry) -> UIImage? {
         let content = NekoWidgetView(entry: entry).photoContent
             .frame(width: 364, height: 170)
-            .environment(\.widgetFamily, .systemMedium)
             .environment(\.colorScheme, .light)
             .environment(\.locale, Locale(identifier: "ja_JP"))
             .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
