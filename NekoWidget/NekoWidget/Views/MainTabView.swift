@@ -406,6 +406,19 @@ struct MainTabView: View {
         return windows + groupWindowsWithNewPhotos
     }
 
+    /// 11/22: the windows with something new from people, for the start tab.
+    /// のわのまど has a new photo every day, so counting it opened the app in
+    /// まど almost every day, before the person's own cats. Its 「新着」 mark
+    /// and the tab badge stay.
+    private var newPeopleMadoPhotoCount: Int {
+        let windows: Int = arrivalDates.reduce(0) { count, entry in
+            guard !entry.key.hasPrefix("official:") else { return count }
+            let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
+            return count + (entry.value.contains { $0.timeIntervalSince1970 > seen } ? 1 : 0)
+        }
+        return windows + groupWindowsWithNewPhotos
+    }
+
     /// 11/7 (W1): みんなのまど with photos kept here and not seen on their page yet.
     @State private var groupWindowsWithNewPhotos = 0
 
@@ -498,7 +511,7 @@ struct MainTabView: View {
             selectedTab = .photos
         } else {
             selectedTab = MainTabStartupPolicy.selection(lastTab: lastViewedTab,
-                hasNewPhotos: newMadoPhotoCount > 0, showsMado: showsMadoTab)
+                hasNewPhotos: newPeopleMadoPhotoCount > 0, showsMado: showsMadoTab)
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
