@@ -54,7 +54,11 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* buttons */
 .cta { display: inline-flex; align-items: center; min-height: 52px; padding: 0 28px; border-radius: 999px; background: var(--ink); color: var(--page); font-weight: 700; font-size: 16px; text-decoration: none; }
-.cta:focus-visible, .top-cta:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+/* Apple's official badge, unaltered; at least 40px tall with clear space around it. */
+.store { display: inline-block; line-height: 0; border-radius: 10px; }
+.store img { height: 56px; width: auto; }
+.hero .store { margin-top: 26px; }
+.store:focus-visible, .top-cta:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
 
 /* hero */
 .hero { padding-block: 28px 56px; }
