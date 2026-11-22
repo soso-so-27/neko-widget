@@ -2526,12 +2526,13 @@ final class GroupWindowListModel: ObservableObject {
         hasLoaded = true
     }
 
+    /// 11/22: where the last list read failed (the stage, and the error's
+    /// type and case number; window IDs cut to 8 characters). Shown only
+    /// after a long press on 「みんなのまど」, to find the cause on a device.
+    @Published private(set) var lastFailure: String?
 #if DEBUG || INTERNAL_PRESENTATION
     /// Test builds only: how long the last list load took, to find where the wait is.
     @Published private(set) var lastLoadTiming: String?
-    /// 11/22: test builds only: where the last list read failed (the stage
-    /// and the error's type and case, window IDs cut to 8 characters).
-    @Published private(set) var lastFailure: String?
     private var completedLoads = 0
     private var firstLoadSeconds: TimeInterval?
 
@@ -2562,7 +2563,6 @@ final class GroupWindowListModel: ObservableObject {
             // the list's usual sentence, and its home-screen copy is kept.
             let unreadable = await client.unreadableWindowIDs()
             message = unreadable.isEmpty ? nil : GroupWindowPresentation.message(for: GroupClientError.invalidResponse)
-#if DEBUG || INTERNAL_PRESENTATION
             if unreadable.isEmpty {
                 lastFailure = nil
             } else {
@@ -2571,7 +2571,6 @@ final class GroupWindowListModel: ObservableObject {
                     String(id.prefix(8)) + " " + (reasons[id] ?? "?")
                 }.joined(separator: " / ")
             }
-#endif
             hasLoaded = true
             GroupWindowListNavigation.shared.rememberListed(windows)
             renewPendingKeys()
@@ -2592,9 +2591,7 @@ final class GroupWindowListModel: ObservableObject {
             outcome = "失敗"
 #endif
             message = GroupWindowPresentation.message(for: error)
-#if DEBUG || INTERNAL_PRESENTATION
             lastFailure = "一覧: " + ProductionGroupWindowClient.reasonCode(error)
-#endif
             hasLoaded = true
         }
     }
@@ -2945,6 +2942,9 @@ struct GroupWindowListSection: View {
     /// Test builds' new まど layout: 「みんなのまど」 with a small 「＋」, and no
     /// large create button (making a window is rare; seeing them is daily).
     let compactHeader: Bool
+    /// 11/22: a long press on 「みんなのまど」 shows where the last failed list
+    /// read stopped (no words for anyone who does not look for it).
+    @State private var showsDiagnosis = false
 
     init(client: any GroupWindowMediaClient, compactHeader: Bool = false) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
@@ -2963,6 +2963,7 @@ struct GroupWindowListSection: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
+                        .onLongPressGesture(minimumDuration: 1.5) { showsDiagnosis.toggle() }
                     Spacer()
                     if !hidesHeaderCreate {
                         NavigationLink {
@@ -2989,6 +2990,7 @@ struct GroupWindowListSection: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
+                    .onLongPressGesture(minimumDuration: 1.5) { showsDiagnosis.toggle() }
             }
             if let invitation = invitationInbox.pending, invitationInbox.isSetAside, invitationInbox.isWaiting,
                !model.windows.contains(where: { $0.id == invitation.windowID }) {
@@ -3066,9 +3068,8 @@ struct GroupWindowListSection: View {
                 // 11/22: with the cards kept from last time on screen, a failed
                 // refresh says nothing. Each card still opens, and the list is
                 // read again the next time the tab is shown.
-#if DEBUG || INTERNAL_PRESENTATION
-                if InternalBuildPresentationAvailability.isAvailable, let failure = model.lastFailure {
-                    // Test builds only: the failing stage, to find the cause.
+                if showsDiagnosis, let failure = model.lastFailure {
+                    // Only after a long press on 「みんなのまど」: the failing stage.
                     Text("診断　" + failure)
                         .font(.caption2.monospaced())
                         .foregroundStyle(.tertiary)
@@ -3076,7 +3077,6 @@ struct GroupWindowListSection: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("group-window-list-diagnosis")
                 }
-#endif
             }
             if !compactHeader {
                 NavigationLink {
