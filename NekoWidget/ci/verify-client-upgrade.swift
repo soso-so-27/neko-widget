@@ -23,6 +23,9 @@ import Foundation
         }
         precondition(state.isRequired && dispatched == 0, "Retries must stop before network dispatch")
         precondition(AppStoreListing.pageURL == nil, "Pre-release must not offer a missing store page")
-        print("Client upgrade: exact response, ordinary errors, local retry stop, unpublished listing PASS")
+        precondition(AppStoreListing.pageURL(isPublished: false) == nil, "Ordinary builds hide the store link")
+        precondition(AppStoreListing.pageURL(isPublished: true)?.absoluteString == "https://apps.apple.com/jp/app/id6801962436",
+                     "Submission builds must use the fixed Japan store page")
+        print("Client upgrade: exact response, local retry stop, Japan store link opt-in PASS")
     }
 }

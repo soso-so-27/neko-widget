@@ -30,6 +30,8 @@
 	<string>$(APP_PRIVACY_URL)</string>
 	<key>AppSupportURL</key>
 	<string>$(APP_SUPPORT_URL)</string>
+	<key>AppStorePagePublished</key>
+	<string>$(APP_STORE_PAGE_PUBLISHED)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

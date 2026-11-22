@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      app_store_submission_candidate:
+        description: "App Store審査に後で使う1本だけ、紹介と更新の日本ストアURLを有効にする（署名・書き出しのみ）"
+        required: false
+        default: false
+        type: boolean
       release_mode:
         description: "配布範囲。App Store候補はproduction＋app-store-candidate（通常はexportのみ、明示指定で本人内部配布）、review-previewは画面確認、pairing-onlyは内部限定、media-stagingは内部またはBuild 71候補の外部1人限定"
         required: true
@@ -158,9 +163,17 @@ jobs:
         shell: bash
         env:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+          APP_STORE_SUBMISSION_REQUESTED: ${{ inputs.app_store_submission_candidate }}
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
         run: |
           set -euo pipefail
           if [[ "$PRODUCTION_CANDIDATE_OWNER_ONLY" == "true" && "$DISTRIBUTION_PROFILE" != "app-store-candidate" ]]; then exit 1; fi
+          if [[ "$APP_STORE_SUBMISSION_REQUESTED" == "true" ]] && \
+             [[ "$DISTRIBUTION_PROFILE" != "app-store-candidate" || "$SELECTED_RELEASE_MODE" != "production" ||
+                "$PRODUCTION_CANDIDATE_OWNER_ONLY" != "false" || "$UPLOAD_TO_TESTFLIGHT" != "false" ]]; then
+            echo "The store link requires an export-only App Store submission candidate." >&2
+            exit 1
+          fi
           python3 "$PROJECT_DIRECTORY/ci/distribution_profile.py" \
             --profile "$DISTRIBUTION_PROFILE" --mode "$SELECTED_RELEASE_MODE" \
             --internal-reports "$INTERNAL_REPORTS_REQUESTED"
@@ -925,6 +938,7 @@ jobs:
           PRODUCTION_CANDIDATE_CONFIG: ${{ vars.PRODUCTION_CANDIDATE_CONFIG }}
           PRODUCTION_CANDIDATE_APPROVED: ${{ vars.PRODUCTION_CANDIDATE_APPROVED }}
           PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED: ${{ vars.PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED }}
+          APP_STORE_SUBMISSION_REQUESTED: ${{ inputs.app_store_submission_candidate }}
           UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           BILLING_REQUESTED: ${{ inputs.billing_sandbox }}

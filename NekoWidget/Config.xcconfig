@@ -32,6 +32,7 @@ CURRENT_PROJECT_VERSION = 1
 // Individual release overlays must select truthful URLs for their scope.
 APP_PRIVACY_URL =
 APP_SUPPORT_URL =
+APP_STORE_PAGE_PUBLISHED = NO
 
 // Plus billing stays fail closed until StoreKit products, the independent
 // BillingAccountID bootstrap, and idempotent server confirmation are ready.

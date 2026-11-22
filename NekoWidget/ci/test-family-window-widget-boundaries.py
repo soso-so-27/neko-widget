@@ -5592,11 +5592,11 @@ class RecommendAppTests(unittest.TestCase):
         self.assertIn("enum AppStoreListing {", listing_source)
         self.assertIn('https://apps.apple.com/jp/app/id', listing_source)
         self.assertIn("if let url = AppStoreListing.pageURL {", settings)
-        # 1.0 is reviewed before its page exists: no row points at it (11/10).
+        # Ordinary builds hide the link; only the submission export opts in.
         listing = section(listing_source, "enum AppStoreListing {", "static let recommendMessage")
-        self.assertIn("static let isPagePublished = false", listing)
-        self.assertIn("guard isPagePublished else { return nil }", listing)
-        self.assertLess(listing.index("guard isPagePublished"), listing.index("return URL(string:"))
+        self.assertIn("APP_STORE_PAGE_PUBLISHED = NO", source("Config.xcconfig"))
+        self.assertIn("pageURL(isPublished: isPagePublished)", listing)
+        self.assertLess(listing.index("guard isPublished"), listing.index("return URL(string:"))
         self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', settings)
         self.assertIn('Image(systemName: "square.and.arrow.up")', settings)
 
@@ -5683,7 +5683,7 @@ class ReviewBRestTests(unittest.TestCase):
 class CodexWiringTests(unittest.TestCase):
     def test_outcomes_from_the_relay_reach_the_screen(self) -> None:
         listing = source("Shared/Sharing/ClientUpgradeRequirement.swift")
-        self.assertIn('static let appID: String? = "6801962436"', listing)
+        self.assertIn('https://apps.apple.com/jp/app/id6801962436', listing)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertIn('case .alreadyMember: return "もうこのまどに入っています。', setup)
         self.assertIn('case .windowClosed: return "このまどは終わりました。"', setup)
