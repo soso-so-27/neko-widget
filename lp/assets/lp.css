@@ -50,7 +50,9 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 /* のわ sits above the phone with its chin behind the frame; the phone takes the rest. */
 .stage-in { position: relative; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 10px 0 6px; }
 .nowa-peek { position: relative; z-index: 0; flex: none; width: min(26vw, 108px); height: auto; margin-bottom: -22px; transition: translate .5s ease; }
-.stage:not([data-ch="0"]) .nowa-peek { translate: 0 18px; }
+.stage:not([data-ch="1"]) .nowa-peek { translate: 0 18px; }
+.stage-in { transition: opacity .6s ease; }
+.stage[data-ch="0"] .stage-in { opacity: 0; }
 
 .phone { position: relative; z-index: 1; flex: 1; min-height: 0; aspect-ratio: 9 / 19.3; max-width: 92vw; border-radius: 15% / 7%; background: var(--frame); padding: 2.6%; box-shadow: var(--shade), inset 0 0 0 1.5px #3a3d45; }
 .island { position: absolute; top: 3.4%; left: 50%; width: 30%; height: 3.6%; transform: translateX(-50%); background: #000; border-radius: 999px; z-index: 3; }
@@ -69,8 +71,8 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .days, .days img, .frost, .frost .fb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .days img { opacity: 0; transition: opacity .7s ease; }
 .stage[data-day="0"] .d0, .stage[data-day="1"] .d1, .stage[data-day="2"] .d2 { opacity: 1; }
-/* paws come first (p 0–.2), then the wipe from the tag (p .22–.9) */
-.frost { --q: clamp(0, var(--p), 1); --w: clamp(0, calc((var(--p) - .22) * 1.45), 1); opacity: clamp(0, calc(1.2 - var(--w) * 1.25), 1);
+/* chapter 1, first half: paws (p 0–.1), then the wipe from the tag (p .08–.42); the days flip after */
+.frost { --q: clamp(0, calc(var(--p) * 2.2), 1); --w: clamp(0, calc((var(--p) - .08) * 2.9), 1); opacity: clamp(0, calc(1.2 - var(--w) * 1.25), 1);
   -webkit-mask-image: radial-gradient(circle at 50% 88%, transparent calc(var(--w) * 125cqw), #000 calc(var(--w) * 125cqw + 18cqw));
   mask-image: radial-gradient(circle at 50% 88%, transparent calc(var(--w) * 125cqw), #000 calc(var(--w) * 125cqw + 18cqw)); }
 .frost .fb { filter: blur(3.5cqw) saturate(.9); transform: scale(1.1); }
@@ -84,8 +86,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .paw-1 { left: 22%; top: 34%; rotate: -18deg; opacity: clamp(0, calc(var(--q) * 10 - .4), 1); }
 .paw-2 { left: 44%; top: 18%; rotate: -6deg; opacity: clamp(0, calc(var(--q) * 10 - 1.4), 1); }
 .tag { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); white-space: nowrap; font: 700 3.4cqw/1 var(--font-body); color: #fff; background: rgba(60,60,67,.55); border-radius: 999px; padding: .65em 1.05em; opacity: clamp(0, calc(1 - var(--w) * 4), 1); }
-.stage:not([data-ch="0"]) .frost { display: none; }
-.day-label { position: absolute; left: 4cqw; top: 4cqw; font-size: 3.2cqw; color: #fff; }
+.day-label { position: absolute; left: 4cqw; top: 4cqw; font-size: 3.2cqw; color: #fff; opacity: clamp(0, calc((var(--p) - .44) * 8), 1); }
 .day-label b { position: absolute; white-space: nowrap; background: rgba(23,25,31,.5); border-radius: 999px; padding: .4em .9em; opacity: 0; transition: opacity .5s ease; }
 .stage[data-ch="1"][data-day="0"] .l0, .stage[data-ch="1"][data-day="1"] .l1, .stage[data-ch="1"][data-day="2"] .l2 { opacity: 1; }
 .wname { margin-top: 1.4cqh; text-align: center; font-size: 3.2cqw; color: #8a7d70; }
@@ -103,6 +104,66 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .dock .d3 { background: linear-gradient(#ffffff, #e9e9ee); } .dock .d4 { background: linear-gradient(#ff8a7a, #f2554a); }
 .dock { position: absolute; left: 4cqw; right: 4cqw; bottom: 3cqh; padding: 3cqw; border-radius: 9cqw; background: rgba(255,255,255,.45); margin: 0; }
 
+
+/* ---------- 0: the night window ----------
+   The sky is fixed to the viewport so it also fills behind the header and the
+   words. --p takes it from night (0) to morning (1): stars and the indigo
+   fade, a warm glow rises, the window's mist and blur clear to show the cat. */
+.night { grid-row: 1; grid-column: 1; position: relative; z-index: 0; min-height: 0; display: flex; justify-content: center; padding: 18px 0 8px;
+  --q: clamp(0, var(--p), 1); transition: opacity .7s ease; }
+.stage:not([data-ch="0"]) .night { opacity: 0; pointer-events: none; }
+.night > i { position: fixed; inset: 0; pointer-events: none; }
+.sky-morning { background: linear-gradient(#bcd6f6 0%, #e4ecf8 38%, #fdeedd 72%, var(--page) 100%); }
+.sky-night { background: radial-gradient(120% 55% at 50% 100%, #3b4a8f 0%, #1c2454 46%, #0c1131 100%); opacity: calc(1 - var(--q)); }
+.stars { opacity: calc(.9 - var(--q) * 1.6);
+  background-image:
+    radial-gradient(1.6px 1.6px at 8% 12%, #fff 98%, transparent), radial-gradient(1.2px 1.2px at 22% 30%, #fff 98%, transparent),
+    radial-gradient(1.4px 1.4px at 36% 8%, #fff 98%, transparent), radial-gradient(1.1px 1.1px at 52% 22%, #fff 98%, transparent),
+    radial-gradient(1.7px 1.7px at 68% 10%, #fff 98%, transparent), radial-gradient(1.2px 1.2px at 82% 26%, #fff 98%, transparent),
+    radial-gradient(1.4px 1.4px at 93% 6%, #fff 98%, transparent), radial-gradient(1.1px 1.1px at 14% 48%, #fff 98%, transparent),
+    radial-gradient(1.3px 1.3px at 88% 44%, #fff 98%, transparent), radial-gradient(1px 1px at 60% 40%, #fff 98%, transparent),
+    radial-gradient(1.2px 1.2px at 4% 64%, #fff 98%, transparent), radial-gradient(1.2px 1.2px at 96% 70%, #fff 98%, transparent);
+  animation: twinkle 3.2s ease-in-out infinite alternate; }
+@keyframes twinkle { to { filter: brightness(.6); } }
+.sun { background: radial-gradient(70% 45% at 50% 105%, rgba(255, 196, 120, .75), rgba(255, 220, 170, .25) 55%, transparent 75%);
+  opacity: calc(var(--q) * 1.4 - .1); transform: translateY(calc((1 - var(--q)) * 30%)); }
+
+/* The window: an arch with a dark frame, a sill, and のわ on the sill. */
+.win { position: relative; height: 100%; aspect-ratio: 33 / 46; max-width: 76vw; display: flex; flex-direction: column; }
+.arch { position: relative; flex: 1; min-height: 0; border-radius: 50% 50% 3% 3% / 36% 36% 3% 3%; overflow: hidden; container-type: size;
+  background: linear-gradient(#f9dcae, #e9b46f); box-shadow: inset 0 0 0 3.4cqw #252a4e, 0 0 calc(18cqw + var(--q) * 10cqw) calc(2cqw + var(--q) * 4cqw) rgba(255, 196, 120, calc(.32 + var(--q) * .2)); }
+.arch .cat { position: absolute; inset: 3.4cqw; width: calc(100% - 6.8cqw); height: calc(100% - 6.8cqw); object-fit: cover; border-radius: inherit;
+  filter: blur(calc((1 - var(--q)) * 3.2cqw)) brightness(calc(.72 + var(--q) * .28)) saturate(calc(.7 + var(--q) * .3)); transform: scale(calc(1.12 - var(--q) * .12)); }
+/* mist: wiped open from the bottom, like a paw clearing a cold window */
+.mist { --w: clamp(0, calc((var(--q) - .12) * 1.4), 1); position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(60% 40% at 30% 30%, rgba(255,255,255,.55), transparent 70%), radial-gradient(55% 40% at 72% 60%, rgba(255,255,255,.45), transparent 70%), rgba(240, 232, 255, .28);
+  -webkit-mask-image: radial-gradient(circle at 50% 96%, transparent calc(var(--w) * 140cqh), #000 calc(var(--w) * 140cqh + 22cqw));
+  mask-image: radial-gradient(circle at 50% 96%, transparent calc(var(--w) * 140cqh), #000 calc(var(--w) * 140cqh + 22cqw)); }
+.spaw { position: absolute; left: 22%; top: 40%; width: 15cqw; height: 15cqw; rotate: -16deg; fill: rgba(255,255,255,.85);
+  opacity: clamp(0, calc(1 - var(--q) * 3), 1); }
+.bar { position: absolute; background: #252a4e; }
+.bar.v { left: 50%; top: 0; bottom: 0; width: 2.4cqw; translate: -50% 0; }
+.bar.h { left: 0; right: 0; top: 54%; height: 2.4cqw; }
+.sill { flex: none; height: 3.2%; margin: 0 -6%; border-radius: 4px; background: linear-gradient(#3a4072, #252a4e); box-shadow: 0 8px 18px -8px rgba(0,0,0,.6); }
+.nowa-sill { position: absolute; left: 50%; bottom: 2.4%; width: 46%; height: auto; translate: -50% 0; filter: drop-shadow(0 0 1px rgba(0,0,0,.5)); }
+.win { padding-bottom: 6%; }
+
+/* words and chrome over the night sky */
+.cap, .cap .line, .sure, .ans, .dots li { transition: color .6s ease, background .6s ease, opacity .45s ease, transform .45s ease; }
+.store .b-light { display: none; }
+.stage.dark .cap { color: #f3f5ff; }
+.stage.dark .ans, .stage.dark .sure { color: #ccd3f3; }
+.stage.dark .sure li::before { color: #ffd59a; }
+.stage.dark .store .b-dark { display: none; }
+.stage.dark .store .b-light { display: block; }
+.stage.dark .dots li { background: rgba(255,255,255,.3); }
+.stage.dark .dots li.on { background: #ffd59a; }
+.caps { z-index: 2; grid-row: 2; grid-column: 1; }
+.stage-in { z-index: 1; grid-row: 1; grid-column: 1; }
+.top, body::before { transition: background .6s ease, color .6s ease; }
+body.is-night .top { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; color: #f3f5ff; }
+body.is-night .top-cta { color: #ffd59a; }
+body.is-night::before { background: #0c1131; }
 
 /* photos */
 .scr-photos { background: #fff; }
@@ -174,6 +235,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
   .stage { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; max-width: 1120px; margin: 0 auto; }
   .stage-in { grid-column: 2; grid-row: 1; height: 100%; padding: 36px 0 40px; }
   .nowa-peek { width: 140px; margin-bottom: -26px; }
+  .night { grid-column: 2; align-self: stretch; padding: 56px 0 60px; }
   .caps { grid-column: 1; grid-row: 1; min-height: 340px; padding: 0 40px 0 max(40px, env(safe-area-inset-left, 0px)); }
   .cap { left: max(40px, env(safe-area-inset-left, 0px)); right: 40px; top: 50%; transform: translateY(calc(-50% + 10px)); }
   .cap.on { transform: translateY(-50%); }
