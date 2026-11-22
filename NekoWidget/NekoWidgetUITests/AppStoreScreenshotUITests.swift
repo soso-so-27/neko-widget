@@ -814,7 +814,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = try launchOwnerCapture("konoko")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
-        XCTAssertTrue(app.staticTexts["むぎ"].firstMatch.waitForExistence(timeout: 10))
+        let hero = app.staticTexts.matching(identifier: "cat-home-hero")
+            .matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "むぎ、", "歳")).firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 10))
         for row in ["birthday", "vaccine", "vet", "weight"] {
             XCTAssertTrue(app.descendants(matching: .any)["cat-home-care-" + row].firstMatch.waitForExistence(timeout: 15))
         }
