@@ -139,6 +139,10 @@ final class GroupShareComposerModel: ObservableObject {
             return "センシティブな内容が含まれている可能性があります。別の写真を選んでください。"
         case MomentSharingError.moderationUnavailable:
             return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
+        case GroupClientError.offline:
+            // 11/22 (1122n): the same words as the app for no connection. The
+            // same operation is kept, so trying again never sends it twice.
+            return "接続できません。電波のあるところで、もう一度お試しください。"
         default:
             return "届けられたか確認できませんでした。少し待ってから、もう一度お試しください。"
         }

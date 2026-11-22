@@ -76,7 +76,7 @@ struct SettingsSheetHost<Content: View>: View {
     }
 }
 
-/// The 設定 gear, with a dot while auto-save is stopped or failing (11/7: it
+/// The 設定 gear, with a mark while auto-save is stopped or failing (11/7: it
 /// showed only inside 設定). Reads state already on this iPhone; no request.
 @MainActor
 struct SettingsGearIcon: View {
@@ -92,7 +92,13 @@ struct SettingsGearIcon: View {
         Image(systemName: "gearshape")
             .overlay(alignment: .topTrailing) {
                 if stopped {
-                    Circle().fill(Color.orange).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                    // 11/22 (1122n): a mark, not colour alone (the 7pt dot read as decoration).
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .orange)
+                        .offset(x: 5, y: -5)
+                        .accessibilityHidden(true)
                 }
             }
             .accessibilityValue(stopped ? "自動保存が止まっています" : "")
@@ -647,7 +653,7 @@ struct SettingsView: View {
             } footer: {
                 // Nothing to add when every photo can be used (11/8).
                 if !hasPhotoAccess {
-                    Text("まだ写真へのアクセスを許可していません。")
+                    Text("写真へのアクセスを許可していません。")
                 } else if isLimitedAccess {
                     Text("選んだ写真だけを使っています。")
                 }

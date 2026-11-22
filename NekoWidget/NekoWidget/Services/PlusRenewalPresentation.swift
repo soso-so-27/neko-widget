@@ -125,7 +125,8 @@ enum PlusSettingsRowStatus: Equatable, Sendable {
 /// When the Plus screen re-reads its price (11/10: it reloaded over and over,
 /// and 「料金を確認できません」 showed next to the price).
 enum PlusOfferReloadPolicy {
-    static let unavailableMessage = "料金を確認できません。時間をおいて開き直してください。"
+    /// 11/22 (1122n): 「もう一度読み込む」 sits right below; no second instruction.
+    static let unavailableMessage = "料金を確認できません。"
 
     /// Once per settled catalog: never while products are still loading, and
     /// never twice for the same catalog revision.

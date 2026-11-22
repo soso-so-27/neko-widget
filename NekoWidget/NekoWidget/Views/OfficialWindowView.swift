@@ -146,6 +146,16 @@ struct OfficialWindowStatusPresentation {
     var showsDiscovery: Bool {
         [.paused, .verificationExpired, .photosExpired].contains(kind)
     }
+
+    /// 11/22 (1122n): the app's one sentence for no connection (as the まど).
+    static let offlineMessage = "接続できません。電波のあるところで、もう一度お試しください。"
+
+    /// Only a request that never reached the feed; a bad answer keeps its own words.
+    static func isOffline(_ error: Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        return [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
+                .cannotFindHost, .dataNotAllowed, .internationalRoamingOff].contains(error.code)
+    }
 }
 
 @MainActor
@@ -877,7 +887,9 @@ struct OfficialWindowView: View {
             return
         } catch {
             if store.snapshot().subscriptionID == requestedSubscription {
-                setFeedback("新しい写真を読み込めませんでした。少し待ってから、もう一度お試しください。", failed: true)
+                setFeedback(OfficialWindowStatusPresentation.isOffline(error)
+                            ? OfficialWindowStatusPresentation.offlineMessage
+                            : "新しい写真を読み込めませんでした。少し待ってから、もう一度お試しください。", failed: true)
             }
         }
         state = store.snapshot()

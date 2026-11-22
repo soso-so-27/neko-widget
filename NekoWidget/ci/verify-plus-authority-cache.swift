@@ -195,7 +195,7 @@ private func check(_ condition: Bool, _ message: String) throws {
         try check(!R.showsUnavailable(loadFinishedWithoutOffer: true, showsPrice: false, isMember: true), "not for a member")
         try check(R.showsUnavailable(loadFinishedWithoutOffer: true, showsPrice: false, isMember: false),
                   "finished with no product shows it")
-        try check(R.unavailableMessage == "料金を確認できません。時間をおいて開き直してください。", "unavailable words")
+        try check(R.unavailableMessage == "料金を確認できません。", "unavailable words")
         typealias S = PlusSettingsRowStatus
         try check(S.steady(.checking, lastAnswer: nil) == .checking, "first launch check shows 確認しています")
         try check(S.steady(.checking, lastAnswer: .notMember) == .notMember, "a re-check keeps the Plus row")

@@ -127,7 +127,8 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .staleRoster: "家族のメンバーが変わりました。もう一度お試しください。"
         case .removedOrDissolved: "この手帳の共有は終わっています。"
         case .payerAlreadyChosen: "ほかの家族のPlusで、先に共有が戻りました。あなたのPlusはそのまま使えます。"
-        case .offline: "インターネットにつながっていません。つながってから、もう一度お試しください。"
+        // 11/22 (1122n): the app's one sentence for no connection.
+        case .offline: "接続できません。電波のあるところで、もう一度お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .unknownOutcome: "結果を確かめています。少し待ってから開き直してください。"

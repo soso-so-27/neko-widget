@@ -182,6 +182,7 @@ python3 ci/test-wall-1121i.py
 python3 ci/test-ux-mado-1122f.py
 python3 ci/test-ux-notebook-1122g.py
 python3 ci/test-ux-quiet-1122i.py
+python3 ci/test-ux-stuck-1122n.py
 python3 ci/test-ux-delight-1122p.py
 python3 ci/test-ux-press-1122o.py
 python3 ci/test-month-menu-1122k.py
