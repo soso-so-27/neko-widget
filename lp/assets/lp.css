@@ -19,19 +19,8 @@
   --font-head: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
   --font-body: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
   --r-win: 28px;
+  /* 11/22: always the light look, also on phones set to dark mode (owner). */
   color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --page: #0f1218; --wash: #161b25; --ink: #eef1f7; --ink-2: #b9c0cf; --ink-3: #8a93a6;
-    --line: #262d3a; --blue: #5b8ff0; --mark: #24365e; --card: #1a202b;
-    --shade: 0 18px 40px -22px rgba(0, 0, 0, .7); color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --page: #0f1218; --wash: #161b25; --ink: #eef1f7; --ink-2: #b9c0cf; --ink-3: #8a93a6;
-  --line: #262d3a; --blue: #5b8ff0; --mark: #24365e; --card: #1a202b;
-  --shade: 0 18px 40px -22px rgba(0, 0, 0, .7); color-scheme: dark;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
