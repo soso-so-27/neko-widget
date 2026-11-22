@@ -117,6 +117,7 @@ private enum CloudyWindowVerifier {
         try beforePlacementPreparesTheNewestFew()
         try rotationAndSmallPools()
         try catScopesAndExpiry()
+        try manyCatsWithUnassignedPhotos()
         try permissionAndPublicBoundary()
         try preparationRaces()
         try preparationRetainsPlannedAndFrozenPhotos()
@@ -971,7 +972,39 @@ private enum CloudyWindowVerifier {
             try uneven.store.timeline(scopeID: CloudyWindowStore.personalScope,
                 now: baseline.addingTimeInterval(Double(offset) * day))[0].selection.profileID!
         }
-        try check(zip(rotation, rotation.dropFirst()).allSatisfy { $0.0 != $0.1 }, "one-photo cat still alternates with a larger cat pool")
+        // 11/22: the one-photo cat gets its turn, then sits out while its
+        // only photo was shown in the last 30 days.
+        try check(rotation.filter { $0 == "cat-0" }.count == 1 && rotation.contains("cat-1"),
+                  "a one-photo cat gets one turn, then waits out the 30 days")
+    }
+
+    /// 11/22: three cats with 1, 4 and 10 photos given to them, and many
+    /// photos given to no cat. Those take turns as one group, and no photo
+    /// comes back within 30 days.
+    private static func manyCatsWithUnassignedPhotos() throws {
+        var f = try Fixture(count: 32, cats: 3)
+        defer { f.cleanup() }
+        takenLongAgo(&f)
+        for key in f.metadata.keys {
+            let index = Int(key.dropFirst(6))!
+            f.metadata[key]?.profileIDs = index < 1 ? ["cat-0"] : index < 5 ? ["cat-1"] : index < 15 ? ["cat-2"] : []
+        }
+        try f.store.synchronize(metadata: f.metadata, profiles: f.profiles, now: baseline)
+        var shown: [String] = []
+        var cats: [String?] = []
+        for offset in 0..<30 {
+            let entry = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+                now: baseline.addingTimeInterval(Double(offset) * day))[0]
+            try check(entry.selection.kind == .ordinary, "many cats: ordinary days")
+            shown.append(entry.selection.photoID)
+            cats.append(entry.selection.profileID)
+        }
+        try check(Set(shown).count == shown.count, "many cats: no photo twice within 30 days")
+        let unassigned = shown.filter { f.metadata[$0]?.profileIDs.isEmpty == true }
+        try check(unassigned.count >= 10 && cats.filter { $0 == nil }.count == unassigned.count,
+                  "many cats: photos given to no cat take turns")
+        try check(["cat-0", "cat-1", "cat-2"].allSatisfy { id in cats.contains(id) }, "many cats: every cat gets a turn")
+        try check(cats.filter { $0 == "cat-0" }.count == 1, "many cats: a one-photo cat waits out the 30 days")
     }
 
     private static func permissionAndPublicBoundary() throws {

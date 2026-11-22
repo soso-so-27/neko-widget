@@ -1486,7 +1486,7 @@ struct FamilyNotebookView: View {
                 Section("最近の書き込み") {
                     ForEach(visibleRecentFromFamily) { operation in
                         LabeledContent {
-                            Text(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))
+                            Text(FamilyNotebookRecentDate.text(operation.editedAt))
                         } label: {
                             Text(model.place(of: operation))
                             Text(model.shownName(operation.author))
@@ -3256,6 +3256,17 @@ enum FamilyNotebookOfflineText {
     static let title = "接続できません。"
     static let next = "電波のあるところで、もう一度お試しください。"
     static let sentence = title + next
+}
+
+/// The day of a 「最近の書き込み」 row: 「10/19」, with the year
+/// (「2025/10/19」) only when it is not this year (11/22).
+enum FamilyNotebookRecentDate {
+    static func text(_ date: Date, now: Date = .now) -> String {
+        let calendar = Calendar.nekoGregorian
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = day.year, let month = day.month, let dayOfMonth = day.day else { return "" }
+        return year == calendar.component(.year, from: now) ? "\(month)/\(dayOfMonth)" : "\(year)/\(month)/\(dayOfMonth)"
+    }
 }
 
 /// 「通報への返答」: one line per report, newest first.

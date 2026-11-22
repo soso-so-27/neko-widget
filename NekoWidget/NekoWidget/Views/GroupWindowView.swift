@@ -1507,7 +1507,8 @@ enum GroupPhotoTileShape {
     }
 }
 
-/// The day under a まど photo: 「今日」「3日前」 within a week, else 「10月19日」.
+/// The day under a まど photo: 「今日」「3日前」 within a week, else 「10月19日」,
+/// with the year (「2025年10月19日」) only when it is not this year (11/22).
 /// Worked out once per tile drawing; nothing runs while scrolling.
 enum GroupPhotoTileDate {
     static func text(_ date: Date, now: Date = .now) -> String {
@@ -1517,6 +1518,11 @@ enum GroupPhotoTileDate {
         if days == 0 { return "今日" }
         if days == 1 { return "昨日" }
         if days > 1 && days < 7 { return "\(days)日前" }
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        if let year = day.year, let month = day.month, let dayOfMonth = day.day,
+           year != calendar.component(.year, from: now) {
+            return "\(year)年\(month)月\(dayOfMonth)日"
+        }
         return date.formatted(.dateTime.month().day())
     }
 }

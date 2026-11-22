@@ -1373,20 +1373,34 @@ struct CloudyWindowStore: Sendable {
         }
         var selectedProfile = profile
         if profile == nil {
-            let groups = state.profiles.keys.sorted().filter { id in
-                candidates.contains { state.metadata[$0.photoID]?.profileIDs.contains(id) == true }
+            // 11/22: with two or more cats, the photos not given to any cat
+            // take turns too, as one group (""), so a house that has given
+            // only a few photos to each cat still sees the rest.
+            let unassigned = ""
+            func belongs(_ photo: CloudyWindowPreparedPhoto, to id: String) -> Bool {
+                let cats = state.metadata[photo.photoID]?.profileIDs ?? []
+                return id == unassigned ? !cats.contains { state.profiles[$0] != nil } : cats.contains(id)
             }
+            var groups = state.profiles.keys.sorted().filter { id in candidates.contains { belongs($0, to: id) } }
+            if !groups.isEmpty, state.profiles.count > 1, candidates.contains(where: { belongs($0, to: unassigned) }) {
+                groups.append(unassigned)
+            }
+            // 11/22: a group with only photos shown in the last 30 days sits
+            // the day out, unless every group does.
+            let fresh = groups.filter { id in candidates.contains { belongs($0, to: id) && !recent.contains($0.photoID) } }
+            if !fresh.isEmpty { groups = fresh }
             if !groups.isEmpty {
-                let last = previous.first?.profileID
+                let last = previous.first.map { $0.profileID ?? unassigned }
                 let next = groups.first { $0 != last } ?? groups[0]
                 // Least recently shown known cat; alphabetical IDs never
                 // starve a third or fourth cat in the daily rotation.
-                selectedProfile = groups.filter { $0 != last }.min { lhs, rhs in
-                    let a = previous.first { $0.profileID == lhs }?.day ?? .distantPast
-                    let b = previous.first { $0.profileID == rhs }?.day ?? .distantPast
+                let chosen = groups.filter { $0 != last }.min { lhs, rhs in
+                    let a = previous.first { ($0.profileID ?? unassigned) == lhs }?.day ?? .distantPast
+                    let b = previous.first { ($0.profileID ?? unassigned) == rhs }?.day ?? .distantPast
                     return a == b ? lhs < rhs : a < b
                 } ?? next
-                candidates = candidates.filter { state.metadata[$0.photoID]?.profileIDs.contains(selectedProfile!) == true }
+                selectedProfile = chosen == unassigned ? nil : chosen
+                candidates = candidates.filter { belongs($0, to: chosen) }
             }
         }
         guard !candidates.isEmpty else { return nil }
