@@ -64,7 +64,7 @@ jobs:
           # speed (display-speed measurements) runs only when asked for.
           if os.environ['EVENT'] == 'workflow_dispatch' and requested == 'all': routes.append('speed')
           if os.environ['EVENT'] == 'workflow_dispatch' and requested != 'all': routes = [requested]
-          matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r == 'standard' and not os.environ.get('TEST_FILTER') else [0])]
+          matrix = [{'route':r,'shard':i} for r in routes for i in (range(4) if r in ('standard','widget') and not os.environ.get('TEST_FILTER') else [0])]
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('matrix=' + json.dumps({'include':matrix}) + '\n')
           PY
   output:

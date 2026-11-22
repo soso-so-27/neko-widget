@@ -49,7 +49,9 @@ if sys.argv[1] == 'select':
     lane = sys.argv[4] if len(sys.argv) > 4 else 'standard'
     needle = sys.argv[5] if len(sys.argv) > 5 else ''
     candidates = [t for t in inventory() if route(t) == lane and needle in t]
-    selected = candidates[shard::4] if lane == 'standard' and not needle else candidates
+    # widget: 8 captures take about 14 minutes each, so one job of all 8 passes
+    # the 90-minute limit and cancels the whole run. Split it like standard.
+    selected = candidates[shard::4] if lane in ('standard', 'widget') and not needle else candidates
     if needle and shard != 0: selected = []
     assert selected
     Path(sys.argv[3]).write_text('\n'.join(selected) + '\n', encoding='utf-8')
