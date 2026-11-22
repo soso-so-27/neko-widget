@@ -272,11 +272,6 @@ struct CatProfileLifeReferenceEditor: View {
     @State private var dates: CatProfileLifeDatesPresentation
     @State private var isSaving = false
     @State private var saveFailed = false
-    /// 11/22: 旅立った日 sits with the cat's other dates (one place to enter
-    /// a date). Kept where it always was (CatFarewell, on this iPhone).
-    @AppStorage(CatFarewell.key) private var farewellJSON = ""
-    private let recordedFarewell: CatCareDay?
-    @State private var farewell: CatCareDay?
 
     init(
         profile: CatProfilePresentation,
@@ -285,11 +280,6 @@ struct CatProfileLifeReferenceEditor: View {
         self.profile = profile
         self.save = save
         _dates = State(initialValue: profile.lifeDates)
-        let recorded = Version1.isOn
-            ? CatFarewell.days(UserDefaults.standard.string(forKey: CatFarewell.key) ?? "")[profile.identifier]
-            : nil
-        recordedFarewell = recorded
-        _farewell = State(initialValue: recorded)
     }
 
     var body: some View {
@@ -297,9 +287,6 @@ struct CatProfileLifeReferenceEditor: View {
             Form {
                 dateSection(.birthday)
                 dateSection(.adoptionDay)
-                if Version1.isOn {
-                    farewellSection
-                }
                 if dates.hasBothDates {
                     Section {
                         Picker("成長アルバムで使う日", selection: primaryKind) {
@@ -332,9 +319,6 @@ struct CatProfileLifeReferenceEditor: View {
                         Task {
                             let saved = await save(profile.identifier, dates)
                             isSaving = false
-                            if saved, farewell != recordedFarewell {
-                                farewellJSON = CatFarewell.setting(farewell, for: profile.identifier, in: farewellJSON)
-                            }
                             if saved { dismiss() } else { saveFailed = true }
                         }
                     }
@@ -343,30 +327,7 @@ struct CatProfileLifeReferenceEditor: View {
             }
         }
         .interactiveDismissDisabled(isSaving)
-        .appRecordEditing(retainWhileHidden: dates != profile.lifeDates || farewell != recordedFarewell || isSaving)
-    }
-
-    private var farewellSection: some View {
-        Section {
-            Toggle("設定する", isOn: Binding(
-                get: { farewell != nil },
-                set: { farewell = $0 ? CatCareDay(date: .now) : nil }
-            ))
-            if farewell != nil {
-                DatePicker(
-                    "旅立った日",
-                    selection: Binding(
-                        get: { farewell?.date() ?? .now },
-                        set: { farewell = CatCareDay(date: $0) ?? farewell }
-                    ),
-                    in: ...Date.now,
-                    displayedComponents: .date
-                )
-            }
-        } header: {
-            Text("旅立った日")
-        }
-        .accessibilityIdentifier("cat-life-dates-farewell")
+        .appRecordEditing(retainWhileHidden: dates != profile.lifeDates || isSaving)
     }
 
     private func dateSection(_ kind: CatProfileLifeReferenceKindPresentation) -> some View {
