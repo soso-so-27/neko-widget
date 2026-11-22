@@ -48,7 +48,7 @@
           <div class="phone">
             <div class="phone-screen screen-home">
               <span class="status">9:41</span>
-              <div class="widget widget-big cloudy"><img src="images/photo-sofa.webp" alt="" style="object-position: 40% 50%"><i class="fog" aria-hidden="true"></i><span class="tap-tag" aria-hidden="true">タップで、きょうの1枚</span></div>
+              <div class="widget widget-big cloudy" data-cloudy><img src="images/photo-sofa.webp" alt="" style="object-position: 40% 50%"><div class="frost" aria-hidden="true"><img class="blur" src="images/photo-sofa.webp" alt="" style="object-position: 40% 50%"><i class="fog"></i><svg class="paw paw-1" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg><svg class="paw paw-2" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg></div><button type="button" class="tap-tag" aria-hidden="true" tabindex="-1">タップで、きょうの1枚</button></div>
               <small class="widget-label">ねこのまど</small>
               <div class="icons" aria-hidden="true"><i class="i1"></i><i class="i2"></i><i class="i3"></i><i class="i4"></i><i class="i5"></i><i class="i6"></i><i class="i7"></i><i class="i8"></i></div>
             </div>
@@ -547,5 +547,41 @@
   </div>
 </footer>
 
+<script>
+/* 11/22: the LP plays the app's くもりのまど. The hero widget is fogged,
+   a cat leaves two paw prints on the glass, and 「タップで、きょうの1枚」
+   wipes it clear from where it is pressed (or by itself after a moment).
+   Each section's phone clears once as it scrolls in, and its のわ hops.
+   Reduced motion: everything is shown clear and still. */
+(function () {
+  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var root = document.documentElement;
+  if (still) { root.classList.add('lp-still'); return; }
+  root.classList.add('lp-play');
+  var hero = document.querySelector('[data-cloudy]');
+  if (hero) {
+    var tag = hero.querySelector('.tap-tag'), cleared = false;
+    var clear = function (x, y) {
+      if (cleared) return; cleared = true;
+      var frost = hero.querySelector('.frost');
+      if (x != null) { frost.style.setProperty('--x', x + 'px'); frost.style.setProperty('--y', y + 'px'); }
+      hero.classList.add('clear');
+      document.querySelector('.feature').classList.add('hero-cleared');
+    };
+    tag.addEventListener('click', function (e) {
+      var r = hero.getBoundingClientRect();
+      clear(e.clientX ? e.clientX - r.left : r.width / 2, e.clientY ? e.clientY - r.top : r.height - 24);
+    });
+    setTimeout(function () { clear(); }, 4200);
+  }
+  if (!('IntersectionObserver' in window)) { root.classList.remove('lp-play'); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add('seen'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.35 });
+  document.querySelectorAll('.feature .shot').forEach(function (el, i) { if (i > 0) { el.classList.add('watch'); io.observe(el); } });
+})();
+</script>
 </body>
 </html>
