@@ -183,6 +183,7 @@ python3 ci/test-ux-mado-1122f.py
 python3 ci/test-ux-notebook-1122g.py
 python3 ci/test-ux-quiet-1122i.py
 python3 ci/test-month-menu-1122k.py
+python3 ci/test-export-in-menu-1122m.py
 python3 ci/test-left-1121k.py
 python3 ci/test-family-1121l.py
 python3 ci/test-mado2-1121m.py
