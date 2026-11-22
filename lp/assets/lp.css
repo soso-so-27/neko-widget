@@ -153,9 +153,24 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .phone.mid .screen { padding: 24% 7% 0; }
 .phone.mid .island { top: 3.2%; height: 3.2%; }
 .phone.mid .apps { gap: 2cqh 4cqw; margin-top: 3cqh; }
+.screen.white { background: #fff; }
 .screen.send { padding: 0; display: flex; flex-direction: column; }
 .sent { width: 100%; flex: 1; min-height: 0; object-fit: cover; }
 .sendbtn { margin: 6cqw; text-align: center; background: var(--blue); color: #fff; font-size: 4.6cqw; font-weight: 700; border-radius: 999px; padding: .7em .4em; }
+
+/* only cats: the iPhone's photos (mixed) beside ねこのまど (cats only) */
+.only .in:first-child { margin-top: 0; margin-bottom: 26px; }
+.big-h { font-size: clamp(26px, 7.4vw, 44px) !important; }
+.screen.roll { padding: 22% 0 0; }
+.rgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; }
+.rgrid img, .rgrid i { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.rgrid i { display: grid; place-items: center; background: #eef0f4; }
+.rgrid svg { width: 48%; fill: #fff; stroke: #8b93a5; stroke-width: 1.3; stroke-linejoin: round; }
+.rgrid .ln { fill: none; stroke-linecap: round; }
+.only .phone.mid { --pw: min(158px, 41vw); }
+.rcount { position: absolute; left: 0; right: 0; bottom: 9%; text-align: center; font-size: 5.6cqw; color: #8b8178; }
+.rcount.cat { color: var(--ink); font-weight: 700; }
+.only figure:first-child .rgrid { filter: saturate(.85); }
 
 /* the monthly book: a cover with page edges, and the notice that it came */
 .bookwrap { display: grid; justify-items: center; gap: 18px; }
@@ -234,6 +249,7 @@ details p { padding: 0 0 16px; font-size: 14px; color: var(--ink-2); }
   .pic .phone, .scene .phone { --pw: 270px; }
   .phone.mini { --pw: 130px; } .three .now .phone.mini { --pw: 156px; }
   .phone.mid { --pw: 180px; }
+  .only .phone.mid { --pw: 210px; }
   .bar { display: none; }
   .end { padding-block: 72px; }
 }
