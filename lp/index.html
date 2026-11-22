@@ -33,14 +33,18 @@
 
 <main id="top">
 
-<!-- みてねの形：短い約束 → 入手 → いい表情の写真を大きく -->
+<!-- 最初の画面：まどの向こうに、うちの子のいい表情。窓辺にのわ。その下に約束と入手 -->
 <section class="hero">
+  <div class="window">
+    <div class="arch"><img src="images/photo-grey-yawn.webp" alt="あくびをする灰色の猫" width="1200" height="900"><i class="mul h"></i></div>
+    <i class="sill"></i>
+    <img class="nowa-sill" src="images/nowa-peek.webp" alt="" width="640" height="409">
+  </div>
   <div class="in">
     <h1>撮りためた猫の写真に、<br>毎日会える。</h1>
     <p class="lead">iPhoneの中から猫の写真だけを見つけて、<br>ホーム画面に毎日ちがう1枚を届けます。</p>
     <a class="store" id="hero-cta" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
   </div>
-  <img class="big" src="images/photo-grey-yawn.webp" alt="あくびをする灰色の猫" width="1200" height="900">
 </section>
 
 <!-- その写真が、ホーム画面に -->
@@ -63,13 +67,13 @@
   </div>
 </section>
 
-<!-- 色のタイル：どんな日の1枚が届くか -->
+<!-- どんな日の1枚が届くか：アプリと同じウィジェットの形と札で -->
 <section class="feat">
-  <ul class="tiles" aria-label="届く1枚の例">
-    <li class="t-pink"><img src="images/photo-two-cats.webp" alt=""><span>1年前のきょう</span></li>
-    <li class="t-blue"><img src="images/photo-grey-chair.webp" alt=""><span>きょうは むぎの誕生日</span></li>
-    <li class="t-yellow"><img src="images/photo-lap.webp" alt=""><span>うちに来て 4年</span></li>
-    <li class="t-green"><img src="images/photo-stretch.webp" alt=""><span>3年前の今ごろ</span></li>
+  <ul class="days" aria-label="届く1枚の例">
+    <li><img src="images/photo-two-cats.webp" alt=""><span>1年前のきょう</span></li>
+    <li><img src="images/photo-grey-chair.webp" alt=""><span>きょうは むぎの誕生日</span></li>
+    <li><img src="images/photo-lap.webp" alt=""><span>うちに来て 4年</span></li>
+    <li><img src="images/photo-stretch.webp" alt=""><span>3年前の今ごろ</span></li>
   </ul>
   <div class="in">
     <h2>あの日の1枚が、また届く</h2>
@@ -196,11 +200,12 @@
   </div>
 </footer>
 
-<!-- スマホで下に固定する帯（みてねと同じ形）。最初と最後の入手ボタンが見えているあいだは隠す -->
-<div class="bar">
-  <div class="bar-id"><img src="images/app-icon-180.png" alt="" width="44" height="44"><span><b>ねこのまど</b><small>猫の写真に、毎日会えるアプリ</small></span></div>
-  <a class="bar-go" href="https://apps.apple.com/jp/app/id6801962436">無料ではじめる</a>
-</div>
+<!-- スマホで下に浮かぶ小さな帯。最初と最後の入手ボタンが見えているあいだは隠す -->
+<a class="bar" href="https://apps.apple.com/jp/app/id6801962436" aria-label="ねこのまどをApp Storeで入手">
+  <img src="images/app-icon-180.png" alt="" width="40" height="40">
+  <span><b>ねこのまど</b><small>無料ではじめられる</small></span>
+  <span class="go">入手</span>
+</a>
 
 <script>
 /* 動くのは、くもりを晴らす短い動き1つだけ。見えているあいだだけくり返す。
