@@ -1537,7 +1537,7 @@ enum AlbumArrivalNotice {
         // 11/22 (⑦): resting, no work notice is set (nor asked for).
         let resting = restsAfterShownNotices()
         let month = resting ? nil : month
-        let year = resting ? nil : year
+        // The year's work comes once a year: its notice is never rested.
         if month == nil { notePending(nil) }
         guard month != nil || year != nil else { permissionWhenSet = nil; return }
         let permission = await center.notificationSettings().authorizationStatus
