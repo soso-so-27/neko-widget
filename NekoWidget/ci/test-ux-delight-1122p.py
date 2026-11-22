@@ -120,7 +120,7 @@ class AlbumArrivalFrostTests(unittest.TestCase):
         self.assertIn("guard clearingCover == nil else { return }", clear)
         self.assertIn("guard frosted else { open(); return }", clear)
         self.assertIn("guard !reduceMotion else { open(); return }", clear)
-        self.assertIn("try? await Task.sleep(for: .seconds(CloudyFrostLook.clearDuration))", clear)
+        self.assertIn("try? await Task.sleep(for: .seconds(CloudyFrostLook.openAfter))", clear)
         self.assertLess(clear.index("Task.sleep"), clear.rindex("open()"))
         self.assertNotIn("UserDefaults", clear)
 
