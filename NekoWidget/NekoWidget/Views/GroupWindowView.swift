@@ -37,6 +37,9 @@ protocol GroupWindowMediaClient: GroupWindowClient {
     /// 11/20: windows the last list read could not verify. They are left out
     /// of the list (never shown unverified), and their kept copies stay.
     func unreadableWindowIDs() async -> Set<String>
+    /// 11/22: why each of those could not be read, as a short code (type and
+    /// case of the error). Shown only in test builds, to find the failing stage.
+    func unreadableReasons() async -> [String: String]
     /// 11/20: tells the relay again about photos kept here whose receipt did
     /// not reach it, among the photos it still lists for this iPhone.
     func retryAcknowledgements(windowID: String, listed: Set<String>) async
@@ -46,6 +49,7 @@ extension GroupWindowMediaClient {
     func pendingDelivery(windowID: String) async -> GroupPendingDelivery? { nil }
     func discardPendingDelivery(operationID: UUID) async {}
     func unreadableWindowIDs() async -> Set<String> { [] }
+    func unreadableReasons() async -> [String: String] { [:] }
     func retryAcknowledgements(windowID: String, listed: Set<String>) async {}
 }
 
@@ -2525,6 +2529,9 @@ final class GroupWindowListModel: ObservableObject {
 #if DEBUG || INTERNAL_PRESENTATION
     /// Test builds only: how long the last list load took, to find where the wait is.
     @Published private(set) var lastLoadTiming: String?
+    /// 11/22: test builds only: where the last list read failed (the stage
+    /// and the error's type and case, window IDs cut to 8 characters).
+    @Published private(set) var lastFailure: String?
     private var completedLoads = 0
     private var firstLoadSeconds: TimeInterval?
 
@@ -2555,6 +2562,16 @@ final class GroupWindowListModel: ObservableObject {
             // the list's usual sentence, and its home-screen copy is kept.
             let unreadable = await client.unreadableWindowIDs()
             message = unreadable.isEmpty ? nil : GroupWindowPresentation.message(for: GroupClientError.invalidResponse)
+#if DEBUG || INTERNAL_PRESENTATION
+            if unreadable.isEmpty {
+                lastFailure = nil
+            } else {
+                let reasons = await client.unreadableReasons()
+                lastFailure = "まどの確かめ: " + unreadable.sorted().map { id in
+                    String(id.prefix(8)) + " " + (reasons[id] ?? "?")
+                }.joined(separator: " / ")
+            }
+#endif
             hasLoaded = true
             GroupWindowListNavigation.shared.rememberListed(windows)
             renewPendingKeys()
@@ -2575,6 +2592,9 @@ final class GroupWindowListModel: ObservableObject {
             outcome = "失敗"
 #endif
             message = GroupWindowPresentation.message(for: error)
+#if DEBUG || INTERNAL_PRESENTATION
+            lastFailure = "一覧: " + ProductionGroupWindowClient.reasonCode(error)
+#endif
             hasLoaded = true
         }
     }
@@ -3046,6 +3066,17 @@ struct GroupWindowListSection: View {
                 // 11/22: with the cards kept from last time on screen, a failed
                 // refresh says nothing. Each card still opens, and the list is
                 // read again the next time the tab is shown.
+#if DEBUG || INTERNAL_PRESENTATION
+                if InternalBuildPresentationAvailability.isAvailable, let failure = model.lastFailure {
+                    // Test builds only: the failing stage, to find the cause.
+                    Text("診断　" + failure)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("group-window-list-diagnosis")
+                }
+#endif
             }
             if !compactHeader {
                 NavigationLink {
