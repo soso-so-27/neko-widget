@@ -67,69 +67,98 @@
   </div>
 </section>
 
-<!-- どんな日の1枚が届くか：アプリと同じウィジェットの形と札で -->
+<!-- あの日の1枚：同じホーム画面を3日分。日ごとにちがう子が出る -->
 <section class="feat">
-  <ul class="days" aria-label="届く1枚の例">
-    <li><img src="images/photo-two-cats.webp" alt=""><span>1年前のきょう</span></li>
-    <li><img src="images/photo-grey-chair.webp" alt=""><span>きょうは むぎの誕生日</span></li>
-    <li><img src="images/photo-lap.webp" alt=""><span>うちに来て 4年</span></li>
-    <li><img src="images/photo-stretch.webp" alt=""><span>3年前の今ごろ</span></li>
-  </ul>
+  <ol class="three" aria-label="3日分のホーム画面">
+    <li>
+      <div class="phone mini"><div class="island"></div><div class="screen home">
+        <div class="widget"><img src="images/photo-lap.webp" alt=""></div>
+        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+      </div></div>
+      <p><b>きのう</b></p>
+    </li>
+    <li class="now">
+      <div class="phone mini"><div class="island"></div><div class="screen home">
+        <div class="widget"><img src="images/photo-two-cats.webp" alt=""></div>
+        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+      </div></div>
+      <p><b>きょう</b>1年前のきょう</p>
+    </li>
+    <li>
+      <div class="phone mini"><div class="island"></div><div class="screen home">
+        <div class="widget"><img src="images/photo-grey-chair.webp" alt="" style="object-position: 45% 60%"></div>
+        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+      </div></div>
+      <p><b>あした</b>むぎの誕生日</p>
+    </li>
+  </ol>
   <div class="in">
     <h2>あの日の1枚が、また届く</h2>
-    <p>1年前のきょうや誕生日には、その日の写真を。撮るだけ撮って見返せていなかった1枚に、ホーム画面でまた会えます。</p>
+    <p>ホーム画面の写真は、毎日ちがう子に。1年前のきょうや誕生日には、その日の写真が届きます。撮るだけ撮って見返せていなかった1枚に、また会えます。</p>
   </div>
 </section>
 
-<!-- 動くのは1つだけ：くもり→タップ→晴れる -->
+<!-- くもり：ホーム画面のウィジェットがくもって届き、タップで晴れる（動くのはここだけ） -->
 <section class="feat">
-  <div class="clipwrap" aria-hidden="true">
-    <div class="clip" data-clip>
-      <img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%">
-      <div class="frost"><img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"><i class="fog"></i>
-        <svg class="paw p1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-        <svg class="paw p2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-        <span class="tag">タップで、きょうの1枚</span>
+  <div class="pic" aria-hidden="true">
+    <div class="phone"><div class="island"></div><div class="screen home">
+      <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
+      <div class="clip" data-clip>
+        <img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%">
+        <div class="frost"><img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"><i class="fog"></i>
+          <svg class="paw p1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
+          <svg class="paw p2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
+          <span class="tag">タップで、きょうの1枚</span>
+        </div>
+        <i class="touch"></i>
       </div>
-      <i class="touch"></i>
-    </div>
-    <img class="nowa-peek" src="images/nowa-peek.webp" alt="" width="640" height="409">
+      <p class="wname">ねこのまど</p>
+      <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i><i class="a5"></i><i class="a6"></i><i class="a7"></i></div>
+    </div></div>
   </div>
   <div class="in">
     <h2>くもりを晴らして、きょうの1枚</h2>
-    <p>まどは毎日くもって届きます。タップすると晴れて、きょうの子に会える。ちいさな楽しみです。</p>
+    <p>ホーム画面のまどは、毎日くもって届きます。タップすると晴れて、きょうの子に会えます。</p>
   </div>
 </section>
 
-<!-- 家族のまど -->
+<!-- 家族のまど：あなたのiPhone → 実家のiPhone -->
 <section class="feat">
-  <div class="family" aria-hidden="true">
-    <div class="phone sm">
-      <div class="island"></div>
-      <div class="screen home">
-        <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
-        <div class="widget"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%"><span class="from"><i>ママ</i>ママから・いま届いた1枚</span><span class="heart">♥</span></div>
-        <p class="wname">実家のまど</p>
-      </div>
-    </div>
+  <div class="pair" aria-hidden="true">
+    <figure>
+      <div class="phone mid"><div class="island"></div><div class="screen white send">
+        <img class="sent" src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%">
+        <span class="sendbtn">実家のまどに届ける</span>
+      </div></div>
+      <figcaption>あなたのiPhone</figcaption>
+    </figure>
+    <span class="arrow">→</span>
+    <figure>
+      <div class="phone mid"><div class="island"></div><div class="screen home">
+        <div class="widget"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%"><span class="from">ゆうから・いま届いた1枚</span><span class="heart">♥</span></div>
+        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+      </div></div>
+      <figcaption>実家のiPhone</figcaption>
+    </figure>
   </div>
   <div class="in">
     <h2>家族のホーム画面にも</h2>
-    <p>トークだと流れてしまう1枚を、招待した家族のまどへ。実家のホーム画面に、うちの子が届きます。招待された家族は無料です。</p>
+    <p>トークだと流れてしまう1枚を、実家のまどへ。家族のホーム画面に、うちの子が届きます。招待された家族は無料です。</p>
   </div>
 </section>
 
-<!-- 月の作品 -->
+<!-- 月の作品：本の形と、届いた知らせ -->
 <section class="feat">
   <div class="bookwrap" aria-hidden="true">
+    <p class="notice"><img src="images/app-icon-180.png" alt="" width="22" height="22">10月の作品が届きました</p>
     <div class="book">
       <img src="images/photo-two-cats.webp" alt="" style="object-position: 60% 50%">
-      <p><small>とどきました</small><b>10月</b>うちの子</p>
+      <p><b>うちの子</b>2026年10月・36枚</p>
     </div>
   </div>
   <div class="in">
     <h2>毎月1日、先月が1冊に</h2>
-    <p>その月の猫の写真から、アプリが1冊にまとめて届けます。Plus（はじめの14日間は無料）。</p>
+    <p>その月の猫の写真から、アプリが1冊の作品にまとめて届けます。Plus（はじめの14日間は無料）。</p>
   </div>
 </section>
 

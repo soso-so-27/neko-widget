@@ -73,7 +73,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .scene .phone { transform: rotate(-3deg); }
 
 /* the phone, drawn in HTML; its height follows its width */
-.phone { --pw: min(250px, 62vw); position: relative; width: var(--pw); height: calc(var(--pw) * 2.1444); border-radius: 15% / 7%; background: var(--frame); padding: 2.8%;
+.phone { --pw: min(250px, 62vw); position: relative; width: var(--pw); height: calc(var(--pw) * 2.1444); border-radius: 15% / 7%; background: var(--frame); padding: calc(var(--pw) * .028);
   box-shadow: 0 34px 60px -26px rgba(30, 20, 10, .6), inset 0 0 0 1.5px #3a3d45; }
 .phone.sm { --pw: min(230px, 58vw); height: calc(var(--pw) * 1.5); border-radius: 15% 15% 0 0 / 10% 10% 0 0; padding-bottom: 0; }
 .island { position: absolute; top: 3.5%; left: 50%; width: 31%; height: 3.6%; transform: translateX(-50%); background: #000; border-radius: 999px; z-index: 3; }
@@ -102,19 +102,11 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .from i { font-style: normal; display: grid; place-items: center; width: 6.5cqw; height: 6.5cqw; border-radius: 50%; background: var(--blue); color: #fff; font-size: 2.4cqw; }
 .heart { position: absolute; right: 3cqw; bottom: 3cqw; display: grid; place-items: center; width: 9cqw; height: 9cqw; border-radius: 50%; background: #fff; color: #e0483e; font-size: 4.5cqw; }
 
-/* the days a photo comes back, as the app's own widgets and labels */
-.days { list-style: none; margin: 0 auto; padding: 0 max(24px, env(safe-area-inset-left, 0px)); max-width: 560px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.days li { position: relative; aspect-ratio: 1; border-radius: 24px; overflow: hidden; box-shadow: 0 14px 26px -18px rgba(70, 45, 20, .6); }
-.days li:nth-child(odd) { rotate: -1.5deg; } .days li:nth-child(even) { rotate: 1.5deg; translate: 0 10px; }
-.days img { width: 100%; height: 100%; object-fit: cover; }
-.days span { position: absolute; left: 9px; top: 9px; max-width: calc(100% - 18px); font-size: 11.5px; font-weight: 700; line-height: 1.2; color: #fff; background: rgba(23,25,31,.5); border-radius: 999px; padding: 5px 10px; }
-
 /* the one clip: cloudy, a tap, clear; it loops while in view */
 @property --w { syntax: "<number>"; inherits: true; initial-value: 0; }
 @property --k { syntax: "<number>"; inherits: true; initial-value: 0; }
-.clipwrap { position: relative; margin: 0 auto; width: fit-content; padding-bottom: 26px; }
-.clip { position: relative; width: min(300px, 76vw); aspect-ratio: 1; border-radius: 13%; overflow: hidden; container-type: size;
-  box-shadow: 0 30px 50px -26px rgba(70, 50, 20, .5); --w: 0; --k: 0; }
+.clip { position: relative; width: 100%; aspect-ratio: 1; border-radius: 9cqw; overflow: hidden; container-type: size;
+  box-shadow: 0 2cqh 4cqh -2cqh rgba(0,0,0,.35); --w: 0; --k: 0; }
 .clip > img, .frost, .frost img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .frost { -webkit-mask-image: radial-gradient(circle at 50% 62%, transparent calc(var(--w) * 138cqw - 18cqw), #000 calc(var(--w) * 138cqw));
   mask-image: radial-gradient(circle at 50% 62%, transparent calc(var(--w) * 138cqw - 18cqw), #000 calc(var(--w) * 138cqw)); }
@@ -136,17 +128,46 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
   92% { --w: 1; --k: 0; }
   100% { --w: 0; --k: 0; }
 }
-.nowa-peek { position: absolute; right: -46px; bottom: 0; width: 104px; height: auto; transform: rotate(8deg); }
 
-/* family window and the book, on a soft panel */
-.family, .bookwrap { max-width: 1080px; margin: 0 auto; background: var(--soft); padding: 34px 0 0; display: flex; justify-content: center; overflow: hidden; border-radius: 28px; margin-inline: max(16px, env(safe-area-inset-left, 0px)); }
-.bookwrap { padding: 34px 0; }
-.book { position: relative; width: min(210px, 54vw); aspect-ratio: 3 / 4; border-radius: 4px 14px 14px 4px; overflow: hidden; box-shadow: 0 20px 40px -20px rgba(0,0,0,.5); text-align: left; }
-.book img { width: 100%; height: 100%; object-fit: cover; }
-.book::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 10px; background: linear-gradient(90deg, rgba(0,0,0,.28), transparent); }
-.book p { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 16px 16px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.55)); font-size: 12px; }
-.book small { display: block; font-size: 10px; }
-.book b { display: block; font-family: var(--font-head); font-size: 32px; line-height: 1.2; }
+.pic { display: flex; justify-content: center; }
+.phone.mid .from { font-size: 6.4cqw; padding: .4em .7em; }
+.phone.mid .heart { width: 14cqw; height: 14cqw; font-size: 7cqw; }
+/* three days of the same home screen: a different cat each day */
+.three { list-style: none; margin: 0 auto; padding: 0 12px; max-width: 640px; display: flex; justify-content: center; align-items: flex-end; gap: clamp(8px, 3vw, 22px); }
+.three li { display: grid; justify-items: center; gap: 8px; opacity: .78; }
+.three li.now { opacity: 1; }
+.three p { font-size: 12px; line-height: 1.4; color: var(--ink-2); display: grid; text-align: center; }
+.three b { font-size: 13px; color: var(--ink); }
+.phone.mini { --pw: min(104px, 27vw); padding: calc(var(--pw) * .035); }
+.three .now .phone.mini { --pw: min(124px, 31vw); }
+.phone.mini .screen { padding: 24% 7% 0; }
+.phone.mini .island { top: 3.2%; height: 3.2%; }
+.phone.mini .apps { gap: 2cqh 4cqw; margin-top: 3cqh; }
+
+/* family: your iPhone, then the family's home screen */
+.pair { display: flex; justify-content: center; align-items: center; gap: clamp(6px, 2.5vw, 20px); padding: 0 12px; }
+.pair figure { margin: 0; display: grid; justify-items: center; gap: 8px; }
+.pair figcaption { font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
+.arrow { font-size: 22px; color: var(--ink-3); }
+.phone.mid { --pw: min(150px, 38vw); padding: calc(var(--pw) * .032); }
+.phone.mid .screen { padding: 24% 7% 0; }
+.phone.mid .island { top: 3.2%; height: 3.2%; }
+.phone.mid .apps { gap: 2cqh 4cqw; margin-top: 3cqh; }
+.screen.send { padding: 0; display: flex; flex-direction: column; }
+.sent { width: 100%; flex: 1; min-height: 0; object-fit: cover; }
+.sendbtn { margin: 6cqw; text-align: center; background: var(--blue); color: #fff; font-size: 4.6cqw; font-weight: 700; border-radius: 999px; padding: .7em .4em; }
+
+/* the monthly book: a cover with page edges, and the notice that it came */
+.bookwrap { display: grid; justify-items: center; gap: 18px; }
+.notice { display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 14px; padding: 9px 14px; font-size: 13px; font-weight: 700;
+  box-shadow: 0 8px 20px -12px rgba(60, 40, 20, .45); }
+.notice img { border-radius: 6px; }
+.book { position: relative; width: min(200px, 52vw); aspect-ratio: 3 / 4; border-radius: 4px 12px 12px 4px; text-align: left;
+  box-shadow: 3px 3px 0 #fbf6ee, 6px 6px 0 #f1e8db, 9px 9px 0 #fbf6ee, 12px 12px 0 #e9dfd0, 0 26px 40px -18px rgba(60, 40, 20, .55); }
+.book img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.book::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 14px; border-radius: 4px 0 0 4px; background: linear-gradient(90deg, rgba(0,0,0,.35), transparent); }
+.book p { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 16px 16px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.6)); font-size: 12px; border-radius: 0 0 12px 4px; }
+.book b { display: block; font-family: var(--font-head); font-size: 26px; line-height: 1.25; }
 
 /* ---------- after the scenes ---------- */
 .more { padding-block: 72px 24px; }
@@ -204,15 +225,15 @@ details p { padding: 0 0 16px; font-size: 14px; color: var(--ink-2); }
 @media (min-width: 760px) {
   .plans { grid-template-columns: 1fr 1fr; }
   .tools { grid-template-columns: repeat(4, 1fr); }
-  .days { max-width: 900px; grid-template-columns: repeat(4, 1fr); }
   .feat .in p { text-align: center; }
 }
 @media (min-width: 900px) {
   .hero { padding-top: 56px; }
   .scene { border-radius: 28px; }
-  .family, .bookwrap { margin-inline: auto; }
   .window { width: 400px; }
-  .phone { --pw: 270px; }
+  .pic .phone, .scene .phone { --pw: 270px; }
+  .phone.mini { --pw: 130px; } .three .now .phone.mini { --pw: 156px; }
+  .phone.mid { --pw: 180px; }
   .bar { display: none; }
   .end { padding-block: 72px; }
 }
