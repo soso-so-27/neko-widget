@@ -36,8 +36,8 @@
 <!-- スクロールで進む物語。スマホの絵は画面に留まり、中身が章ごとに変わる。 -->
 <div class="story" data-story>
 
-  <div class="stage" aria-hidden="true">
-    <div class="stage-in">
+  <div class="stage">
+    <div class="stage-in" aria-hidden="true">
       <img class="nowa-peek" src="images/nowa-peek.webp" alt="" width="640" height="409">
       <div class="phone">
         <div class="island"></div>
@@ -45,7 +45,7 @@
 
           <!-- 0・1：ホーム画面とくもりのまど -->
           <div class="scr scr-home" data-scr="0 1">
-            <div class="status"><b>9:41</b><span class="bars"></span></div>
+            <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
             <div class="widget">
               <div class="days">
                 <img class="d d0" src="images/photo-lap.webp" alt="">
@@ -60,13 +60,13 @@
               <span class="day-label"><b class="l0">おととい</b><b class="l1">きのう</b><b class="l2">きょう</b></span>
             </div>
             <p class="wname">ねこのまど</p>
-            <div class="apps"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-            <div class="dock"><i></i><i></i><i></i><i></i></div>
+            <div class="apps"><span class="app a0"><i></i><small>カレンダー</small></span><span class="app a1"><i></i><small>写真</small></span><span class="app a2"><i></i><small>カメラ</small></span><span class="app a3"><i></i><small>天気</small></span><span class="app a4"><i></i><small>時計</small></span><span class="app a5"><i></i><small>地図</small></span><span class="app a6"><i></i><small>メモ</small></span><span class="app a7"><i></i><small>設定</small></span></div>
+            <div class="dock"><i class="d1"></i><i class="d2"></i><i class="d3"></i><i class="d4"></i></div>
           </div>
 
           <!-- 2：写真の一覧。猫以外が去って、猫だけが残る -->
           <div class="scr scr-photos" data-scr="2">
-            <div class="status"><b>9:41</b><span class="bars"></span></div>
+            <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
             <p class="app-title">写真</p>
             <p class="app-tabs"><b>すべて</b><span>お気に入り</span><span>メモ</span></p>
             <div class="grid mixed">
@@ -94,7 +94,7 @@
 
           <!-- 3：トークは流れ、まどは届く -->
           <div class="scr scr-mado" data-scr="3">
-            <div class="status"><b>9:41</b><span class="bars"></span></div>
+            <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
             <div class="chat">
               <p class="msg me">かわいい〜！</p><p class="msg">今日の夕飯なに？</p><p class="msg me">カレーがいい</p>
               <p class="msg">牛乳買ってきて</p><p class="msg me">了解</p><p class="msg">明日は雨だって</p>
@@ -110,7 +110,7 @@
 
           <!-- 4：月の作品が届く -->
           <div class="scr scr-album" data-scr="4">
-            <div class="status"><b>9:41</b><span class="bars"></span></div>
+            <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
             <p class="app-title">アルバム</p>
             <div class="book">
               <div class="pages">
@@ -127,46 +127,38 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="steps">
-    <section class="step step-0" data-step="0">
-      <div class="cap">
+    <div class="caps">
+<div class="cap" data-cap="0">
         <h1>撮るだけ撮って、<br>見返せていない。</h1>
         <p class="ans"><span class="mk">撮りためた猫の写真に、</span><br><span class="mk">毎日会える。</span></p>
         <a class="store" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
         <ul class="sure"><li>無料ではじめられる</li><li>写真はiPhoneの中で</li><li>広告なし</li></ul>
       </div>
-    </section>
-    <section class="step" data-step="1">
-      <div class="cap">
+<div class="cap" data-cap="1">
         <p class="kick">ホーム画面</p>
         <h2>毎日ちがう1枚が、<br>くもったまどで届く。</h2>
         <p class="line">晴らすまで、きょうはどの子か分からない。</p>
       </div>
-    </section>
-    <section class="step" data-step="2">
-      <div class="cap">
+<div class="cap" data-cap="2">
         <p class="kick">写真</p>
         <h2>ひらけば、ぜんぶ猫。</h2>
         <p class="line">スクショもレシートも、まざらない。猫かどうかはiPhoneの中で見分けます。</p>
       </div>
-    </section>
-    <section class="step" data-step="3">
-      <div class="cap">
+<div class="cap" data-cap="3">
         <p class="kick">まど</p>
         <h2>トークだと流れる1枚を、<br>家族のホーム画面に。</h2>
         <p class="line">招待した人だけの、小さなまど。招待された家族は無料。</p>
       </div>
-    </section>
-    <section class="step" data-step="4">
-      <div class="cap">
+<div class="cap" data-cap="4">
         <p class="kick">月の作品</p>
         <h2>毎月1日、<br>先月が1冊になって届く。</h2>
         <p class="line">Plus・はじめの14日間は無料</p>
       </div>
-    </section>
+    </div>
+    <ol class="dots" aria-hidden="true"><li></li><li></li><li></li><li></li><li></li></ol>
   </div>
+
+  <div class="steps" aria-hidden="true"><div class="step" data-step="0"></div><div class="step" data-step="1"></div><div class="step" data-step="2"></div><div class="step" data-step="3"></div><div class="step" data-step="4"></div></div>
 </div>
 
 <section class="more">
@@ -236,41 +228,33 @@
 </footer>
 
 <script>
-/* スクロールで物語を進める。各章の進み具合 --p（0〜1）と、いまの章 data-ch を
-   スマホの絵に渡す。動きを減らす設定では、各章の終わりの姿だけを見せる。 */
+/* スクロールで物語を進める。画面全体は止まったまま、話の進み具合（0〜5）から
+   いまの章 data-ch と、その章の進み --p（0〜1）を出して、スマホの絵と言葉に渡す。
+   動きを減らす設定では、各章の終わりの姿だけを見せる。 */
 (function () {
   var story = document.querySelector('[data-story]');
   if (!story) return;
   var stage = story.querySelector('.stage');
-  var steps = [].slice.call(story.querySelectorAll('[data-step]'));
-  var caps = steps.map(function (s) { return s.querySelector('.cap'); });
+  var caps = [].slice.call(story.querySelectorAll('[data-cap]'));
+  var dots = [].slice.call(story.querySelectorAll('.dots li'));
   var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var wide = window.matchMedia('(min-width: 900px)');
-  var ticking = false;
+  var N = caps.length, ticking = false, last = -1;
   function clamp(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
   function update() {
     ticking = false;
-    var vh = window.innerHeight;
-    var active = 0, p = 0;
-    steps.forEach(function (s, i) {
-      var r = s.getBoundingClientRect();
-      if (r.top < vh * 0.55) { active = i; p = clamp((vh * 0.55 - r.top) / Math.max(r.height * 0.8, 1)); }
-    });
-    // 最初の章は、ページの上からのスクロール量で進める（幅によらず同じ）
-    if (active === 0) p = clamp(window.scrollY / (vh * 0.7));
-    if (still) p = 1;
-    stage.dataset.ch = active;
+    var r = story.getBoundingClientRect(), vh = window.innerHeight;
+    var run = Math.max(r.height - vh, 1);
+    var t = clamp(-r.top / run) * N;
+    var ch = Math.min(N - 1, Math.floor(t));
+    var p = still ? 1 : clamp(t - ch);
+    stage.dataset.ch = ch;
     stage.style.setProperty('--p', p.toFixed(3));
-    // 写真の入れ替わり（章1）：おととい → きのう → きょう
-    stage.dataset.day = active === 0 ? 2 : active === 1 ? (p < 0.34 ? 0 : p < 0.67 ? 1 : 2) : 2;
-    // 文字：スマホでは、絵の下の帯にあるときだけはっきり見せる
-    var sb = stage.getBoundingClientRect().bottom;
-    caps.forEach(function (c, i) {
-      var r = c.getBoundingClientRect(), o;
-      if (wide.matches) o = i === active ? 1 : 0.25;
-      else o = clamp((vh - r.top) / 70);
-      c.style.opacity = o.toFixed(3);
-    });
+    stage.dataset.day = ch === 1 ? (p < 0.34 ? 0 : p < 0.67 ? 1 : 2) : 2;
+    if (ch !== last) {
+      caps.forEach(function (c, i) { c.classList.toggle('on', i === ch); });
+      dots.forEach(function (d, i) { d.classList.toggle('on', i === ch); });
+      last = ch;
+    }
   }
   function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }
   window.addEventListener('scroll', onScroll, { passive: true });
@@ -278,10 +262,17 @@
   update();
   // 最初の画面でスクロールしない人にも、くもりが晴れるのを一度見せる
   if (!still) {
-    var waited = setTimeout(function () {
-      if ((stage.dataset.ch | 0) === 0 && parseFloat(stage.style.getPropertyValue('--p')) < 0.05) stage.classList.add('auto-clear');
-    }, 3200);
-    window.addEventListener('scroll', function () { clearTimeout(waited); }, { once: true, passive: true });
+    var tween = 0, waited = setTimeout(function () {
+      if (window.scrollY > 8) return;
+      var t0 = performance.now();
+      (function step(now) {
+        if (window.scrollY > 8) return;
+        var k = Math.min(1, (now - t0) / 2600);
+        stage.style.setProperty('--p', (k * k * (3 - 2 * k)).toFixed(3));
+        if (k < 1) tween = requestAnimationFrame(step);
+      })(t0);
+    }, 2600);
+    window.addEventListener('scroll', function () { clearTimeout(waited); cancelAnimationFrame(tween); }, { once: true, passive: true });
   }
 })();
 </script>
