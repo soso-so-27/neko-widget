@@ -85,9 +85,10 @@ class ForegroundAndPower(unittest.TestCase):
 
 
 class LowFidelityAndStartup(unittest.TestCase):
-    def test_preview_only_no_cat_is_counted_and_retried(self):
+    def test_preview_only_no_cat_is_retried_quietly(self):
         state = block(SCANNER, "private func makeState(", "private static func outingValue(")
-        self.assertIn("|| record.isLowFidelityNoCat", state)
+        # 11/22: retried, but not counted as 「読み込めなかった写真」.
+        self.assertNotIn("|| record.isLowFidelityNoCat", state)
         self.assertIn("ScanResumePolicy.retriesLowFidelityNoCat(", SCANNER)
         self.assertIn("lowFidelityRetryBudget -= 1", SCANNER)
         self.assertNotIn("isNetworkAccessAllowed = true", SCANNER)
