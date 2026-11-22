@@ -690,6 +690,8 @@ struct ScanPresentation: Equatable {
     /// 11/20: the start could not read the app's own records, so no search
     /// can begin. The 写真 tab then offers the first run's 「もう一度」.
     var startupLoadFailed = false
+    /// 11/22: the photos are still being made ready at launch; no count yet.
+    var isPreparingPhotos = false
 
     /// A final result also satisfies the first-result gate when the app is relaunched
     /// after the full scan completed.
