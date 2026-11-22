@@ -1796,6 +1796,17 @@ struct GroupLibraryDeliverySheet: View {
         }
     }
 
+    /// 11/23: with 2 or more まど, the まど delivered to last opens already
+    /// chosen, once per opening; its 「届け先」 row goes back to the list.
+    @State private var choseLastWindow = false
+    private func chooseLastWindow() {
+        guard list.hasLoaded, !choseLastWindow, openWindows.count > 1, path.isEmpty,
+              let last = GroupLibraryDeliveryMemory.lastWindowID,
+              openWindows.contains(where: { $0.id == last }) else { return }
+        choseLastWindow = true
+        path = [last]
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -1875,8 +1886,10 @@ struct GroupLibraryDeliverySheet: View {
             // once, not 「まどを読み込んでいます…」 on every open; then read again.
             list.showListed(GroupWindowListNavigation.shared.lastListed)
             chooseOnlyWindow()
+            chooseLastWindow()
             await list.load()
             chooseOnlyWindow()
+            chooseLastWindow()
         }
         .announcesWhenShown(list.message)
     }
@@ -2019,6 +2032,15 @@ private struct GroupLibraryDeliveryStep: View {
         .announcesWhenShown(model.message)
         // Once, when this page turns 「届けました」 (not on a failure).
         .sensoryFeedback(.success, trigger: model.sendCompleted) { old, new in givesDeliveryHaptic && !old && new }
+        // 11/23: 「届けました」 is seen for a moment, then the sheet closes by
+        // itself (its 「閉じる」 stays for a quicker tap). With VoiceOver it
+        // waits for 「閉じる」, so the words are heard first.
+        .task(id: model.sendCompleted) {
+            guard model.sendCompleted, !UIAccessibility.isVoiceOverRunning else { return }
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled else { return }
+            close()
+        }
         .task {
             await model.loadWindow()
             prepared = await model.prepare(localIdentifier: localIdentifier)

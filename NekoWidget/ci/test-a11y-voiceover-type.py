@@ -58,6 +58,8 @@ class Books(unittest.TestCase):
     def test_the_page_number_turns_the_pages(self):
         number = block(ALBUM, "struct BookPageNumber: View {")
         self.assertIn('Text(verbatim: "\\(index + 1) / \\(count)")', number)
+        # 11/23: not drawn under 「めくる ›」; it stays VoiceOver's handle.
+        self.assertIn(".foregroundStyle(.clear)", number)
         self.assertIn(".accessibilityValue(BookPageAccess.value(index: index, count: count))", number)
         self.assertIn(".accessibilityAdjustableAction { direction in", number)
         self.assertIn(".accessibilityAction(named: Text(BookPageAccess.next))", number)
@@ -66,7 +68,7 @@ class Books(unittest.TestCase):
         self.assertIn('static let label = "ページをめくる"', access)
         self.assertIn('"\\(count)ページ中\\(index + 1)ページ目"', access)
         # Both books use it; the curl itself is unchanged.
-        self.assertEqual(ALBUM.count("BookPageNumber(index: $index, count: leaves.count, ink:"), 2)
+        self.assertEqual(ALBUM.count("BookPageNumber(index: $index, count: leaves.count)"), 2)
         self.assertIn("UIPageViewController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)", ALBUM)
 
     def test_plus_on_the_shelf_reads_as_its_button(self):

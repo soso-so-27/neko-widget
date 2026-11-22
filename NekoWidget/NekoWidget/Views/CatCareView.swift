@@ -738,43 +738,29 @@ struct CatCareDetailView: View {
            let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
             line += farewell == nil ? "（\(age)）" : "（\(age)まで）"
         }
-        if case let .profile(profile) = subject {
+        // 11/23: 「誕生日か迎えた日を入れると…」 only while no date is written.
+        if case let .profile(profile) = subject, profile.lifeReference != nil || !hasLifeDate {
             line += "\n" + profile.lifeDatesExplanation
         }
         return line
     }
 
-    /// The heading's one quiet line, from what is written (11/12): 「オス・4歳」.
-    /// Unknown parts are left out; nothing known, no line. The age stops at a
-    /// recorded farewell day, worded as the 基本 footer words it (「4歳まで」).
-    private var summaryLine: String? {
-        var parts: [String] = []
-        switch draft.sex {
-        case .male: parts.append("オス")
-        case .female: parts.append("メス")
-        case .unknown: break
-        }
-        if let birthday = currentRecord?.birthday?.value ?? nil,
-           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
-            parts.append(farewell == nil ? age : age + "まで")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    /// A birthday or a day the cat came home, written anywhere for this cat.
+    private var hasLifeDate: Bool {
+        if case let .profile(profile) = subject,
+           profile.lifeDates.birthday != nil || profile.lifeDates.adoptionDay != nil { return true }
+        return (currentRecord?.birthday?.value ?? nil) != nil || (currentRecord?.adoptionDay?.value ?? nil) != nil
     }
 
     // MARK: Rows (11/12, as 設定 and 病院で見せる)
 
-    /// A part's header: its name, and one green check once it is full.
+    /// A part's header: its name only. 11/20: no 「3 / 7」 (the ring at the
+    /// top was a second way of counting). 11/23: no green check once full
+    /// either; on one header of four it read as a mark nobody could name.
     private func partHeader(_ title: String, _ count: (Int, Int), key: String) -> some View {
-        let full = count.0 >= count.1
-        // 11/12 (round 2): one green check once full (words and numbers were
-        // mixed down the page's headers). 11/20: no 「3 / 7」 any more; the
-        // ring at the top was a second way of counting.
-        return HStack {
+        HStack {
             Text(title)
             Spacer()
-            if full {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
-            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(title)
@@ -956,15 +942,9 @@ struct CatCareDetailView: View {
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("cat-care-key-photo-empty")
                 }
+                // 11/23: no 「メス・5歳」 under the name: 性別 is the next
+                // rows' and the age is in the 基本 footer.
                 nameButton(profile)
-                if let summaryLine {
-                    // 11/12: one quiet line of what is known (「オス・4歳」).
-                    Text(summaryLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .accessibilityIdentifier("cat-care-summary")
-                }
                 if nameSaveFailed {
                     Text("名前を保存できませんでした。もう一度お試しください。")
                         .font(.footnote)
@@ -1224,8 +1204,19 @@ struct CatCareDetailView: View {
         } header: {
             partHeader("家の情報", progress.household, key: "household")
         } footer: {
-            Text("ほかの猫とも共通です。")
+            // 11/23: only where there is another cat to share it with.
+            if catCount >= 2 { Text("ほかの猫とも共通です。") }
         }
+    }
+
+    /// This home's cats: every profile and every live 「この子のこと」.
+    private var catCount: Int {
+        var ids = Set(otherProfiles.map { $0.identifier.uppercased() })
+        if case let .profile(profile) = subject { ids.insert(profile.identifier.uppercased()) }
+        for record in store.state?.cats ?? [] where record.deletedAt == nil {
+            ids.insert((record.profileID ?? record.catID).uuidString.uppercased())
+        }
+        return ids.count
     }
 
     private var vetPicker: some View {
@@ -2331,6 +2322,13 @@ extension CatCareStore {
         case let .toolCat(id, name):
             return ensureRecord(toolCatID: id, profileIdentifier: nil, name: name)
         }
+    }
+
+    /// 11/23: an entry for a cat that may have no 「この子のこと」 yet (the この子
+    /// tab's empty 体重 row): its record is made first, as the page does.
+    func applyEntry(_ result: CatCareListEditor.Result, for subject: CatCareSubject) -> String? {
+        guard let record = ensureRecord(for: subject) else { return CatCareListEditor.saveFailedSentence }
+        return applyEntry(result, catID: record.catID)
     }
 
     /// 11/21: one entry of a list added, changed or deleted, the same way from

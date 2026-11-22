@@ -1181,6 +1181,9 @@ struct FamilyNotebookView: View {
     var startingCat: CatCareSubject? = nil
     /// The notebook was made here; the cat goes in once it is open.
     @State private var putsInStartingCat = false
+    @State private var puttingInStartingCat = false
+    /// 11/23: the notebook was made here; its invitation opens once it is open.
+    @State private var invitesAfterCreate = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
         sharing.state.membership ?? (sharing.state == .checking ? model.lastShownMembership : nil)
@@ -1296,6 +1299,7 @@ struct FamilyNotebookView: View {
                         if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) {
                             UsageCounter.shared.count(.familyCreated)  // Usage (11/7)
                             putsInStartingCat = startingCat != nil
+                            invitesAfterCreate = true
                         }
                     }
                 }
@@ -1365,7 +1369,19 @@ struct FamilyNotebookView: View {
         .task(id: putsInStartingCat && model.hasFamily) {
             guard putsInStartingCat, model.hasFamily, let startingCat else { return }
             putsInStartingCat = false
+            puttingInStartingCat = true
             await putIn(startingCat)
+            puttingInStartingCat = false
+        }
+        // 11/23: as a まど does, a notebook just made opens its invitation at
+        // once (after the starting cat is in, so the message names it).
+        // Only where 「招待する」 itself is offered.
+        .task(id: invitesAfterCreate && model.hasFamily && !putsInStartingCat && !puttingInStartingCat
+              && shownMembership?.canInvite == true && sharing.pause == nil) {
+            guard invitesAfterCreate, model.hasFamily, !putsInStartingCat, !puttingInStartingCat,
+                  shownMembership?.canInvite == true, sharing.pause == nil else { return }
+            invitesAfterCreate = false
+            invites = true
         }
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         // 11/16: the notebook gone, nothing on screen waits for a sheet; a

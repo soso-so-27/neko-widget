@@ -3903,9 +3903,16 @@ class LostCatCatCareTests(unittest.TestCase):
         # Empty and explicit none must not claim a chip on the public flyer.
         self.assertIn('microchipStatus == .recorded { parts.append("マイクロチップあり") }', line)
         self.assertNotIn("parts.append(record?.microchip", line)
-        # The published contact is added by a tap, never filled on its own.
-        fill = section(view, "private func fillFromCatCare(", "@ViewBuilder private func fieldIssue(")
+        # 11/23 (owner): an empty published contact starts as the contact
+        # written in 「この子のこと」 itself; one brought in from a tool's memo
+        # (editedBy "import:…") is still added only by the tap, and a contact
+        # the person wrote is never replaced.
+        fill = section(view, "private func fillFromCatCare(", "/// 11/23: an empty 連絡先")
         self.assertNotIn("contact", fill)
+        contact = section(view, "private func fillContact(", "private func catCareTarget(")
+        self.assertIn("guard draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,", contact)
+        self.assertIn('!stamped.editedBy.hasPrefix("import:")', contact)
+        self.assertIn("saved = fillContact(saved, key: identity)", view)
         self.assertIn("「この子のこと」の連絡先を使う", view)
         # A new draft starts from 「この子のこと」; owner text is never replaced.
         self.assertIn("if !alreadyPrepared { saved = fillFromCatCare(saved, key: identity) }", view)
@@ -5054,13 +5061,14 @@ class CatCareRowListPage1112Tests(unittest.TestCase):
         for title, key in (("基本", "basics"), ("健康", "health"), ("暮らし", "living"), ("家の情報", "household")):
             self.assertIn(f'partHeader("{title}", progress.{key}, key: "{key}")', self.detail)
         header = section(self.detail, "private func partHeader(", "private static func rowLabel(")
-        # 11/12 (round 2): one green check once full. 11/20: no 「3 / 7」.
+        # 11/20: no 「3 / 7」. 11/23: no green check once full either.
         self.assertNotIn("Text(verbatim:", header)
-        self.assertIn('Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)', header)
+        self.assertNotIn("checkmark.circle.fill", header)
         self.assertNotIn("そろっています", header)
         self.assertIn('.accessibilityIdentifier("cat-care-part-\\(key)")', header)
         household = section(self.detail, "private var householdSection: some View {", "private var vetPicker: some View {")
-        self.assertIn('Text("ほかの猫とも共通です。")', household)
+        # 11/23: only with another cat to share it with.
+        self.assertIn('if catCount >= 2 { Text("ほかの猫とも共通です。") }', household)
         # 11/22: the ring and its one line are gone from the top of the page.
         self.assertNotIn('.accessibilityIdentifier("cat-care-next-hint")', self.detail)
 
@@ -5135,14 +5143,10 @@ class CatCareRowListPage1112Tests(unittest.TestCase):
         self.assertEqual(self.view.count(".filledSquare()"), 4)
         tools = section(self.view, "struct ToolIdentifyingPhotos: View {", "extension ToolMakeBar where Top == EmptyView {")
         self.assertEqual(tools.count(".filledSquare()"), 3)
-        summary = section(self.detail, "private var summaryLine: String? {", "// MARK: Rows")
-        self.assertIn('case .male: parts.append("オス")', summary)
-        self.assertIn('case .female: parts.append("メス")', summary)
-        self.assertIn('parts.append(farewell == nil ? age : age + "まで")', summary)
-        self.assertIn('return parts.isEmpty ? nil : parts.joined(separator: "・")', summary)
+        # 11/23: no 「メス・5歳」 under the name (性別 is a row; the age is in the 基本 footer).
+        self.assertNotIn("summaryLine", self.detail)
         heading = section(self.detail, "private func profileHeading(", "private func nameButton(")
-        self.assertIn("if let summaryLine {", heading)
-        self.assertIn('.accessibilityIdentifier("cat-care-summary")', heading)
+        self.assertNotIn('.accessibilityIdentifier("cat-care-summary")', heading)
         self.assertIn("nameButton(profile)", heading)
         self.assertIn('.accessibilityIdentifier("cat-care-key-photo")', heading)
 
@@ -9145,7 +9149,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         page = section(self.home, "private struct CatHomePage: View {", "/// The cat's key photo from the very top")
         self.assertIn("if !facts.departed {", page)
         self.assertLess(page.index("if !facts.departed {"), page.index("CatHomeToolBar("))
-        self.assertIn("CatHomeCareCard(rows: care, links: careLinks)", page)
+        self.assertIn("CatHomeCareCard(rows: care, links: careLinks, showsWeight: !facts.departed)", page)
         self.assertNotIn("if let care {", page)
         # A cat without a profile: a page under its name, its この子のこと by its household ID.
         self.assertIn("CatCareDetailView(toolCatID: toolID, name: cat.name)", self.home)

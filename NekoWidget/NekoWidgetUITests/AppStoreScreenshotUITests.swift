@@ -540,7 +540,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launch()
 
         guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
-              app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else {
+              app.staticTexts["album-prototype-shelf"].waitForExistence(timeout: 10) else {
             fail("The Albums shelf did not appear first.", application: app)
             return
         }
@@ -582,7 +582,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         closeStory.tap()
-        guard app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else {
+        guard app.staticTexts["album-prototype-shelf"].waitForExistence(timeout: 10) else {
             fail("The story did not return to Albums.", application: app)
             return
         }

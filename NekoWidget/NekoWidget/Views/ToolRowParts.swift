@@ -192,12 +192,21 @@ struct ToolFieldCounter: View {
 
     var body: some View {
         let over = count > limit
-        Text(verbatim: over ? "長すぎます　\(count) / \(limit)" : "\(count) / \(limit)")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(over ? Color.red : Color.secondary)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityLabel(over ? "\(limit)文字を超えています、\(count)文字" : "\(count)文字、\(limit)文字まで")
+        if FieldCount.isShown(count, limit: limit) {
+            Text(verbatim: over ? "長すぎます　\(count) / \(limit)" : "\(count) / \(limit)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(over ? Color.red : Color.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityLabel(over ? "\(limit)文字を超えています、\(count)文字" : "\(count)文字、\(limit)文字まで")
+        }
     }
+}
+
+/// 11/23: a field's 「0 / 500文字」 only once the text is past 8 of 10 of
+/// its limit (and when over it), the same rule under every field. Before
+/// that the number is one more thing to read under an empty box.
+enum FieldCount {
+    static func isShown(_ count: Int, limit: Int) -> Bool { count * 10 > limit * 8 }
 }
 
 /// The one sentence a full list says where its add button was (11/14), the

@@ -1192,6 +1192,11 @@ final class AppRecordPersistence: ObservableObject {
     }
     private static let bindingUnreadableDetail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。"
     private var bindingRead = false
+    /// 11/23: saving was started on this iPhone (on now, or stopped with its
+    /// settings kept). An unreadable settings file counts as started.
+    func hasStartedHere() -> Bool {
+        do { return try binding() != nil } catch { return true }
+    }
     nonisolated private func binding() throws -> Binding? {
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         try AppRecordRebinding.recover(at: bindingURL.deletingLastPathComponent())
@@ -2242,6 +2247,9 @@ struct AppRecordSettingsView: View {
     @State private var confirmsPause = false
     @State private var confirmsRemote = false
     @State private var showsPlusOffer = false
+    /// 11/23: saving was started on this iPhone once (its settings are kept
+    /// after stopping), read when the screen opens and when saving turns on or off.
+    @State private var startedHere = false
     /// The record choice that was confirmed, so only that button says so (11/6).
     @State private var running: String?
     /// Opened from 「自動保存も始めますか？」→「保存を始める」 right after buying
@@ -2272,6 +2280,13 @@ struct AppRecordSettingsView: View {
     }
 
     private var hasPlusHere: Bool { purchases.entitlementState.permitsPersonalPlus }
+    /// 11/23: 「保存したものを書き出す」 and 「自動保存のアカウント」 are for
+    /// someone who started saving (here, or with this account's Plus) or
+    /// whose Plus ended with records kept; before that they open nothing.
+    private var hasSavedSomething: Bool {
+        persistence.enabled || startedHere || plusEnded || authentication.membership?.linked == true
+            || (authentication.usage?.productQuota?.usage?.records.saved ?? 0) > 0
+    }
     /// Buying is offered only where it can happen; a member is never asked,
     /// and nothing is offered while launch is still checking (11/5).
     private var offersPlus: Bool {
@@ -2314,6 +2329,7 @@ struct AppRecordSettingsView: View {
             }
         }
         .onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }
+        .onChange(of: persistence.enabled, initial: true) { _, _ in startedHere = persistence.hasStartedHere() }
         .task {
             authentication.start(observingOnly: true)
             // The same start as the 「保存を始める」 button; signed out, it goes on after sign-in.
@@ -2444,8 +2460,9 @@ struct AppRecordSettingsView: View {
             }
         }
         // What is kept: how much, and taking it out. Shown while signed in,
-        // also after stopping here (the saved records stay).
-        if authentication.isSignedIn && authentication.accountDeletionState == nil {
+        // also after stopping here (the saved records stay). 11/23: only to
+        // someone who started saving or has something saved.
+        if authentication.isSignedIn && authentication.accountDeletionState == nil && hasSavedSomething {
             Section {
                 // Space and records only while saving here (off: not read, by design).
                 if persistence.enabled, let quota = displayedQuota { ProductQuotaSummary(quota: quota) }
@@ -2455,7 +2472,7 @@ struct AppRecordSettingsView: View {
                 if PreservationExportFailureText.isShown(exporter) { PreservationExportFailureText(exporter: exporter) }
             } header: { Text("保存されているもの") }
         }
-        if authentication.isSignedIn || authentication.accountDeletionState != nil {
+        if (authentication.isSignedIn && hasSavedSomething) || authentication.accountDeletionState != nil {
             // Deleting is under 設定 → 「アカウントとデータを消す」 (11/7).
             Section {
                 NavigationLink("自動保存のアカウント") { ManagedPreservationView() }

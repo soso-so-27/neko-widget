@@ -1005,7 +1005,7 @@ private struct CatHomePage: View {
                     }
                     // 「この子のこと」 is the card's last row (11/14), so the
                     // card is there for every cat, departed ones too.
-                    CatHomeCareCard(rows: care, links: careLinks)
+                    CatHomeCareCard(rows: care, links: careLinks, showsWeight: !facts.departed)
                 }
                 .padding(.horizontal, 16)
                 // Up into the photo's fade.

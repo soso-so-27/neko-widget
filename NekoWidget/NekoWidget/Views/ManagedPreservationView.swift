@@ -854,8 +854,10 @@ struct ManagedPreservationView: View {
                     .disabled(coordinator.isBusy)
                     .onChange(of: coordinator.editedText) { _, _ in coordinator.retainUnsentEdit() }
                 if let weight = snapshot.document.weight { PhotoMemoWeightLabel(weight: weight) }
-                Text("\(coordinator.editedText.count) / 500文字")
-                    .font(.caption).foregroundStyle(.secondary)
+                if FieldCount.isShown(coordinator.editedText.count, limit: 500) {
+                    Text("\(coordinator.editedText.count) / 500文字")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Button {
                     editingMemo = false
                     running = "メモを保存"
