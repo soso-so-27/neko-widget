@@ -48,6 +48,11 @@ const bytes = (value: unknown): ArrayBuffer => {
   if (value instanceof Uint8Array || Array.isArray(value)) return new Uint8Array(value).buffer;
   throw new ServiceError('ARCHIVE_INTEGRITY_FAILED', 503);
 };
+const activeStorageWithinLimit = `((SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)
+  +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?
+  AND (SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)=(SELECT coalesce(sum(used_bytes),0) FROM pa_inventory)
+  AND NOT EXISTS(SELECT 1 FROM pa_owners o LEFT JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id
+    WHERE d.owner_id IS NULL OR d.accounting_valid<>1)`;
 const activeSessionBase = `EXISTS(SELECT 1 FROM pa_sessions s JOIN pa_owners o ON o.owner_id=s.owner_id
   WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND o.purge_fence_id IS NULL AND s.owner_epoch=o.epoch
     AND (s.device_grant_id IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants g
@@ -756,6 +761,17 @@ export class ArchiveStore {
         revision: expected + 1, document } satisfies Metadata)),
       { ownerId: session.ownerId, purpose: 'record', recordId: `${id}/document` });
       if (metadata.length > 512 * 1024) throw new ServiceError('ARCHIVE_TOO_LARGE', 413);
+      const growth = metadata.length - bytes(existing.metadata).byteLength;
+      const limit = growth > 0 ? this.d.globalActiveBytesLimit : undefined;
+      const editCapacity = limit === undefined ? '1' : activeStorageWithinLimit;
+      const editCapacityBindings = limit === undefined ? [] : [limit, growth];
+      const requireEditCapacity = async () => {
+        if (limit !== undefined && !await this.d.db.prepare(`SELECT 1 WHERE ${editCapacity}`)
+          .bind(...editCapacityBindings).first()) throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409);
+      };
+      // Check before copying another encrypted revision, then check again in
+      // the record CAS so simultaneous edits cannot spend the same capacity.
+      await requireEditCapacity();
       const encrypted = this.d.recovery ? await this.encryptedPhoto(existing, old) : null;
       if (this.d.recovery && existing.quota_bytes !== bytes(existing.metadata).byteLength + (encrypted?.length ?? 0)) {
         throw new ServiceError('ARCHIVE_ACCOUNTING_UNAVAILABLE', 503);
@@ -785,10 +801,10 @@ export class ArchiveStore {
         const results = await this.d.db.batch([
           this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
             quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
-            AND ${activeSession} AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?)
+            AND ${activeSession} AND (${editCapacity}) AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?)
             AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_abandonments WHERE owner_id=? AND snapshot_id=?)
             RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id,
-              expected, ...sessionBindings(session), toolIndexGeneration, session.ownerId, toolIndexGeneration,
+              expected, ...sessionBindings(session), ...editCapacityBindings, toolIndexGeneration, session.ownerId, toolIndexGeneration,
               session.ownerId,appHead?.snapshotID.toLowerCase() ?? ''),
           ...(copied ? [this.recoveryReference(session.ownerId, id, expected + 1, copied)] : []),
           ...(appHead ? [
@@ -804,6 +820,7 @@ export class ArchiveStore {
         ]);
         if (results[0]?.results.length !== 1 || (copied && results[1]?.results.length !== 1)) {
           await authorize();
+          await requireEditCapacity();
           throw new ServiceError('REVISION_CONFLICT', 409);
         }
         if (copied) await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
@@ -812,9 +829,9 @@ export class ArchiveStore {
       }
       const updated = await this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
         quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
-        AND ${activeSession} RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id, expected,
-        ...sessionBindings(session)).first<{ revision: number }>();
-      if (!updated) { await authorize(); throw new ServiceError('REVISION_CONFLICT', 409); }
+        AND ${activeSession} AND (${editCapacity}) RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id, expected,
+        ...sessionBindings(session), ...editCapacityBindings).first<{ revision: number }>();
+      if (!updated) { await authorize(); await requireEditCapacity(); throw new ServiceError('REVISION_CONFLICT', 409); }
       await acknowledge(session.ownerId);
       return { recordId: id, revision: updated.revision };
     }
@@ -842,10 +859,7 @@ export class ArchiveStore {
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
       AND used_bytes=(SELECT record_bytes FROM pa_owner_record_counters WHERE owner_id=pa_inventory.owner_id AND accounting_valid=1)
-      AND (? IS NULL OR ((SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)
-        +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?
-        AND (SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)=(SELECT coalesce(sum(used_bytes),0) FROM pa_inventory)
-        AND NOT EXISTS(SELECT 1 FROM pa_owners o LEFT JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id WHERE d.owner_id IS NULL OR d.accounting_valid<>1))
+      AND (? IS NULL OR (${activeStorageWithinLimit}))
       AND ((SELECT live_count FROM pa_owner_record_counters WHERE owner_id=?)
         +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession} AND ${reservationFence.sql}
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,

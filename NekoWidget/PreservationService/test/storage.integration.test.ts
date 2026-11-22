@@ -1288,6 +1288,24 @@ it('atomically bounds new storage across owners without blocking existing record
     .toThrowError(expect.objectContaining({ code: 'PRESERVATION_NOT_CONFIGURED' }));
 });
 
+it('applies the global capacity fence to concurrent growth while allowing smaller edits', async () => {
+  const f = await fixture();
+  const { token } = f.session;
+  const ids = [crypto.randomUUID(), crypto.randomUUID()];
+  for (const id of ids) await f.archive.put(token, id, f.request());
+  const occupied = (await binding.DB.prepare('SELECT sum(used_bytes+reserved_bytes) AS n FROM pa_inventory').first<{ n: number }>())!.n;
+  const archive = new ArchiveStore({ ...f.options, globalActiveBytesLimit: occupied + 230 });
+  const results = await Promise.allSettled(ids.map(id => archive.put(token, id, f.request({
+    expectedRevision: 1, document: { ...document, text: 'x'.repeat(170) },
+  }))));
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'ARCHIVE_CAPACITY_REACHED' } });
+  const id = ids[results.findIndex(result => result.status === 'fulfilled')]!;
+  const over = new ArchiveStore({ ...f.options, globalActiveBytesLimit: 1 });
+  await expect(over.put(token, id, f.request({ expectedRevision: 2, document: { ...document, text: '短い記録' } })))
+    .resolves.toMatchObject({ revision: 3 });
+});
+
 it('usage rejects inconsistent inventory instead of reporting an empty or inflated archive', async () => {
   const f = await fixture(); await f.archive.put(f.session.token, crypto.randomUUID(), f.request());
   await binding.DB.prepare('UPDATE pa_inventory SET used_bytes=used_bytes+1 WHERE owner_id=?').bind(f.session.ownerId).run();
