@@ -5,6 +5,9 @@ import SwiftUI
 /// shows only the three actions the user needs and lets the owner recheck the
 /// installed configuration when the app becomes active again.
 struct WidgetPlacementGuideView: View {
+    /// Only the 設定 / まど guide's close button calls this (11/22: the first
+    /// run's guide has 「つぎへ」 and then waits; it ends with 「あとで」 or
+    /// 「置けました」).
     let onComplete: () -> Void
     let onSkip: () -> Void
     /// Opened again from 設定: one button with this title (it calls
@@ -92,16 +95,6 @@ struct WidgetPlacementGuideView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
                     .accessibilityIdentifier("official-window-widget-source")
-            } else if closeTitle == nil {
-                // 11/10: place first, then come back; the app confirms by
-                // itself (the 設定 page only closes). Naming cats is not part
-                // of placing a Widget.
-                Text(OnboardingPresentationCopy.widgetReturnHint)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-                    .accessibilityIdentifier("widget-placement-return-hint")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -118,18 +111,40 @@ struct WidgetPlacementGuideView: View {
                     }
                     .buttonStyle(GuideSecondaryButtonStyle())
                     .accessibilityIdentifier("widget-placement-close")
-                } else {
-                    Button(action: onComplete) {
-                        Text(OnboardingPresentationCopy.widgetAction)
+                } else if page < steps.count - 1 {
+                    // 11/22: 「つぎへ」 walks through every step. The button
+                    // that seemed to place the Widget ended the first run
+                    // after step 1.
+                    Button {
+                        withAnimation { page += 1 }
+                    } label: {
+                        Text(OnboardingPresentationCopy.widgetNextAction)
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .accessibilityIdentifier("widget-placement-complete")
+                    .accessibilityIdentifier("widget-placement-next")
+                } else {
+                    // The last step: nothing to press. Coming back with the
+                    // Widget placed shows 「置けました」 (or closes the 写真
+                    // tab's sheet) by itself.
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(OnboardingPresentationCopy.widgetWaitingText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("widget-placement-waiting")
+                }
 
+                if closeTitle == nil {
                     // 「あとで」 is quiet grey text on every first-run page (11/12).
+                    // It is the only way out besides placing the Widget.
                     Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
                         .buttonStyle(.plain)
                         .font(.subheadline)

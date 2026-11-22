@@ -322,14 +322,15 @@ enum OnboardingPresentationVerifier {
                 == "出す写真を変えるには、ウィジェットを長押しして「ウィジェットを編集」→「表示する写真」。まども選べます。",
             "Widget guide stopped saying how to change what the Widget shows"
         )
+        // 11/22: 「つぎへ」 through the steps, then a quiet waiting state
+        // (nothing on the guide claims the Widget was placed).
         try require(
-            OnboardingPresentationCopy.widgetReturnHint
-                == "追加してアプリへ戻ると、自動で確認します。",
-            "Widget guide stopped explaining automatic confirmation"
+            OnboardingPresentationCopy.widgetNextAction == "つぎへ",
+            "Widget guide next action changed"
         )
         try require(
-            OnboardingPresentationCopy.widgetAction == "ホーム画面で置いてきます",
-            "Widget guide primary action changed (it checks nothing, so it must not say 「置きました」)"
+            OnboardingPresentationCopy.widgetWaitingText == "ホーム画面に置くのを待っています",
+            "Widget guide waiting state changed"
         )
         // 11/12: the Widget's tag reads 「タップで、きょうの1枚」; the app uses
         // those words, never 「札」.

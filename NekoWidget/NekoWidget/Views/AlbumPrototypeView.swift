@@ -264,6 +264,8 @@ struct AlbumPrototypeView: View {
     /// 11/21: the photos are still being read or searched for the first
     /// works; the empty shelf says so instead of saying nothing.
     var lettersAreLoading = false
+    /// 11/22: this month's tile opens the 写真 tab at this month's photos.
+    var openPhotosMonth: ((Date) -> Void)? = nil
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
@@ -506,36 +508,46 @@ struct AlbumPrototypeView: View {
             // This month's book in the making: its photos so far, nine places.
             let photos = AlbumPrototype.pick(AlbumPrototype.photos(in: next.start, from: catPhotos), count: 9)
                 .sorted { ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast) }
-            VStack(spacing: 4) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
-                    ForEach(0..<9, id: \.self) { place in
-                        Color(.tertiarySystemFill)
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay {
-                                if photos.indices.contains(place) {
-                                    PhotoAssetImageView(localIdentifier: photos[place].localIdentifier,
-                                                        catBoundingBox: photos[place].catBoundingBox,
-                                                        targetPixelSize: CGSize(width: 80, height: 80), targetAspectRatio: 1)
+            // 11/22: the brightest tile is a button: it opens this month's
+            // photos in the 写真 tab (it did nothing).
+            Button { openPhotosMonth?(next.start) } label: {
+                VStack(spacing: 4) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
+                        ForEach(0..<9, id: \.self) { place in
+                            Color(.tertiarySystemFill)
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay {
+                                    if photos.indices.contains(place) {
+                                        PhotoAssetImageView(localIdentifier: photos[place].localIdentifier,
+                                                            catBoundingBox: photos[place].catBoundingBox,
+                                                            targetPixelSize: CGSize(width: 80, height: 80), targetAspectRatio: 1)
+                                    }
                                 }
-                            }
-                            .clipped()
+                                .clipped()
+                        }
                     }
+                    Text(verbatim: "\(month)月").font(.system(.footnote, design: .serif).weight(.bold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        // The box is a fixed size: the month stays inside it at large text (11/11).
+                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                 }
-                Text(verbatim: "\(month)月").font(.system(.footnote, design: .serif).weight(.bold))
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                    // The box is a fixed size: the month stays inside it at large text (11/11).
-                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                .padding(4)
+                .frame(width: Self.slotSize.width, height: Self.slotSize.height, alignment: .top)
+                .overlay(shape.stroke(Color.accentColor.opacity(0.8), lineWidth: 1.5))
+                .contentShape(shape)
             }
-            .padding(4)
-            .frame(width: Self.slotSize.width, height: Self.slotSize.height, alignment: .top)
-            .overlay(shape.stroke(Color.accentColor.opacity(0.8), lineWidth: 1.5))
+            .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(next.photoCount < MonthlyWindowBuilder.minimumSceneCount
                 ? "\(month)月の作品、いま \(next.photoCount) 枚"
                 : "\(month)月の作品、\(next.arrives.formatted(.dateTime.month(.defaultDigits).day()))にとどきます")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityIdentifier("album-prototype-this-month")
         } else {
+            // 11/22: a month without a work is only its faint label in the
+            // same place (a grey box looked like a tile to press).
             let ahead = month > thisMonth
-            shape.fill(Color(.tertiarySystemFill))
+            Color.clear
                 .frame(width: Self.slotSize.width, height: Self.slotSize.height)
                 .overlay(alignment: .bottomLeading) {
                     Text(verbatim: "\(month)月")
