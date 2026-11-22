@@ -248,8 +248,9 @@ enum CatFarewell {
 }
 
 /// Recording the day, quietly: a date and one sentence, nothing to fill in.
-/// Reached only where someone goes looking at that time (deleting the cat's
-/// profile), never from a page that is open every day.
+/// Reached from deleting the cat's profile and from the recorded row; 11/22:
+/// first entered with the other dates (「誕生日・迎えた日」), never from a
+/// page that is open every day.
 struct CatFarewellEditor: View {
     let name: String
     let recorded: CatCareDay?

@@ -194,8 +194,11 @@ struct CatHomeFacts {
         let age: String? = birthday.flatMap { Self.age(from: $0, to: now, calendar: calendar) }
         let days: Int? = adoption.flatMap { Self.daysTogether(since: $0, now: now, calendar: calendar) }
         let about = [sex, age].compactMap { $0 }.joined(separator: "・")
-        let parts = [about.isEmpty ? nil : about, days.map { "うちに来て \($0.formatted())日" }].compactMap { $0 }
-        let spoken = [cat.name, sex, age, days.map { "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
+        // 11/22: the day the cat came home is not 「0日」.
+        let parts = [about.isEmpty ? nil : about,
+                     days.map { $0 == 0 ? "きょう、うちに来ました" : "うちに来て \($0.formatted())日" }].compactMap { $0 }
+        let spoken = [cat.name, sex, age,
+                      days.map { $0 == 0 ? "きょう、うちに来ました" : "うちに来て\($0)日" }].compactMap { $0 }.joined(separator: "、")
         // 「だいたいの日付」: the day is kept, the age it gives is not said.
         let birthdayApproximate = profile?.lifeDates.birthday?.isApproximate
             ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.isApproximate : nil)

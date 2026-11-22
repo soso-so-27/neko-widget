@@ -9007,7 +9007,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn('case .male: "オス"', facts)
         self.assertIn('case .female: "メス"', facts)
         self.assertIn('[sex, age].compactMap { $0 }.joined(separator: "・")', facts)
-        self.assertIn('days.map { "うちに来て \\($0.formatted())日" }', facts)
+        self.assertIn('days.map { $0 == 0 ? "きょう、うちに来ました" : "うちに来て \\($0.formatted())日" }', facts)
         self.assertIn('parts.joined(separator: "　／　")', facts)
         # No line when nothing is known; never a count of days without the day.
         self.assertIn("line: parts.isEmpty ? nil : parts.joined", facts)
@@ -9016,7 +9016,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         self.assertIn("adoption = shared.value?.day.date(calendar: calendar)", facts)
         self.assertIn('"\\(years)歳\\(months)か月"', facts)
         # VoiceOver: 「むぎ、オス、4歳2か月、うちに来て1204日」.
-        self.assertIn('[cat.name, sex, age, days.map { "うちに来て\\($0)日" }].compactMap { $0 }.joined(separator: "、")', facts)
+        self.assertIn('days.map { $0 == 0 ? "きょう、うちに来ました" : "うちに来て\\($0)日" }].compactMap { $0 }.joined(separator: "、")', facts)
         # A departed cat: the existing 旅立った日 wording as its one line.
         self.assertIn('line: "旅立った日　" + day', facts)
         self.assertIn("CatFarewell.text(farewell)", facts)

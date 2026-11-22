@@ -632,13 +632,30 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
-        entry.familyCaption = cached.senderDisplayName.map { GroupDisplayName.from($0) }
+        // 11/22: a photo older than 7 days carries its day after the sender
+        // (「お母さん・10月19日」), so a window nobody sends to does not look
+        // the same as a new photo. Newer photos stay as they were.
+        entry.familyCaption = cached.senderDisplayName.map { name in
+            let sender = GroupDisplayName.from(name)
+            guard let sent = cached.capturedAt, now.timeIntervalSince(sent) > 7 * 86_400 else { return sender }
+            return sender + "・" + Self.groupPhotoDay(sent, now: now)
+        }
         if let photoID = cached.photoID {
             // The app writes no sender for a photo this iPhone sent.
             entry.groupWindowPhoto = GroupWindowPhotoReference(
                 windowID: windowID, photoID: photoID, isOwn: cached.senderDisplayName == nil)
         }
         return entry
+    }
+
+    /// 「10月19日」, or 「2025年10月19日」 when it is not this year, in 西暦.
+    static func groupPhotoDay(_ date: Date, now: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let day = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = day.year, let month = day.month, let dayOfMonth = day.day else { return "" }
+        let monthDay = "\(month)月\(dayOfMonth)日"
+        return year == calendar.component(.year, from: now) ? monthDay : "\(year)年" + monthDay
     }
 
     private func familyEntry(
