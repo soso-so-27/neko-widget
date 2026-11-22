@@ -376,6 +376,7 @@ private struct PhotoLibraryUserScrollDetector: ViewModifier {
 struct PhotoLibraryMonthDestination: Identifiable {
     let label: String
     let identifier: String
+    var year: Int = 0
     var id: String { identifier }
 
     /// The months of these photos, newest first, worked out once per drawing.
@@ -387,7 +388,7 @@ struct PhotoLibraryMonthDestination: Identifiable {
             guard let year = components.year, let month = components.month else { return nil }
             let label = "\(year)年\(month)月"
             guard seen.insert(label).inserted else { return nil }
-            return PhotoLibraryMonthDestination(label: label, identifier: photo.localIdentifier)
+            return PhotoLibraryMonthDestination(label: label, identifier: photo.localIdentifier, year: year)
         }
     }
 }
@@ -400,8 +401,18 @@ struct PhotoLibraryMonthJumpMenu: View {
     var body: some View {
         if !months.isEmpty {
             Menu {
-                ForEach(months) { month in
-                    Button(month.label) { select(month.identifier) }
+                // 11/22: a photo library spans years from the first day, so
+                // one flat list grew to 60–120 months. Up to 12 months stay
+                // flat; beyond that the newest year stays open and each
+                // earlier year folds into its own 「2024年」 submenu.
+                if months.count <= 12 {
+                    monthButtons(months)
+                } else {
+                    let years = Self.years(of: months)
+                    monthButtons(months.filter { $0.year == years.first })
+                    ForEach(years.dropFirst(), id: \.self) { year in
+                        Menu("\(year)年") { monthButtons(months.filter { $0.year == year }) }
+                    }
                 }
             } label: {
                 Label("日付", systemImage: "calendar")
@@ -412,6 +423,18 @@ struct PhotoLibraryMonthJumpMenu: View {
             .accessibilityLabel("年月へ移動")
             .accessibilityIdentifier("photo-library-month-jump")
         }
+    }
+
+    private func monthButtons(_ list: [PhotoLibraryMonthDestination]) -> some View {
+        ForEach(list) { month in
+            Button(month.label) { select(month.identifier) }
+        }
+    }
+
+    /// The years of these months, newest first (the months come newest first).
+    static func years(of months: [PhotoLibraryMonthDestination]) -> [Int] {
+        var seen = Set<Int>()
+        return months.compactMap { seen.insert($0.year).inserted ? $0.year : nil }
     }
 }
 
