@@ -639,11 +639,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     func unreadableWindowIDs() -> Set<String> { unreadableWindows }
     func unreadableReasons() -> [String: String] { unreadableReasonCodes }
 
-    /// 11/22: a short code for an error: its type and case, never a message
-    /// or a value from the relay. Shown only in test builds.
+    /// 11/22: a short code for an error: its type and its case number (the
+    /// bridged NSError code), never its text or a value from the relay.
+    /// Shown only in test builds.
     nonisolated static func reasonCode(_ error: Error) -> String {
-        let text = "\(type(of: error)).\(error)"
-        return text.count > 90 ? String(text.prefix(90)) + "…" : text
+        "\(type(of: error))#\((error as NSError).code)"
     }
 
     /// The relay's delivery fields, bound to the verified roster's owner.
