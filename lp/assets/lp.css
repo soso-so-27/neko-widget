@@ -100,7 +100,15 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 
 /* scenes */
 .block { padding-block: 56px; }
-.days, .mado, .tools { background: var(--wash); }
+.find, .album, .price { background: var(--wash); }
+/* 11/22: on a phone each scene takes about one screen, so the eye has one
+   thing to look at before the next scene arrives. */
+@media (max-width: 759px) {
+  .block:not(.faq) { min-height: 86svh; display: flex; align-items: center; padding-block: 64px; }
+  .block:not(.faq) > .in { width: 100%; }
+  .block h2 { font-size: clamp(28px, 8vw, 36px); }
+  .split { gap: 36px; }
+}
 .block h2 { font-size: clamp(24px, 6.4vw, 36px); }
 .sub { margin-top: 10px; font-family: var(--font-head); font-weight: 700; font-size: clamp(16px, 4.2vw, 20px); line-height: 1.6; }
 .small { margin-top: 14px; font-size: 14px; color: var(--ink-2); }
@@ -172,7 +180,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .fine { margin-top: 14px; font-size: 12px; color: var(--ink-3); }
 
 /* end */
-.end { background: var(--wash); }
+.end { background: var(--page); }
 .end-in { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 18px; }
 .nowa-end { width: 110px; height: auto; }
 
