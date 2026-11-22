@@ -263,7 +263,33 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     /// Set once the first read above is done, after the report records.
-    private var showedStored = false
+    /// 11/22 (D): published, so a tile reads its hearts as kept, not before.
+    @Published private(set) var showedStored = false
+
+    /// 11/22 (D): the ♡ count each of this person's own photos showed last
+    /// on this iPhone. Read once per opening; written with `markSeen`, never
+    /// while scrolling.
+    private lazy var heartsShown: [String: Int] = GroupHeartsShown.load(windowID: windowID)
+    private var heartsShownChanged = false
+
+    /// Whether `count` is more than this photo showed last here: hearts
+    /// arrived since. A photo with no record yet is only recorded.
+    func takeArrivedHearts(_ photoID: String, count: Int) -> Bool {
+        guard showedStored else { return false }
+        let last = heartsShown[photoID]
+        guard last != count else { return false }
+        heartsShown[photoID] = count
+        heartsShownChanged = true
+        return last.map { count > $0 } ?? false
+    }
+
+    /// Keeps the counts above for this person's own photos still here only.
+    func saveHeartsShown() {
+        guard heartsShownChanged else { return }
+        heartsShownChanged = false
+        let own = Set(entries.lazy.filter(\.isOwn).map(\.id))
+        GroupHeartsShown.save(heartsShown.filter { own.contains($0.key) }, windowID: windowID)
+    }
 
     /// Back from the members screen, where a hidden person may have been
     /// shown again (11/7, W10): the kept photos as they are now.
@@ -996,6 +1022,7 @@ struct GroupWindowScreen: View {
     /// after a read and when the page goes away, never while scrolling (11/7).
     private func markSeen() {
         GroupWindowSeen.markSeen(model.entries, windowID: model.windowID)
+        model.saveHeartsShown()
     }
 
     /// The photo a home-screen tap asked for opens once it is kept here (W4, 11/7).
@@ -1495,8 +1522,14 @@ private struct GroupPhotoTile: View {
     @State private var heartsSentHere = 0
     /// 11/22: hearts sent by a double-tap on the photo: a big ♥ over it each.
     @State private var heartBursts = 0
+    /// 11/22 (D): hearts that arrived at this person's own photo since its
+    /// ♡ count was last shown here: one bounce of the ♡. No haptic.
+    @State private var arrivedHeartBounces = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var heartCount: Int { model.shownHearts(entry.id).count }
+    /// The own photo's ♡ count, once the hearts kept here are read.
+    private var arrivedHeartsCount: Int? { entry.isOwn && model.showedStored ? heartCount : nil }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
     private var canHeart: Bool {
         !entry.isHidden && !reported && !entry.isOwn && !model.isFormer && model.acceptsHearts(entry.id)
@@ -1583,6 +1616,10 @@ private struct GroupPhotoTile: View {
             image = decoded
         }
         .onChange(of: reported) { _, covered in if covered { image = nil } }
+        .onChange(of: arrivedHeartsCount, initial: true) { _, count in
+            guard let count, model.takeArrivedHearts(entry.id, count: count), !reduceMotion else { return }
+            arrivedHeartBounces &+= 1
+        }
     }
 
     private var avatar: some View {
@@ -1626,6 +1663,7 @@ private struct GroupPhotoTile: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(mine ? Color.red : Color.secondary)
                     .symbolEffect(.bounce, value: mine)
+                    .symbolEffect(.bounce, value: arrivedHeartBounces)
                 if heartCount > 0 {
                     Text(heartCount.formatted())
                         .foregroundStyle(.secondary)

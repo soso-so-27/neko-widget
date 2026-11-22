@@ -106,6 +106,44 @@ class HeartBurst(unittest.TestCase):
         self.assertIn(".sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }", self.detail)
 
 
+class ArrivedHearts(unittest.TestCase):
+    """4. Hearts that arrived at this person's own photo since its ♡ count was
+    last shown on this iPhone: one bounce of the ♡ (none with Reduce Motion),
+    no haptic. The counts are kept per まど in UserDefaults, for its own photos
+    only, written with markSeen (never while scrolling)."""
+
+    def setUp(self):
+        self.tile = section(WINDOW, "private struct GroupPhotoTile: View {", "private struct GroupHeartBurst: View {")
+
+    def test_the_tile_bounces_once_for_its_own_photo(self):
+        self.assertIn("private var arrivedHeartsCount: Int? { entry.isOwn && model.showedStored ? heartCount : nil }",
+                      self.tile)
+        self.assertIn(".onChange(of: arrivedHeartsCount, initial: true) { _, count in", self.tile)
+        self.assertIn("guard let count, model.takeArrivedHearts(entry.id, count: count), !reduceMotion else { return }",
+                      self.tile)
+        self.assertIn(".symbolEffect(.bounce, value: arrivedHeartBounces)", self.tile)
+        # No haptic for hearts this person did not send.
+        self.assertNotIn("trigger: arrivedHeartBounces", self.tile)
+
+    def test_the_model_compares_with_the_last_count_shown(self):
+        take = section(WINDOW, "func takeArrivedHearts(_ photoID: String, count: Int) -> Bool {", "\n    }\n")
+        self.assertIn("guard showedStored else { return false }", take)
+        self.assertIn("return last.map { count > $0 } ?? false", take)
+        self.assertIn("@Published private(set) var showedStored = false", WINDOW)
+        save = section(WINDOW, "func saveHeartsShown() {", "\n    }\n")
+        self.assertIn("guard heartsShownChanged else { return }", save)
+        self.assertIn("let own = Set(entries.lazy.filter(\\.isOwn).map(\\.id))", save)
+        seen = section(WINDOW, "private func markSeen() {", "\n    }\n")
+        self.assertIn("model.saveHeartsShown()", seen)
+
+    def test_the_store_is_safe_when_missing(self):
+        self.assertNotIn("UserDefaults", WINDOW)
+        store = section(read("NekoWidget/Services/GroupWindowLocalPhotoStore.swift"), "enum GroupHeartsShown {", "\n}\n")
+        self.assertIn('"groupWindow.heartsShown.v1." + windowID', store)
+        self.assertIn("as? [String: Int] ?? [:]", store)
+        self.assertIn("removeObject(forKey: key(windowID))", store)
+
+
 class TapTargets(unittest.TestCase):
     def test_growth_replace(self):
         menu = section(GROWTH, 'Label("写真を変える"', ".buttonStyle(.plain)")
