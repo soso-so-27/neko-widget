@@ -509,7 +509,8 @@ class DefaultAutomatic1115sTests(unittest.TestCase):
         }
         for name, text in marked.items():
             self.assertIn("SharingPersonAction.run", text, name)
-        self.assertEqual(WINDOW_VIEW.count("await SharingPersonAction.run { await model.load() }"), 3)
+        # 11/22: the retry under kept cards is gone; the list reads again when shown.
+        self.assertEqual(WINDOW_VIEW.count("await SharingPersonAction.run { await model.load() }"), 2)
         self.assertIn(".refreshable { await SharingPersonAction.run { await safety.refresh(windowID: windowID) } }", WINDOW_VIEW)
 
     def test_counted_at_the_real_gate(self):

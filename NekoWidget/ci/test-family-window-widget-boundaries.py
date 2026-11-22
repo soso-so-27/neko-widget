@@ -5436,7 +5436,8 @@ class WorkingFeedbackTests(unittest.TestCase):
         # Retry progress is the view's own: background loads must not redraw the list.
         self.assertNotIn("isLoading", window)
         # 1115s: 「もう一度」 is the person's own read.
-        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } }"), 2)
+        # 11/22: only the nothing-to-show state keeps its retry (the line under kept cards is gone).
+        self.assertEqual(window.count("reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } }"), 1)
         favorite = section(window, "func addToFavorites(", "func remove(")
         self.assertIn("addingFavoriteID = entry.id\n            defer { addingFavoriteID = nil }", favorite)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
@@ -5797,7 +5798,9 @@ class GroupWindowSpeedTests(unittest.TestCase):
         self.assertIn("GroupWidgetCache.entries()", listing)
         # Known windows show while loading, and stay when the relay cannot be reached.
         self.assertIn("if model.windows.isEmpty, !model.hasLoaded || model.message != nil {", listing)
-        self.assertIn('"group-window-list-stale"', listing)
+        # 11/22: no notice under the kept cards; they open as usual.
+        self.assertNotIn('"group-window-list-stale"', listing)
+        self.assertNotIn("前回の内容です", listing)
 
 
 class GroupWidgetOpenTests(unittest.TestCase):

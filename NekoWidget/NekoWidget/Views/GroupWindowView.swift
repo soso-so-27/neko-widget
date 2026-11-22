@@ -2994,7 +2994,7 @@ struct GroupWindowListSection: View {
                     Button {
                         GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: entry.windowID)
                     } label: {
-                        KnownWindowCard(entry: entry, subtitle: model.hasLoaded ? "前回の内容です" : "")
+                        KnownWindowCard(entry: entry, subtitle: "")
                     }
                     .buttonStyle(.plain)
                 }
@@ -3042,18 +3042,10 @@ struct GroupWindowListSection: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
                     .accessibilityIdentifier("group-window-list-failed")
-                } else {
-                    // A refresh that failed is not an emergency: say so quietly, with a retry.
-                    HStack(spacing: 8) {
-                        Text("いまは新しい内容を読み込めません。").font(.footnote).foregroundStyle(.secondary)
-                        Button { reloading = true; Task { defer { reloading = false }; await SharingPersonAction.run { await model.load() } } } label: {
-                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)
-                        }
-                            .font(.footnote.weight(.semibold))
-                            .disabled(model.isWorking || reloading)
-                    }
-                    .accessibilityIdentifier("group-window-list-stale")
                 }
+                // 11/22: with the cards kept from last time on screen, a failed
+                // refresh says nothing. Each card still opens, and the list is
+                // read again the next time the tab is shown.
             }
             if !compactHeader {
                 NavigationLink {
