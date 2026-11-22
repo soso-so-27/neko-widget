@@ -87,7 +87,8 @@ private enum GroupPhotoModeration {
     static func sendMessage(_ verdict: Verdict) -> String? {
         switch verdict {
         case .safe: return nil
-        case .hidden: return "センシティブな内容が含まれている可能性があるため、この写真は届けられません。"
+        // 11/22 (1122n): the share sheet's words; trying the same photo again cannot help.
+        case .hidden: return "センシティブな内容が含まれている可能性があります。別の写真を選んでください。"
         case .retryLater: return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
         }
     }
@@ -133,6 +134,18 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published private(set) var receiveNotice: String?
     /// The photo that could not be delivered, kept to send again.
     @Published private(set) var failedDelivery: FailedDelivery?
+    /// 11/22 (1122n): the words of the last failed read of the window. Only
+    /// that line offers 「もう一度」 (a re-read); a picked photo's check or a
+    /// limit cannot be helped by reading again.
+    private var reloadMessage: String?
+    /// The line's 「もう一度」: after a failed read, and not while a photo
+    /// waits with its own 「もう一度届ける」 (one retry on the screen). With no
+    /// window read yet that row cannot send, so the re-read stays.
+    var messageOffersReload: Bool {
+        message != nil && message == reloadMessage && (failedDelivery == nil || window == nil)
+    }
+    /// A daily limit is not a failure: said quietly, with nothing to press.
+    var messageIsNotice: Bool { message.map(GroupWindowPresentation.isDailyLimitNotice) ?? false }
     /// The result of 「お気に入りに追加」 or 「自分のまどから消す」.
     @Published var actionMessage: String?
     /// The photo being copied by 「お気に入りに追加」, so its button says so (11/6).
@@ -396,6 +409,7 @@ final class GroupWindowScreenModel: ObservableObject {
             window = nil; failedDelivery = nil; message = nil; isGone = true; morePhotosComing = false
         } catch {
             message = GroupWindowPresentation.message(for: error)
+            reloadMessage = message
             morePhotosComing = false
         }
         knowsPhotos = true
@@ -597,7 +611,12 @@ final class GroupWindowScreenModel: ObservableObject {
                 await sync()
             } catch {
                 message = Self.deliveryMessage(for: error)
-                if !(error is GroupSubscriptionError) {
+                if error as? GroupClientError == .dailyLimit {
+                    // 11/22 (1122n): today's limit is not a failure. Nothing was
+                    // delivered and 「もう一度届ける」 could not work until tomorrow,
+                    // so the photo is not kept to resend: it is chosen again then.
+                    await client.discardPendingDelivery(operationID: prepared.operationID)
+                } else if !(error is GroupSubscriptionError) {
                     // The same operation resends safely, unless the window's key changed.
                     let keepsOperation: Bool
                     switch error as? GroupClientError {
@@ -796,7 +815,7 @@ final class GroupWindowScreenModel: ObservableObject {
         await SharingPersonAction.run {
             do { window = try await client.window(id: windowID); message = nil }
             catch is CancellationError {}
-            catch { message = GroupWindowPresentation.message(for: error) }
+            catch { message = GroupWindowPresentation.message(for: error); reloadMessage = message }
         }
     }
 
@@ -1024,23 +1043,27 @@ struct GroupWindowScreen: View {
     }
 
 
-    /// The red error line with its retry, kept out of the body chain so
-    /// the type checker stays fast.
+    /// The red error line, kept out of the body chain so the type checker
+    /// stays fast. 11/22 (1122n): a daily limit is a quiet notice instead;
+    /// 「もう一度」 only where re-reading can help.
     private func screenMessage(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(message, systemImage: "exclamationmark.triangle")
+            Label(message, systemImage: model.messageIsNotice ? "clock" : "exclamationmark.triangle")
                 .font(.footnote)
-                .foregroundStyle(.red)
+                .foregroundStyle(model.messageIsNotice ? Color.secondary : Color.red)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("group-window-screen-message")
             // sync() re-reads the window and its photos; a failed delivery
             // keeps its own 「もう一度届ける」 bar.
-            Button { Task { await model.sync() } } label: {
-                WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)
+            if model.messageOffersReload {
+                Button { Task { await model.sync() } } label: {
+                    WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)
+                }
+                    .font(.footnote)
+                    .frame(minHeight: 44)
+                    .disabled(model.isSyncing)
+                    .accessibilityIdentifier("group-window-screen-retry")
             }
-                .font(.footnote)
-                .frame(minHeight: 44)
-                .disabled(model.isSyncing)
-                .accessibilityIdentifier("group-window-screen-retry")
         }
         .padding(.horizontal, 16)
     }
@@ -1850,7 +1873,11 @@ private struct GroupLibraryDeliveryStep: View {
                     }
                     GroupCaptionField(text: $memo)
                     if let message = model.message {
-                        Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                        // 11/22 (1122n): today's limit is a quiet notice, not an error.
+                        Section {
+                            Label(message, systemImage: model.messageIsNotice ? "clock" : "exclamationmark.triangle")
+                                .foregroundStyle(model.messageIsNotice ? Color.secondary : Color.red)
+                        }
                     }
                 }
                 .safeAreaInset(edge: .bottom) {

@@ -1583,7 +1583,8 @@ struct FamilyNotebookView: View {
     /// 「もう一度」, as 「通報への返答」 says it.
     private var checkFailedSection: some View {
         Section {
-            Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+            // 11/22 (1122n): the app's one sentence for no connection.
+            Label(FamilyNotebookOfflineText.sentence, systemImage: "wifi.exclamationmark")
                 .accessibilityIdentifier("family-notebook-check-failed")
             recheckButton
         }
@@ -1592,9 +1593,9 @@ struct FamilyNotebookView: View {
     /// The same, before anything of the notebook can show.
     private var checkFailedView: some View {
         ContentUnavailableView {
-            Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+            Label(FamilyNotebookOfflineText.title, systemImage: "wifi.exclamationmark")
         } description: {
-            EmptyView()
+            Text(FamilyNotebookOfflineText.next)
         } actions: {
             recheckButton
         }
@@ -3249,6 +3250,14 @@ private struct FamilyReportRepliesRow: View {
     }
 }
 
+/// 11/22 (1122n): the app's one sentence for "the server cannot be reached"
+/// (as the まど says it). A full-screen state shows it as a title and the next step.
+enum FamilyNotebookOfflineText {
+    static let title = "接続できません。"
+    static let next = "電波のあるところで、もう一度お試しください。"
+    static let sentence = title + next
+}
+
 /// 「通報への返答」: one line per report, newest first.
 struct FamilyReportRepliesView: View {
     private enum Phase: Equatable {
@@ -3263,9 +3272,9 @@ struct FamilyReportRepliesView: View {
                 ProgressView()
             case .failed:
                 ContentUnavailableView {
-                    Label("つながりませんでした", systemImage: "wifi.exclamationmark")
+                    Label(FamilyNotebookOfflineText.title, systemImage: "wifi.exclamationmark")
                 } description: {
-                    EmptyView()
+                    Text(FamilyNotebookOfflineText.next)
                 } actions: {
                     Button("もう一度") { Task { await load() } }
                         .accessibilityIdentifier("family-report-replies-retry")

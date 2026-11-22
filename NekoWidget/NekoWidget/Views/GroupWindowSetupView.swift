@@ -104,6 +104,10 @@ enum GroupWindowPresentation {
     /// 11/14: the server's daily limits, said instead of a failure.
     static let dailyPhotoLimitMessage = "きょうはここまでです。あした、また届けられます。"
     static let dailyHeartLimitMessage = "きょうのハートはここまでです。"
+    /// 11/22 (1122n): these are notices, not errors: shown calmly, with no 「もう一度」.
+    static func isDailyLimitNotice(_ message: String) -> Bool {
+        message == dailyPhotoLimitMessage || message == dailyHeartLimitMessage
+    }
 
     /// The team paused new invitations and new people joining. Windows in use
     /// carry on; nobody is told why, and nothing is lost.

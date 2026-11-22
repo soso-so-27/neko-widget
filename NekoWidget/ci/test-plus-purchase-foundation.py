@@ -800,7 +800,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("await reloadOfferForCurrentCatalog()", load)
         self.assertNotIn("時間をおいて開き直して", load)
         self.assertEqual(model.count("PlusOfferReloadPolicy.unavailableMessage"), 2)
-        self.assertNotIn('"料金を確認できません。時間をおいて開き直してください。"', model)
+        self.assertNotIn('"料金を確認できません。"', model)
         reload = section(model, "private func reloadOfferPresentation() async {",
                          "private func reloadOfferForCurrentCatalog() async {")
         # What a tap may buy is still cleared during a read; the screen keeps the price.
