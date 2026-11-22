@@ -40,7 +40,7 @@ class UpgradeNoticeTests(unittest.TestCase):
         self.assertIn("var onClose: (() -> Void)? = nil", view)
         self.assertIn('Button("閉じる", action: onClose)', view)
         # The store page is still not published; the flag has one owner.
-        self.assertIn("static let isPagePublished = false", UPGRADE)
+        self.assertIn('Bundle.main.object(forInfoDictionaryKey: "AppStorePagePublished") as? String == "YES"', UPGRADE)
         # Server requests still stop; nothing local is gated.
         self.assertIn("if isRequired { throw ClientUpgradeRequiredError() }", UPGRADE)
 

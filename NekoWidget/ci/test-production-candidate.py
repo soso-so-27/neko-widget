@@ -155,6 +155,8 @@ class ProductionCandidateTests(unittest.TestCase):
         contract["values"]["SHARING_MODERATION_PUBLIC_KEY"] = base64.urlsafe_b64encode(raw).decode().rstrip("=")
         contract["recipientSHA256"] = hashlib.sha256(raw).hexdigest()
         self.assertTrue(candidate.settings(contract)["SHARING_MODERATION_PUBLIC_KEY"])
+        self.assertEqual(candidate.settings(contract)["APP_STORE_PAGE_PUBLISHED"], "NO")
+        self.assertEqual(candidate.settings(contract, app_store_submission=True)["APP_STORE_PAGE_PUBLISHED"], "YES")
         for empty in ("", "   ", None):
             broken = copy.deepcopy(contract)
             broken["values"]["SHARING_MODERATION_PUBLIC_KEY"] = empty
@@ -357,6 +359,38 @@ class ProductionCandidateTests(unittest.TestCase):
         candidate.verify_export(options, owner_only=True)
         with self.assertRaises(ValueError): candidate.verify_export(options)
         self.assertEqual(candidate.settings(self.contract, synthetic=True), self.settings)
+
+    def test_store_link_opt_in_requires_submission_export(self):
+        output = Path(self.temp.name) / "submission-contract.json"
+        envfile = Path(self.temp.name) / "submission-env"
+        env = {"PRODUCTION_CANDIDATE_CONFIG": json.dumps(self.contract),
+               "PRODUCTION_CANDIDATE_APPROVED": "YES", "GITHUB_ENV": str(envfile),
+               "APP_STORE_SUBMISSION_REQUESTED": "true"}
+        arguments = ["candidate", "prepare", "--contract", str(output)]
+        for owner, upload in (("true", "false"), ("false", "true")):
+            with patch.dict(os.environ, {**env, "PRODUCTION_CANDIDATE_OWNER_ONLY": owner,
+                                         "UPLOAD_TO_TESTFLIGHT": upload}, clear=True), \
+                 patch("sys.argv", arguments), self.assertRaisesRegex(ValueError, "submission export"):
+                candidate.main()
+            self.assertFalse(output.exists())
+            self.assertFalse(envfile.exists())
+        for requested in ("false", "true"):
+            with patch.dict(os.environ, {**env, "APP_STORE_SUBMISSION_REQUESTED": requested}, clear=True), \
+                 patch("sys.argv", arguments), patch.object(candidate, "settings", return_value=self.settings) as settings:
+                candidate.main()
+                settings.assert_called_once_with(self.contract, app_store_submission=requested == "true")
+            self.assertIn(f"RELEASE_APP_STORE_SUBMISSION={requested}", envfile.read_text(encoding="utf-8").splitlines())
+
+    def test_ordinary_products_reject_published_store_link(self):
+        path = self.app / "Info.plist"
+        info = plistlib.loads(path.read_bytes())
+        self.assertEqual(info.get("AppStorePagePublished"), "NO")
+        info["AppStorePagePublished"] = "YES"
+        path.write_bytes(plistlib.dumps(info))
+        with self.assertRaisesRegex(ValueError, "AppStorePagePublished"):
+            self.verify()
+        with self.assertRaisesRegex(ValueError, "Synthetic build cannot enable"):
+            candidate.settings(self.contract, synthetic=True, app_store_submission=True)
 
     def test_upload_requires_both_owner_only_selection_and_protected_approval(self):
         output = Path(self.temp.name) / 'contract.json'

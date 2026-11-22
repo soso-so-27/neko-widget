@@ -47,15 +47,14 @@ final class ClientUpgradeRequirement: @unchecked Sendable {
     }
 }
 
-/// Shared by settings, the upgrade screen, and the share extension. The page
-/// goes live with release, not review; the publication flag has one owner.
+/// The signed App Store submission build is prepared for the page at release.
 enum AppStoreListing {
-    static let appID: String? = "6801962436"
-    static let isPagePublished = false
-    static var pageURL: URL? {
-        guard isPagePublished else { return nil }
-        guard let appID, !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
-        return URL(string: "https://apps.apple.com/jp/app/id\(appID)")
+    static let isPagePublished = Bundle.main.object(forInfoDictionaryKey: "AppStorePagePublished") as? String == "YES"
+    static var pageURL: URL? { pageURL(isPublished: isPagePublished) }
+
+    static func pageURL(isPublished: Bool) -> URL? {
+        guard isPublished else { return nil }
+        return URL(string: "https://apps.apple.com/jp/app/id6801962436")
     }
     static let recommendMessage = "うちの猫の写真が、ホーム画面に。ねこのまど"
 }

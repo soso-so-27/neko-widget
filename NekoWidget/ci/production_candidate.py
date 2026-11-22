@@ -83,7 +83,8 @@ def fixture():
         "policyRevision": "2026-11-09", "distribution": PROFILE, "synthetic": True}
 
 
-def settings(contract, *, synthetic=False):
+def settings(contract, *, synthetic=False, app_store_submission=False):
+    require(not synthetic or not app_store_submission, "Synthetic build cannot enable the App Store page")
     require(set(contract) == {"values", "recipientSHA256", "policyRevision", "distribution", "synthetic"}, "Unexpected candidate contract fields")
     require(contract["synthetic"] is synthetic, "Synthetic values are not a signed candidate")
     require(contract["distribution"] == PROFILE and contract["policyRevision"] == "2026-11-09", "Unreviewed distribution or policy revision")
@@ -116,6 +117,7 @@ def settings(contract, *, synthetic=False):
     require(urlsplit(values["OFFICIAL_WINDOW_FEED_URL"]).path == "/catalog.json",
             "Official feed must use base /catalog.json; the app appends each channel path")
     result.update({"INTERNAL_PRESENTATION_CONDITION": "",
+                   "APP_STORE_PAGE_PUBLISHED": "YES" if app_store_submission else "NO",
                    "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
                    "OWNER_STAGING_TWO_DEVICE_ENABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",
@@ -162,8 +164,8 @@ def verify_public_hosts(app):
                 overlap = window[-1024:]
 
 
-def verify_products(app, contract, *, synthetic=False):
-    expected = settings(contract, synthetic=synthetic)
+def verify_products(app, contract, *, synthetic=False, app_store_submission=False):
+    expected = settings(contract, synthetic=synthetic, app_store_submission=app_store_submission)
     verify_public_hosts(app)
     config = (ROOT / "Config.xcconfig").read_text(encoding="utf-8")
     identity_keys = dict(zip(TARGETS, ("APP_BUNDLE_IDENTIFIER", "SHARE_EXTENSION_BUNDLE_IDENTIFIER", "WIDGET_BUNDLE_IDENTIFIER")))
@@ -188,6 +190,7 @@ def verify_products(app, contract, *, synthetic=False):
         actual_privacy = plistlib.loads((directory / "PrivacyInfo.xcprivacy").read_bytes())
         require(actual_privacy == plistlib.loads((ROOT / privacy_source).read_bytes()), "Bundled privacy manifest differs: " + target)
     host, share, widget = (infos[k] for k in TARGETS)
+    match_info(host, {"AppStorePagePublished": "APP_STORE_PAGE_PUBLISHED"}, expected)
     module("usage_report_config").verify(host, mode="production", synthetic=synthetic)
     module("usage_report_config").verify_privacy(plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes()))
     require(len({i.get("CFBundleVersion") for i in infos.values()}) == 1 and host.get("CFBundleVersion"), "Target build versions differ")
@@ -273,8 +276,8 @@ def verify_signatures(app):
             require(not any(str(k).endswith(".group-share") for k in entitlements.get("keychain-access-groups", [])), "Widget has Group Share credentials")
 
 
-def run_build(contract, arguments, *, synthetic=False):
-    expected = settings(contract, synthetic=synthetic)
+def run_build(contract, arguments, *, synthetic=False, app_store_submission=False):
+    expected = settings(contract, synthetic=synthetic, app_store_submission=app_store_submission)
     require(not synthetic or "iphonesimulator" in arguments, "Synthetic contract is Simulator-only")
     require(not any(arg in arguments for arg in ("-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration", "-exportArchive")), "No remote signing mutation or upload")
     # No shell interpolation and no -xcconfig precedence surprises.
@@ -327,11 +330,16 @@ def main():
     if args.command == "prepare":
         require(not args.synthetic, "Signed workflow cannot prepare synthetic contract")
         contract = json.loads(os.environ["PRODUCTION_CANDIDATE_CONFIG"])
-        settings(contract)
         require(os.environ.get("PRODUCTION_CANDIDATE_APPROVED") == "YES", "Protected candidate approval missing")
         owner_only = os.environ.get("PRODUCTION_CANDIDATE_OWNER_ONLY", "false")
+        upload = os.environ.get("UPLOAD_TO_TESTFLIGHT", "false")
+        submission_requested = os.environ.get("APP_STORE_SUBMISSION_REQUESTED") or "false"
+        require(submission_requested in ("true", "false"), "Explicit App Store submission boundary required")
         require(owner_only in ("true", "false"), "Explicit candidate recipient boundary required")
-        require(os.environ.get("UPLOAD_TO_TESTFLIGHT", "false") == "false" or
+        require(submission_requested == "false" or (owner_only == "false" and upload == "false"),
+                "The App Store page requires a submission export without TestFlight")
+        settings(contract, app_store_submission=submission_requested == "true")
+        require(upload == "false" or
                 (owner_only == "true" and os.environ.get("PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED") == "YES"),
                 "Candidate upload requires protected owner-only approval")
         require(all(os.environ.get(k, "false") == "false" for k in
@@ -340,13 +348,18 @@ def main():
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
             destination = "owner-only internal TestFlight" if owner_only == "true" else "archive and export only"
             env.write("SHARING_EXPECTED_MODE=production\nRELEASE_ENVIRONMENT=production\nRELEASE_INTERNAL_REPORTS_ENABLED=false\nRELEASE_MODE_SUMMARY=production/App Store candidate (" + destination + ")\n")
+            env.write("RELEASE_APP_STORE_SUBMISSION=" + submission_requested + "\n")
         return
     contract = json.loads(args.contract.read_text(encoding="utf-8"))
-    settings(contract, synthetic=args.synthetic)
+    app_store_submission = os.environ.get("RELEASE_APP_STORE_SUBMISSION") == "true"
+    require(not app_store_submission or os.environ.get("PRODUCTION_CANDIDATE_OWNER_ONLY", "false") == "false",
+            "Owner-only builds cannot enable the App Store page")
+    settings(contract, synthetic=args.synthetic, app_store_submission=app_store_submission)
     if args.command == "build":
-        run_build(contract, extra[1:] if extra[:1] == ["--"] else extra, synthetic=args.synthetic)
+        run_build(contract, extra[1:] if extra[:1] == ["--"] else extra,
+                  synthetic=args.synthetic, app_store_submission=app_store_submission)
     elif args.command == "products":
-        verify_products(args.path, contract, synthetic=args.synthetic)
+        verify_products(args.path, contract, synthetic=args.synthetic, app_store_submission=app_store_submission)
         if not args.synthetic:
             verify_signatures(args.path)
     elif args.command == "export":
@@ -364,7 +377,7 @@ def main():
             require(len(names) == len(set(names)) and all(not Path(n).is_absolute() and ".." not in Path(n).parts for n in names), "Unsafe or duplicate IPA entries")
             archive.extractall(directory)
             app = Path(directory) / "Payload/NekoWidget.app"
-            verify_products(app, contract)
+            verify_products(app, contract, app_store_submission=app_store_submission)
             verify_signatures(app)
     print("PASS production candidate " + args.command + (" (synthetic Simulator; not distributable)" if args.synthetic else ""))
 
