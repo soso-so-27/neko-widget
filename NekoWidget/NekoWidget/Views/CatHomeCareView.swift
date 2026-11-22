@@ -4,7 +4,7 @@ import SwiftUI
 //
 // One card under the buttons: 誕生日, ワクチン, 病院, 体重 in this order,
 // each only when something is written for it (11/14: never 未設定・未記入・
-// なし on this page). Settings-style rows (the name, the value at the side,
+// なし on this page); 11/23: 体重 also before, with no value. Settings-style rows (the name, the value at the side,
 // a chevron), no icons and no colours but the one orange 「書きかけ」, then
 // 「この子のこと」 as the last row (11/14: was a box of its own). Every
 // value is read from what is already in memory (この子のこと and the vet
@@ -49,6 +49,14 @@ struct CatHomeCareLinks {
     /// 「この子のこと」 itself (also for what has no page of its own yet),
     /// opened by value (CatHomeView's navigationDestination).
     var about: CatHomeAboutRoute { CatHomeAboutRoute(catID: cat.id) }
+
+    /// The cat as 「この子のこと」 knows it.
+    var subject: CatCareSubject {
+        switch cat.kind {
+        case let .profile(profile): .profile(profile)
+        case let .toolCat(id): .toolCat(id: id, name: cat.name)
+        }
+    }
 }
 
 /// The care card: the rows with something written, then 「この子のこと」;
@@ -58,7 +66,12 @@ struct CatHomeCareCard: View {
     /// is then 「この子のこと」 alone.
     let rows: CatHomeCareRows?
     let links: CatHomeCareLinks
+    /// 11/23: 体重 is the one row shown before anything is written (a living
+    /// cat), its value empty; it opens the weight form, so the first weight
+    /// is found here. Every other row stays out until written (11/14).
+    var showsWeight = false
     @State private var editsDates = false
+    @State private var addsWeight = false
 
     var body: some View {
         // No heading (11/14): with real data most rows read 「前回…」, so
@@ -70,9 +83,15 @@ struct CatHomeCareCard: View {
                 link(entry)
                     .accessibilityIdentifier("cat-home-care-" + entry.id)
             }
+            if showsWeight && rows?.weight == nil {
+                if !shown.isEmpty { Divider().padding(.leading, 16) }
+                Button { addsWeight = true } label: { CatHomeCareRow(title: "体重", value: nil) }
+                    .buttonStyle(CatHomeCarePressStyle())
+                    .accessibilityIdentifier("cat-home-care-weight")
+            }
             // 11/14: the last row, the same row as the others (was a box of
             // its own under the card); it opens the cat's page, as before.
-            if !shown.isEmpty { Divider().padding(.leading, 16) }
+            if !shown.isEmpty || (showsWeight && rows?.weight == nil) { Divider().padding(.leading, 16) }
             NavigationLink(value: links.about) { CatHomeCareRow(title: "この子のこと", value: nil) }
                 .buttonStyle(CatHomeCarePressStyle())
                 .accessibilityIdentifier(links.cat.profile != nil ? "tools-cat-\(links.cat.id)"
@@ -89,6 +108,13 @@ struct CatHomeCareCard: View {
             if let profile = links.cat.profile {
                 CatProfileLifeReferenceEditor(profile: profile, save: links.saveLifeDates)
             }
+        }
+        // The same weight form as 「この子のこと」→「体重を追加」, saved the
+        // same way; the cat's 「この子のこと」 is made for it when it has none.
+        .sheet(isPresented: $addsWeight) {
+            CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: links.catID, saving: { result in
+                CatCareStore.shared.applyEntry(result, for: links.subject)
+            })
         }
     }
 
@@ -123,9 +149,19 @@ struct CatHomeCareCard: View {
                     .buttonStyle(CatHomeCarePressStyle())
             }
         case "vet":
-            // 病院で見せる for this cat, as the 病院 button opens it.
-            NavigationLink(value: CatHomeRoute(tool: .vet, catID: links.cat.id)) { row }
-                .buttonStyle(CatHomeCarePressStyle())
+            if entry.value.tone == .unfinished {
+                // 「書きかけ」: the memo being written, as the 病院 button opens it.
+                NavigationLink(value: CatHomeRoute(tool: .vet, catID: links.cat.id)) { row }
+                    .buttonStyle(CatHomeCarePressStyle())
+            } else {
+                // 11/23: the row is the day; it opens 「次に行く日」 (the round
+                // 病院 button above opens 病院で見せる), so the two differ.
+                NavigationLink {
+                    VeterinaryNextVisitPage(catKeys: Set([links.cat.id.uppercased(),
+                                                          links.catID?.uuidString.uppercased()].compactMap { $0 }))
+                } label: { row }
+                    .buttonStyle(CatHomeCarePressStyle())
+            }
         default:
             if let catID = links.catID {
                 NavigationLink {

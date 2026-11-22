@@ -1055,6 +1055,102 @@ private struct VeterinaryConsultationView: View {
     }
 }
 
+/// 11/23: 「次に行く日」 of a cat's finished memo, opened by the 病院 row of
+/// the 「この子」 tab (the round 病院 button opens 病院で見せる). The memo is
+/// the one the row reads (CatHomeCareCore.vet): the newest finished memo
+/// with a next day, while that day is ahead; else the newest finished memo.
+/// The same toggle and date as the memo's own 「次に行く日」, saved the same
+/// way (saveResults); nothing else of the memo is here.
+struct VeterinaryNextVisitPage: View {
+    /// The page's cat, upper-cased: its own ID and its 「この子のこと」 ID.
+    let catKeys: Set<String>
+    var store: VeterinaryVisitStore = .shared
+    @State private var visit: VeterinaryVisit?
+    @State private var hasNextVisit = false
+    @State private var nextVisitDay = Date()
+    @State private var error: String?
+    @State private var busy = false
+    @State private var autosaveTask: Task<Void, Never>?
+
+    /// The memo the 病院 row reads, among a cat's memos.
+    static func target(_ visits: [VeterinaryVisit], today: String) -> VeterinaryVisit? {
+        let finished = visits.filter { $0.completedAt != nil }
+            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+        if let withNext = finished.first(where: { $0.nextVisitOn != nil }),
+           let day = withNext.nextVisitOn, day >= today { return withNext }
+        return finished.first
+    }
+
+    private var draftDay: String? { hasNextVisit ? VeterinaryVisit.day(nextVisitDay) : nil }
+    private var changes: Bool { visit.map { draftDay != $0.nextVisitOn } ?? false }
+
+    var body: some View {
+        ToolPushedPage(title: "次に行く日", leave: { flushSave() }) { _ in
+            if visit != nil {
+                Section {
+                    Toggle("次に行く日を記録", isOn: $hasNextVisit).accessibilityIdentifier("vet-next-visit-toggle")
+                    if hasNextVisit { DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date) }
+                }
+            } else if error == nil {
+                ProgressView()
+            }
+            if let error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("vet-error")
+                }
+            }
+        }
+        .disabled(busy)
+        .onChange(of: hasNextVisit) { _, _ in scheduleSave() }
+        .onChange(of: nextVisitDay) { _, _ in scheduleSave() }
+        .task { await load() }
+    }
+
+    private func load() async {
+        do {
+            let visits = try await store.visits().filter { catKeys.contains($0.catID.uuidString.uppercased()) }
+            guard let found = Self.target(visits, today: VeterinaryVisit.day(Date())) else { return }
+            visit = found
+            hasNextVisit = found.nextVisitOn != nil
+            if let day = found.nextVisitOn, let date = Self.date(day) { nextVisitDay = date }
+            error = nil
+        } catch { self.error = veterinaryErrorMessage(error) }
+    }
+
+    private static func date(_ day: String) -> Date? {
+        let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: day)
+    }
+
+    private func flushSave() {
+        autosaveTask?.cancel()
+        if changes { Task { await save() } }
+    }
+
+    private func scheduleSave() {
+        autosaveTask?.cancel()
+        autosaveTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            guard !Task.isCancelled, changes else { return }
+            await save()
+        }
+    }
+
+    private func save() async {
+        guard var draft = visit, !busy, changes else { return }
+        let base = draft
+        draft.nextVisitOn = draftDay
+        busy = true; defer { busy = false }
+        do {
+            visit = try await store.saveResults(draft, expectedRevision: draft.revision, base: base)
+            error = nil
+        } catch { self.error = veterinaryErrorMessage(error) }
+    }
+}
+
 /// 「見せる写真を選ぶ」 (349): the recent photos first, since a photo often has
 /// no cat on it yet, then the memos put on photos. Several can be added
 /// before 「完了」; each still goes through 「内容を確認」 and its rules.

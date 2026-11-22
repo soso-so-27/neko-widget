@@ -798,6 +798,23 @@ struct LostCatDraftView: View {
         return next
     }
 
+    /// 11/23: an empty 連絡先 starts as 「この子のこと」's contact, so the flyer
+    /// needs only the place; what the person writes there stays theirs. Only
+    /// a contact written in 「この子のこと」 itself: one brought in from a
+    /// tool's memo (預けるとき・避難) was not written for a public flyer, and
+    /// stays behind the button.
+    private func fillContact(_ draft: LostCatDraft, key identity: String) -> LostCatDraft {
+        guard draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let stamped = catCareStore.state?.household.ownerContact, !stamped.editedBy.hasPrefix("import:")
+        else { return draft }
+        let owner = stamped.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { return draft }
+        var next = draft
+        next.contact = owner
+        do { try store.save(next, for: identity) } catch { return draft }
+        return next
+    }
+
     private func catCareTarget(for identity: String) -> CatCareSubject? {
         if let profile = profiles.first(where: { $0.identifier == identity }) { return .profile(profile) }
         if let catID = LostCatCatCareKey.parse(identity)?.catID { return .toolCat(id: catID, name: "") }
@@ -819,11 +836,13 @@ struct LostCatDraftView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(title)
                 .accessibilityIdentifier("lost-cat-\(field)"), focus: focus)
-            Text("\(text.wrappedValue.count) / \(limit)文字"
-                 + (text.wrappedValue.count > limit ? "（\(text.wrappedValue.count - limit)文字多い）" : ""))
-                .font(.caption).monospacedDigit()
-                .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            if FieldCount.isShown(text.wrappedValue.count, limit: limit) {
+                Text("\(text.wrappedValue.count) / \(limit)文字"
+                     + (text.wrappedValue.count > limit ? "（\(text.wrappedValue.count - limit)文字多い）" : ""))
+                    .font(.caption).monospacedDigit()
+                    .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
             fieldIssue(String(describing: field), issues)
         }
     }
@@ -991,6 +1010,7 @@ struct LostCatDraftView: View {
                 if let refreshed = try? store.refreshCandidateText(for: identity,
                     information: candidates[0].textForCandidateRefresh()) { saved = refreshed }
             }
+            saved = fillContact(saved, key: identity)
             key = identity
             lastKey = identity
             savedDraft = saved
@@ -1555,10 +1575,12 @@ private struct LostCatFoundView: View {
                         .focused($editing)
                         .accessibilityLabel("ひとこと（任意）")
                         .accessibilityIdentifier("lost-cat-found-message")
-                    Text("\(message.count) / \(LostCatText.foundMessageLimit)文字")
-                        .font(.caption).monospacedDigit()
-                        .foregroundStyle(message.count > LostCatText.foundMessageLimit ? Color.red : Color.secondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    if FieldCount.isShown(message.count, limit: LostCatText.foundMessageLimit) {
+                        Text("\(message.count) / \(LostCatText.foundMessageLimit)文字")
+                            .font(.caption).monospacedDigit()
+                            .foregroundStyle(message.count > LostCatText.foundMessageLimit ? Color.red : Color.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                     if let issue { Text(issue).font(.footnote).foregroundStyle(.red) }
                 }
             }

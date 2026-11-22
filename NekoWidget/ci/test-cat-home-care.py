@@ -53,7 +53,7 @@ class PageOrder(unittest.TestCase):
     def test_card_sits_under_the_buttons_with_the_about_row_inside(self):
         page = block(HOME, "private struct CatHomePage: View {")
         order = ["CatHomeToolBar(", "if searching { CatHomeSearchingLine(cat: cat) }",
-                 "CatHomeCareCard(rows: care, links: careLinks)"]
+                 "CatHomeCareCard(rows: care, links: careLinks, showsWeight: !facts.departed)"]
         self.assertEqual([page.index(item) for item in order], sorted(page.index(item) for item in order))
         # 11/14: no box of its own under the card; the card is there for
         # every cat (a departed cat's card is 「この子のこと」 alone).
@@ -140,6 +140,35 @@ class Card(unittest.TestCase):
         self.assertIn("var about: CatHomeAboutRoute { CatHomeAboutRoute(catID: cat.id) }", VIEW)
         self.assertIn(".navigationDestination(for: CatHomeAboutRoute.self) { route in", HOME)
         self.assertNotIn("carePage: AnyView", HOME + VIEW)
+
+    def test_the_vet_row_opens_the_next_day_and_the_button_the_memo(self):
+        # 11/23: the round 病院 button opens 病院で見せる; the row is the day,
+        # so it opens 「次に行く日」 (「書きかけ」 still opens the memo).
+        link = block(VIEW, "@ViewBuilder private func link(_ entry: Entry) -> some View {")
+        self.assertIn("if entry.value.tone == .unfinished {", link)
+        self.assertIn("VeterinaryNextVisitPage(catKeys:", link)
+        self.assertLess(link.index("CatHomeRoute(tool: .vet"), link.index("VeterinaryNextVisitPage("))
+        page = block(VET, "struct VeterinaryNextVisitPage: View {")
+        self.assertIn('ToolPushedPage(title: "次に行く日", leave: { flushSave() })', page)
+        self.assertIn('Toggle("次に行く日を記録", isOn: $hasNextVisit)', page)
+        self.assertIn('DatePicker("次に行く日", selection: $nextVisitDay, displayedComponents: .date)', page)
+        # Saved as a finished memo's 「診察のあと」 is.
+        self.assertIn("store.saveResults(draft, expectedRevision: draft.revision, base: base)", page)
+        # The memo the row reads (CatHomeCareCore.vet): finished ones only.
+        self.assertIn("let finished = visits.filter { $0.completedAt != nil }", page)
+
+    def test_the_weight_row_is_there_before_the_first_weight(self):
+        # 11/23: 体重 alone shows with nothing written, its value empty, and
+        # opens the weight form; every other row stays out until written.
+        card = block(VIEW, "struct CatHomeCareCard: View {")
+        self.assertIn("if showsWeight && rows?.weight == nil {", card)
+        self.assertIn('Button { addsWeight = true } label: { CatHomeCareRow(title: "体重", value: nil) }', card)
+        self.assertIn('.accessibilityIdentifier("cat-home-care-weight")', card)
+        self.assertIn("CatCareListEntrySheet(editor: CatCareListEditor(kind: .weight), catID: links.catID, saving: { result in", card)
+        # Saved the one way every page saves (CatCareStore.applyEntry), the record made first.
+        self.assertIn("CatCareStore.shared.applyEntry(result, for: links.subject)", card)
+        # Not for a departed cat.
+        self.assertIn("showsWeight: !facts.departed", HOME)
 
     def test_which_cats_get_which_rows(self):
         make = block(VIEW, "static func make(hasProfile: Bool, record: CatCareRecord?, birthday: CatCareDay?,")

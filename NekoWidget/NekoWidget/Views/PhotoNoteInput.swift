@@ -23,8 +23,10 @@ struct PhotoNoteInput: View {
             HStack(spacing: 8) {
                 Text(audience)
                 Spacer(minLength: 8)
-                Text("\(text.count) / \(maximumCharacters)文字")
-                    .foregroundStyle(text.count > maximumCharacters ? Color.red : Color.secondary)
+                if FieldCount.isShown(text.count, limit: maximumCharacters) {
+                    Text("\(text.count) / \(maximumCharacters)文字")
+                        .foregroundStyle(text.count > maximumCharacters ? Color.red : Color.secondary)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)

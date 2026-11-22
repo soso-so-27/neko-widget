@@ -429,31 +429,41 @@ struct AlbumPrototypeView: View {
         let thisMonth = calendar.component(.month, from: Date())
         let books = letters.filter { $0.yearNumber == year }
         let next = nextDelivery
+        // 11/23: the month on the big cover above is not on the shelf again.
+        let leadMonth = heroYear == nil ? letters.first.flatMap { $0.yearNumber == year ? $0.monthNumber : nil } : nil
+        let pastYears = arrivedYears.filter { $0 != heroYear }
+        // 11/23: 「これまでの作品」 only when there is a work the cover and the
+        // shelf do not show (an earlier year's, a year's work, a movie).
+        let hasPastWorks = letters.contains { $0.yearNumber != year } || !pastYears.isEmpty || !movies.isEmpty
         return VStack(alignment: .leading, spacing: 10) {
             // 11/7: the year is a heading; the link says what it opens (was 「2026 ›」).
             HStack(alignment: .firstTextBaseline) {
                 Text(verbatim: String(year)).font(.system(.title3, design: .serif).weight(.bold))
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("album-prototype-shelf")
                 Spacer(minLength: 8)
-                NavigationLink {
-                    PastWorksView(letters: letters, years: arrivedYears.filter { $0 != heroYear }, movies: movies,
-                                  catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
-                                  openMovie: openMovie)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("これまでの作品")
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                if hasPastWorks {
+                    NavigationLink {
+                        PastWorksView(letters: letters, years: pastYears, movies: movies,
+                                      catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
+                                      openMovie: openMovie)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("これまでの作品")
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                        }
+                        .font(.subheadline)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .font(.subheadline)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("album-prototype-past")
                 }
-                .accessibilityIdentifier("album-prototype-past")
             }
+            .frame(minHeight: 44)
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(1...12, id: \.self) { month in
+                        ForEach((1...12).filter { $0 != leadMonth }, id: \.self) { month in
                             shelfSlot(month: month, thisMonth: thisMonth,
                                       book: books.first { $0.monthNumber == month }, next: next)
                                 .id(month)
@@ -1725,12 +1735,7 @@ private struct YearBookView: View {
             }
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    // Balances the two buttons on the right so the title stays centered.
-                    Color.clear.frame(width: 88, height: 44)
-                    Spacer()
-                    Text(verbatim: "\(year)年の作品")
-                        .font(.system(.footnote, design: .serif))
-                        .foregroundStyle(ink.opacity(0.55))
+                    // 11/23: no title here; the cover already says the year.
                     Spacer()
                     shareButton
                     Button { dismiss() } label: {
@@ -1750,7 +1755,7 @@ private struct YearBookView: View {
                             .padding(.bottom, 4)
                             .accessibilityHidden(true)
                     }
-                    BookPageNumber(index: $index, count: leaves.count, ink: ink)
+                    BookPageNumber(index: $index, count: leaves.count)
                 }
             }
         }
@@ -2267,12 +2272,7 @@ struct MonthlyBookView: View {
             }
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    // Balances the two buttons on the right so the title stays centered.
-                    Color.clear.frame(width: 88, height: 44)
-                    Spacer()
-                    Text(verbatim: "\(letter.monthNumber)月の作品")
-                        .font(.system(.footnote, design: .serif))
-                        .foregroundStyle(Self.ink.opacity(0.55))
+                    // 11/23: no title here; the cover already says the month.
                     Spacer()
                     shareButton
                     Button { dismiss() } label: {
@@ -2292,7 +2292,7 @@ struct MonthlyBookView: View {
                             .padding(.bottom, 4)
                             .accessibilityHidden(true)
                     }
-                    BookPageNumber(index: $index, count: leaves.count, ink: Self.ink)
+                    BookPageNumber(index: $index, count: leaves.count)
                 }
             }
         }
@@ -2494,16 +2494,17 @@ enum BookPageAccess {
     }
 }
 
-/// 「3 / 8」 under a book, the same on the month's and the year's.
+/// The page handle under a book, the same on the month's and the year's.
+/// 11/23: not drawn (「3 / 8」 was one more thing to read under 「めくる ›」);
+/// it keeps its place and stays VoiceOver's handle for turning (11/14).
 struct BookPageNumber: View {
     @Binding var index: Int
     let count: Int
-    let ink: Color
 
     var body: some View {
         Text(verbatim: "\(index + 1) / \(count)")
             .font(.footnote.monospacedDigit())
-            .foregroundStyle(ink.opacity(0.6))
+            .foregroundStyle(.clear)
             .padding(.bottom, 6)
             .accessibilityLabel(BookPageAccess.label)
             .accessibilityValue(BookPageAccess.value(index: index, count: count))

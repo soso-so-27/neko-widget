@@ -50,7 +50,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         for _ in 0..<Self.samples {
             let start = Date()
             app.launch()
-            let ok = waitAny([app.buttons["album-prototype-past"], app.navigationBars["アルバム"]], timeout: 30)
+            let ok = waitAny([app.staticTexts["album-prototype-shelf"], app.navigationBars["アルバム"]], timeout: 30)
             let ms = Date().timeIntervalSince(start) * 1000
             guard ok else { missing("起動→アルバム（見本）", app); break }
             values.append(ms)
@@ -87,7 +87,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         for _ in 0..<Self.samples {
             let start = Date()
             guard tapTab(app, "main-tab-memories", "アルバム"),
-                  app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else { break }
+                  app.staticTexts["album-prototype-shelf"].waitForExistence(timeout: 10) else { break }
             tapBase.append(Date().timeIntervalSince(start) * 1000)
         }
         report("基準（同じタブをタップ＋問い合わせ）", "ms_overhead", tapBase)
@@ -95,7 +95,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
             ("写真", "main-tab-photos", "写真", { [app.buttons["photos-section-all"]] }),
             ("まど", "main-tab-windows", "まど", { [app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch] }),
             ("この子", "main-tab-tools", "この子", { [app.buttons["tools-care-open"]] }),
-            ("アルバム", "main-tab-memories", "アルバム", { [app.buttons["album-prototype-past"]] }),
+            ("アルバム", "main-tab-memories", "アルバム", { [app.staticTexts["album-prototype-shelf"]] }),
         ]
         var first: [String: Double] = [:]
         var later: [String: [Double]] = [:]
@@ -122,7 +122,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     func testSpeed04AlbumAndPhotoScreens() {
         let app = launchFixture()
         guard tapTab(app, "main-tab-memories", "アルバム") else { missing("アルバム", app); return }
-        let past = app.buttons["album-prototype-past"]
+        let past = app.staticTexts["album-prototype-shelf"]
         _ = past.waitForExistence(timeout: 15)
         baseline(app, past)
         let latest = app.descendants(matching: .any).matching(
@@ -313,7 +313,7 @@ final class ScreenSpeedSweepUITests: XCTestCase {
     func testScroll02Albums() {
         let app = launchFixture()
         guard tapTab(app, "main-tab-memories", "アルバム"),
-              app.buttons["album-prototype-past"].waitForExistence(timeout: 15) else {
+              app.staticTexts["album-prototype-shelf"].waitForExistence(timeout: 15) else {
             missing("スクロール:アルバム", app); return
         }
         measureScroll("アルバム", app)
