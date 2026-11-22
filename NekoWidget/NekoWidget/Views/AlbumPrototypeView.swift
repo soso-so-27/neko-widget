@@ -278,8 +278,14 @@ struct AlbumPrototypeView: View {
     /// The card the open work came out of (the top card or a book on the shelf).
     @State private var storySource = ""
     @State private var yearStory: YearStory?
+    /// 11/22: covers cleared by a tap in this visit. A work stays 「とどきました」
+    /// until it is really opened (AlbumPrototype.openedKey); this only keeps a
+    /// cleared cover clear when the Plus screen is closed without opening it.
+    @State private var clearedCovers: Set<String> = []
+    @State private var clearingCover: String?
     @Namespace private var zoom
     @Environment(\.membershipAccess) private var membershipAccess
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
 
@@ -629,19 +635,24 @@ struct AlbumPrototypeView: View {
 
     /// The newest work as its cover. Just arrived: 「とどきました」 over it.
     /// A tap opens it (out of the card, and back into it, on iOS 18).
+    /// 11/22: until it is opened once, the cover is under the Widget's
+    /// 「くもり」; the one tap clears it with the Widget's timing, then opens.
     private func arrivalCard(arrival: Date, id: String, wrapped: Bool, cover: PhotoPresentation?, caption: String?,
                              title: String, titleSize: CGFloat, names: String, accessibilityTitle: String,
                              open: @escaping () -> Void) -> some View {
         let workNeedsPlus = self.workNeedsPlus(arrival)
-        return Button(action: open) {
+        let frosted = wrapped && cover != nil && !clearedCovers.contains(id)
+        return Button { clearThenOpen(id: id, frosted: frosted, open: open) } label: {
             Color.clear
             .aspectRatio(0.82, contentMode: .fit)
             .overlay {
                 if let cover {
-                    PhotoAssetImageView(localIdentifier: cover.localIdentifier,
-                                        catBoundingBox: cover.catBoundingBox,
-                                        targetPixelSize: CGSize(width: 1100, height: 1100),
-                                        targetAspectRatio: 0.82)
+                    CloudyFrostPhoto(isCloudy: frosted, reduceMotion: reduceMotion) {
+                        PhotoAssetImageView(localIdentifier: cover.localIdentifier,
+                                            catBoundingBox: cover.catBoundingBox,
+                                            targetPixelSize: CGSize(width: 1100, height: 1100),
+                                            targetAspectRatio: 0.82)
+                    }
                 }
             }
             .overlay(alignment: .bottomLeading) {
@@ -679,6 +690,88 @@ struct AlbumPrototypeView: View {
         .buttonStyle(.plain)
         .accessibilityLabel((wrapped ? "\(accessibilityTitle)、とどきました" : accessibilityTitle)
                             + (workNeedsPlus ? "、Plusでひらく" : ""))
+    }
+
+    /// One tap: a frosted cover clears (the Widget's 1.9 s), then the work
+    /// opens as before (the Plus screen when it needs Plus). With Reduce
+    /// Motion, or a cover already clear, it opens at once.
+    private func clearThenOpen(id: String, frosted: Bool, open: @escaping () -> Void) {
+        guard clearingCover == nil else { return }
+        guard frosted else { open(); return }
+        clearedCovers.insert(id)
+        guard !reduceMotion else { open(); return }
+        clearingCover = id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(CloudyFrostLook.clearDuration))
+            clearingCover = nil
+            open()
+        }
+    }
+}
+
+/// 11/22: the Widget's 「くもり」 drawn in the app, with the Widget's own
+/// values: the photo blurred at こいめ's radius per 500 px of its width (the
+/// default strength, as CloudyWindowImagePreparer blurs the Widget's photo),
+/// under five soft white puffs (CloudyFogPuffs). Clearing thins the blur in
+/// 1.9 s and the puffs in 1.7 s, easeInOut (CloudyRevealMotion); nothing
+/// moves. Reduce Motion: no animation.
+enum CloudyFrostLook {
+    static let clearDuration: Double = 1.9
+    static let photo = Animation.easeInOut(duration: 1.9)
+    static let fog = Animation.easeInOut(duration: 1.7)
+    static let puffOpacity = 0.42
+    static let puffBlurShare: CGFloat = 0.12
+
+    /// Centre and size of each puff as shares of the photo, as on the Widget.
+    static let puffs: [(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat)] = [
+        (0.20, 0.22, 1.15, 0.75), (0.82, 0.20, 1.10, 0.75), (0.50, 0.52, 1.30, 0.75),
+        (0.18, 0.80, 1.10, 0.75), (0.84, 0.82, 1.10, 0.75),
+    ]
+
+    static func blurRadius(width: CGFloat) -> CGFloat {
+        CGFloat(CloudyWindowStrength.strong.radius) * width / 500
+    }
+}
+
+/// A photo under the Widget's 「くもり」 (CloudyFrostLook) while `isCloudy`.
+struct CloudyFrostPhoto<Photo: View>: View {
+    let isCloudy: Bool
+    let reduceMotion: Bool
+    let photo: Photo
+
+    init(isCloudy: Bool, reduceMotion: Bool, @ViewBuilder photo: () -> Photo) {
+        self.isCloudy = isCloudy
+        self.reduceMotion = reduceMotion
+        self.photo = photo()
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                photo
+                    .frame(width: size.width, height: size.height)
+                    .blur(radius: isCloudy ? CloudyFrostLook.blurRadius(width: size.width) : 0, opaque: true)
+                    .animation(reduceMotion ? nil : CloudyFrostLook.photo, value: isCloudy)
+                ZStack {
+                    ForEach(CloudyFrostLook.puffs.indices, id: \.self) { index in
+                        let puff = CloudyFrostLook.puffs[index]
+                        Ellipse()
+                            .fill(Color.white.opacity(CloudyFrostLook.puffOpacity))
+                            .frame(width: size.width * puff.w, height: size.height * puff.h)
+                            .blur(radius: min(size.width, size.height) * CloudyFrostLook.puffBlurShare)
+                            .position(x: size.width * puff.x, y: size.height * puff.y)
+                    }
+                }
+                .frame(width: size.width, height: size.height)
+                .opacity(isCloudy ? 1 : 0)
+                .animation(reduceMotion ? nil : CloudyFrostLook.fog, value: isCloudy)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+            .frame(width: size.width, height: size.height)
+            .clipped()
+        }
     }
 }
 

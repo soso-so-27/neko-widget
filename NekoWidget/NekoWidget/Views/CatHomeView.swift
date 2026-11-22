@@ -161,6 +161,10 @@ struct CatHomeFacts {
     var departed: Bool
     /// The birthday 「これからのこと」 counts to (the same day the age is from).
     var birthday: CatCareDay?
+    /// 11/22: on the day itself only, the SF Symbol before the line:
+    /// 「birthday.cake」 on the birthday, 「house」 on the day the cat came
+    /// home. Nil on every other day and for a cat that has passed away.
+    var daySymbol: String? = nil
 
     static func make(cat: CatHomeCat, record: CatCareRecord?, farewell: CatCareDay?, now: Date = Date(),
                      calendar: Calendar = .nekoGregorian) -> CatHomeFacts {
@@ -195,13 +199,25 @@ struct CatHomeFacts {
             ?? (profile?.lifeReference?.kind == .birthday ? profile?.lifeReference?.isApproximate : nil)
             ?? false
         let birthdayDay = birthday.flatMap { CatCareDay(date: $0, calendar: calendar) }
-        let dayLine: String? = CatCareDay(date: now, calendar: calendar).flatMap { today in
+        let adoptionDay = adoption.flatMap { CatCareDay(date: $0, calendar: calendar) }
+        let today = CatCareDay(date: now, calendar: calendar)
+        let dayLine: String? = today.flatMap { today in
             CatHomeCareCore.heroDayLine(birthday: birthdayDay, birthdayYearKnown: !birthdayApproximate,
-                                        adoption: adoption.flatMap { CatCareDay(date: $0, calendar: calendar) },
-                                        today: today)
+                                        adoption: adoptionDay, today: today)
         }
         if let dayLine {
-            return CatHomeFacts(line: dayLine, spoken: "\(cat.name)、\(dayLine)", departed: false, birthday: birthdayDay)
+            // The same day as the line (CatHomeCareCore.heroDay), so the mark
+            // and the words never disagree.
+            let symbol: String? = switch today.flatMap({ today in
+                CatHomeCareCore.heroDay(birthday: birthdayDay, birthdayYearKnown: !birthdayApproximate,
+                                        adoption: adoptionDay, today: today)
+            }) {
+            case .birthday?: "birthday.cake"
+            case .adoption?: "house"
+            case nil: nil
+            }
+            return CatHomeFacts(line: dayLine, spoken: "\(cat.name)、\(dayLine)", departed: false, birthday: birthdayDay,
+                                daySymbol: symbol)
         }
         return CatHomeFacts(line: parts.isEmpty ? nil : parts.joined(separator: "　／　"), spoken: spoken,
                             departed: false, birthday: birthdayDay)
@@ -1128,14 +1144,22 @@ private struct CatHomeHero: View {
             // The line and the dots are in the photo's spoken summary.
             if let line = facts.line {
                 // Two lines (three at the accessibility sizes) before it
-                // gets any smaller, and never below 0.85.
-                Text(line)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
-                    .minimumScaleFactor(0.85)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityHidden(true)
+                // gets any smaller, and never below 0.85. 11/22: on the
+                // birthday and the day the cat came home, the day's symbol
+                // before it at the text's size and colour, a little heavier.
+                // The day's line is one short line: centred with its symbol.
+                HStack(spacing: 5) {
+                    if let symbol = facts.daySymbol {
+                        Image(systemName: symbol)
+                    }
+                    Text(line)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 2)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.subheadline.weight(facts.daySymbol == nil ? .semibold : .bold))
+                .foregroundStyle(.white.opacity(0.92))
+                .accessibilityHidden(true)
             }
             if pageCount > 1 {
                 CatHomePageDots(count: pageCount, current: pageIndex)

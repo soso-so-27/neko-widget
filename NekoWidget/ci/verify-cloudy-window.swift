@@ -847,6 +847,14 @@ private enum CloudyWindowVerifier {
                   && CloudyWindowDayText.revealForms(selection("milestone", revealed: false, milestone: single))
                     == CloudyWindowDayText.tag(selection("milestone", revealed: false, milestone: single)),
                   "every tag has a shorter form: other days and a work's day too")
+        // 11/22: the tag's symbol follows the same day as its words.
+        try check(CloudyWindowDayText.tagSymbol(selection("ordinary", revealed: false)) == "hand.tap.fill"
+                  && CloudyWindowDayText.tagSymbol(selection("date", revealed: false, years: 1, sameDay: true)) == "hand.tap.fill"
+                  && CloudyWindowDayText.tagSymbol(selection("milestone", revealed: false, milestone: single)) == "birthday.cake.fill"
+                  && CloudyWindowDayText.tagSymbol(selection("milestone", revealed: false, milestone: sameYears)) == "house.fill"
+                  && CloudyWindowDayText.tagSymbol(selection("milestone", revealed: false, milestone: single, album: "2026-10"))
+                    == "book.closed.fill",
+                  "the tag's symbol: hand, cake, house, closed book")
     }
 
     /// 11/15: a photo of only cats that have died never makes a date day; one

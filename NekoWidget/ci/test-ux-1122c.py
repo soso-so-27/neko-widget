@@ -72,7 +72,7 @@ class WidgetGuideTests(unittest.TestCase):
     def test_placed_screen_still_replaces_the_guide(self):
         guide_case = section(ONBOARDING, "case .widgetGuide:", "case .plusOffer:")
         self.assertIn("if isWidgetPlaced {", guide_case)
-        self.assertIn("OnboardingWidgetPlacedPage(close: finish)", guide_case)
+        self.assertIn("OnboardingWidgetPlacedPage(photo: resultPhotos.first, close: finish)", guide_case)
         self.assertIn("isWidgetPlaced: widgetInstallationChecker.isInstalled", APP_ROOT)
 
     def test_settings_guide_keeps_its_close_button(self):

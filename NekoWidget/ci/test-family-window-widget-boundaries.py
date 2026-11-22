@@ -2974,7 +2974,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("advance()", installed)
         self.assertIn("isWidgetPlaced: widgetInstallationChecker.isInstalled,", app_root)
         onboarding_view = source("NekoWidget/Views/OnboardingView.swift")
-        self.assertIn("if isWidgetPlaced {\n                    OnboardingWidgetPlacedPage(close: finish)", onboarding_view)
+        self.assertIn("if isWidgetPlaced {\n                    OnboardingWidgetPlacedPage(photo: resultPhotos.first, close: finish)", onboarding_view)
         self.assertNotIn("(.widgetGuide, .plusOffer)", app_root)
         # The cloudy images are prepared when the guide opens, before the
         # person reaches the Home Screen (11/10).

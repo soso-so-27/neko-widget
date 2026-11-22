@@ -125,6 +125,19 @@ enum CloudyWindowDayText {
         return selection.albumPeriod == nil ? ["タップで、きょうの1枚", "きょうの1枚"] : ["作品がとどきました", "作品がとどいた"]
     }
 
+    /// The tapping hand, the tag's own symbol on every other day.
+    static let tapSymbol = "hand.tap.fill"
+
+    /// 11/22: the SF Symbol before the tag's words, filled like the hand:
+    /// a cake on a birthday, a house on the day a cat came home, a closed
+    /// book on a monthly work's day, else the hand.
+    static func tagSymbol(_ selection: CloudyWindowSelection) -> String {
+        if let milestone = milestoneOf(selection) {
+            return milestone.kind == CloudyWindowMilestoneKind.birthday.rawValue ? "birthday.cake.fill" : "house.fill"
+        }
+        return selection.albumPeriod == nil ? tapSymbol : "book.closed.fill"
+    }
+
     /// The one line after clearing: 「1年前のきょう」 / 「1年前の今ごろ」 on a
     /// date day; 「むぎ 5歳」 (short 「5歳の誕生日」) or 「うちに来て 4年」 on
     /// a 節目 day, for the cats in the photo.
