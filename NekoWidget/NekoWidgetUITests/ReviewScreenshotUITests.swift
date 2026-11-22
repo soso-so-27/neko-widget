@@ -36,6 +36,50 @@ final class ReviewScreenshotUITests: XCTestCase {
         executionTimeAllowance = 900
     }
 
+
+    @MainActor
+    func testLPCaptureAssets() {
+        continueAfterFailure = false
+        executionTimeAllowance = 420
+        let sample = fixture + ["--owner-store-capture", "--app-store-screenshot-cat-care", "--cat-home-care-fixture"]
+        let photos = launch(sample)
+        XCTAssertTrue(tapTab(photos, "main-tab-photos", "写真"))
+        tapIfPresent(photos.buttons["photos-section-all"])
+        XCTAssertTrue(photos.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForFixturePhotos(photos, [1, 2, 3]))
+        shot("lp_screen_photos", photos) { nil }
+        photos.terminate()
+
+        let home = launch(sample, tools: true)
+        XCTAssertTrue(tapTab(home, "main-tab-tools", "この子"))
+        XCTAssertTrue(chooseHomeCat(home, Self.mike))
+        XCTAssertTrue(home.buttons["tools-care-open"].waitForExistence(timeout: 20))
+        settle(3)
+        shot("lp_screen_konoko", home) { nil }
+        home.terminate()
+
+        let send = launch(fixture + ["--owner-store-capture", "--lp-send-capture"])
+        XCTAssertTrue(send.buttons["group-window-send-confirm"].waitForExistence(timeout: 15))
+        settle(1)
+        shot("lp_screen_send", send) { nil }
+        send.terminate()
+
+        let monthly = launch(fixture + ["--owner-store-capture", "--app-store-screenshot-album"],
+                             environment: ["NEKO_CAPTURE_SCREEN": "album"])
+        XCTAssertTrue(tapTab(monthly, "main-tab-memories", "アルバム"))
+        let latest = anyIdentifier(monthly, ["album-prototype-latest", "album-prototype-year"])
+        XCTAssertTrue(latest.waitForExistence(timeout: 20)); latest.tap()
+        XCTAssertTrue(anyIdentifier(monthly, ["monthly-story", "monthly-book", "year-story", "year-book"]).waitForExistence(timeout: 20))
+        _ = waitForAnyFixturePhoto(monthly, Array(19...24))
+        settle(2)
+        shot("lp_screen_monthly", monthly) { nil }
+        monthly.terminate()
+
+        let widgets = launch(fixture + ["--lp-widget-export"])
+        XCTAssertTrue(widgets.staticTexts["lp-widget-export-ready"].waitForExistence(timeout: 30), widgets.debugDescription)
+        widgets.terminate()
+    }
+
     // MARK: - 写真
 
     @MainActor

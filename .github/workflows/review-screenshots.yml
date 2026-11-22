@@ -37,6 +37,7 @@ concurrency:
 
 jobs:
   capture:
+    if: github.ref_name != 'diagnostic/1122g-lp-capture'
     name: Capture ${{ matrix.set }}
     runs-on: macos-15
     timeout-minutes: 90
@@ -289,7 +290,7 @@ jobs:
   bundle:
     name: One zip of PNGs and index.txt
     needs: capture
-    if: always()
+    if: always() && github.ref_name != 'diagnostic/1122g-lp-capture'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -316,3 +317,119 @@ jobs:
           path: ${{ runner.temp }}/review-screenshots
           if-no-files-found: error
           retention-days: 7
+
+
+  lp-assets:
+    if: github.ref_name == 'diagnostic/1122g-lp-capture'
+    name: Capture stock-only LP images
+    runs-on: macos-15
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      REVIEW_SET: light
+      TEST_RUNNER_REVIEW_SET: light
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: diagnostic/1122g-lp-capture
+          persist-credentials: true
+      - name: Prepare disposable iPhone 15 Pro
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/lp-capture"
+          mkdir -p "$WORK"
+          xcodebuild -version
+          runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("isAvailable") and ".iOS-" in x["identifier"]];print(next((x for x in r if x.get("version")=="26.2"),r[0])["identifier"])')
+          device=$(xcrun simctl create NekoLPSample com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro "$runtime")
+          printf 'LP_DEVICE=%s\n' "$device" >> "$GITHUB_ENV"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl ui "$device" appearance light
+          xcrun simctl status_bar "$device" override --time 09:41 --batteryLevel 100 --batteryState charged
+      - name: Build local-only capture app
+        working-directory: NekoWidget
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/lp-capture"
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$LP_DEVICE" \
+            -derivedDataPath "$WORK/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES ONLY_ACTIVE_ARCH=YES \
+            SHARING_RELEASE_MODE=production GROUP_WINDOWS_ENABLED=YES OFFICIAL_WINDOW_FEED_URL= \
+            MANAGED_PRESERVATION_ORIGIN= MANAGED_PRESERVATION_ENABLED=NO \
+            PLUS_BILLING_API_BASE_URL= PLUS_BILLING_CLIENT_ENABLED=NO PLUS_STOREFRONT_ENABLED=NO \
+            PERSONAL_ARCHIVE_ENABLED=NO SHARING_FEATURE_ENABLED=NO SHARING_MEDIA_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO SHARING_SHARE_EXTENSION_SEND_ENABLED=NO \
+            SHARING_REVIEW_PREVIEW_ENABLED=NO SHARING_API_BASE_URL= SHARING_MODERATION_KEY_ID= \
+            SHARING_MODERATION_PUBLIC_KEY= SHARING_PRIVACY_URL= SHARING_SUPPORT_URL= \
+            SHARING_COMMUNITY_STANDARDS_URL= APP_PRIVACY_URL= APP_SUPPORT_URL= \
+            SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist \
+            build-for-testing > "$WORK/build.log" 2>&1 || { tail -n 100 "$WORK/build.log"; exit 1; }
+          tail -n 4 "$WORK/build.log"
+          app="$WORK/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app"
+          python3 - "$app" <<'PY'
+          import pathlib,plistlib,sys,re,subprocess
+          app=pathlib.Path(sys.argv[1]);info=plistlib.loads((app/'Info.plist').read_bytes())
+          for key in ['SharingAPIBaseURL','PlusBillingAPIBaseURL','OfficialWindowFeedURL','ManagedPreservationOrigin','SharingModerationPublicKey']:
+              assert not info.get(key),(key,info.get(key))
+          assert info['UIDeviceFamily']==[1]
+          root=app/'LPSample';root.mkdir()
+          photos=[pathlib.Path('../lp/images')/('photo-grey-'+name+'.webp') for name in ['ball','bed','yawn','chair']]
+          assert all(p.is_file() for p in photos)
+          source=pathlib.Path('NekoWidget/App/OwnerStoreCaptureFixture.swift').read_text()
+          filenames=re.findall(r'\b\d+: "([A-Z0-9_]+)"',source)
+          for i,name in enumerate(dict.fromkeys(filenames)):
+              subprocess.run(['sips','-s','format','jpeg',str(photos[i%4]),'--out',str(root/(name+'.JPG'))],check=True,stdout=subprocess.DEVNULL)
+          for photo in photos:
+              subprocess.run(['sips','-s','format','jpeg',str(photo),'--out',str(root/(photo.stem+'.jpg'))],check=True,stdout=subprocess.DEVNULL)
+          print('Bundled only LP stock photos; no owner media or configured service endpoints')
+          PY
+          codesign --force --sign - "$app"
+      - name: Capture the eight requested assets once
+        working-directory: NekoWidget
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/lp-capture"
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$LP_DEVICE" \
+            -derivedDataPath "$WORK/DerivedData" -resultBundlePath "$WORK/LP.xcresult" \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+            -only-testing:NekoWidgetUITests/ReviewScreenshotUITests/testLPCaptureAssets \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test-without-building > "$WORK/test.log" 2>&1 || { tail -n 100 "$WORK/test.log"; exit 1; }
+          tail -n 15 "$WORK/test.log"
+      - name: Recover sample-only PNGs without paid artifact storage
+        if: always()
+        working-directory: NekoWidget
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/lp-capture"
+          [[ -d "$WORK/LP.xcresult" ]] || exit 0
+          python3 ci/collect-review-screenshots.py collect --set light --only testLPCaptureAssets --output "$WORK/export" "$WORK/LP.xcresult"
+          mkdir -p ../lp/images/screens
+          for source in "$WORK/export/light/"lp_screen_*.png; do
+            [[ -f "$source" ]] || continue
+            name=$(basename "$source" .png)
+            name=${name#lp_screen_}
+            cp "$source" "../lp/images/screens/screen-$name.png"
+          done
+          container=$(xcrun simctl get_app_container "$LP_DEVICE" jp.nekowidget.app data 2>/dev/null || true)
+          if [[ -n "$container" && -d "$container/Documents/LPCapture" ]]; then
+            cp "$container/Documents/LPCapture/"*.png ../lp/images/screens/
+          fi
+          cd ..
+          if [[ -n "$(git status --porcelain -- lp/images/screens)" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add lp/images/screens
+            git commit -m 'Capture LP assets from stock-only native views'
+            git push origin HEAD:diagnostic/1122g-lp-capture
+          fi
+          count=$(find lp/images/screens -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')
+          echo "Captured $count native PNGs"
+          [[ "$count" == 8 ]]

@@ -23,7 +23,7 @@ enum OwnerStoreCaptureFixture {
 
     @MainActor static func image(number: Int) -> UIImage? {
         guard isRequested, let name = filenames[number],
-              let root = ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"],
+              let root = Bundle.main.resourceURL?.appendingPathComponent("LPSample").path,
               let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: root)
                 .appendingPathComponent(name + ".JPG") as CFURL, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [

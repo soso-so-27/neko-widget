@@ -17,6 +17,9 @@ enum WidgetCacheImageLoader {
         photoSourceIdentifier: String,
         maximumPixelSize: Int
     ) -> UIImage? {
+#if DEBUG && LP_ASSET_CAPTURE
+        if cacheFilename.hasPrefix("lp-") { return LPWidgetSample.image(cacheFilename) }
+#endif
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
         if cacheFilename == AppStoreWidgetPreviewFixture.cacheFilename {
             return AppStoreWidgetPreviewFixture.image(maximumPixelSize: maximumPixelSize)

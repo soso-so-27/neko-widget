@@ -1497,3 +1497,82 @@ extension Image {
         }
     }
 }
+
+
+#if DEBUG && LP_ASSET_CAPTURE
+import CoreImage
+import UIKit
+
+enum LPWidgetSample {
+    static func image(_ key: String) -> UIImage? {
+        let file = key.contains("bed") ? "photo-grey-bed" : key.contains("chair") ? "photo-grey-chair" : "photo-grey-ball"
+        guard let root = Bundle.main.resourceURL?.appendingPathComponent("LPSample"),
+              let image = UIImage(contentsOfFile: root.appendingPathComponent(file + ".jpg").path) else { return nil }
+        guard key.contains("blur"), let cg = image.cgImage else { return image }
+        let input = CIImage(cgImage: cg)
+        let radius = CloudyWindowConfiguration().strength.radius * Double(cg.width) / 500
+        let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).cropped(to: input.extent)
+        guard let result = CIContext().createCGImage(blurred, from: input.extent) else { return nil }
+        return UIImage(cgImage: result)
+    }
+}
+
+extension NekoWidgetView {
+    @MainActor static func lpRender(_ entry: NekoWidgetEntry) -> UIImage? {
+        let content = NekoWidgetView(entry: entry).photoContent
+            .frame(width: 364, height: 170)
+            .environment(\.widgetFamily, .systemMedium)
+            .environment(\.colorScheme, .light)
+            .environment(\.locale, Locale(identifier: "ja_JP"))
+            .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 3
+        renderer.isOpaque = false
+        return renderer.uiImage
+    }
+}
+
+@MainActor struct LPWidgetExportRoot: View {
+    @State private var ready = false
+    @State private var failure: String?
+    var body: some View {
+        Group {
+            if ready { Text("LP sample widgets exported").accessibilityIdentifier("lp-widget-export-ready") }
+            else if let failure { Text(failure) }
+            else { ProgressView("Exporting LP sample widgets") }
+        }.task {
+            do { try export(); ready = true } catch { failure = String(describing: error) }
+        }
+    }
+    private func export() throws {
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("LPCapture")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let now = Date()
+        for name in ["widget-cloudy", "widget-clear", "widget-year-ago", "widget-family"] {
+            let family = name == "widget-family"
+            let cloudy = name == "widget-cloudy"
+            let ago = name == "widget-year-ago"
+            let key = family ? "lp-bed" : ago ? "lp-chair" : cloudy ? "lp-ball-blur" : "lp-ball"
+            var entry = NekoWidgetEntry(date: now, localIdentifier: key, cacheFilename: key,
+                imageVariant: .medium,
+                photoSourceIdentifier: family ? GroupWidgetCache.sourceID(windowID: "99999999-9999-4999-8999-999999999999") : WidgetPhotoSource.personalLibraryID,
+                familySourceDigest: nil, usesFamilySpecificImage: true,
+                windowDisplayName: family ? "ゆうから・いま届いた1枚" : "むぎ",
+                isLiked: false, isLikeInteractionEnabled: false, isBookmarked: false,
+                isBookmarkInteractionEnabled: false, familyHeartStatus: family ? .serverAccepted : .hidden,
+                familyActionsRequireApp: false, emptyStateReason: .none)
+            if !family {
+                entry.cloudyWindowSelection = CloudyWindowSelection(scopeID: "lp-mugi", day: now,
+                    photoID: key, profileID: nil, revealedAt: cloudy ? nil : now,
+                    dayKind: ago ? "date" : "ordinary", dateYearsAgo: ago ? 1 : nil,
+                    dateSameDay: ago ? true : nil, chosenAt: now)
+            }
+            if family { entry.groupWindowPhoto = .init(windowID: "99999999-9999-4999-8999-999999999999", photoID: "lp-bed") }
+            guard let data = NekoWidgetView.lpRender(entry)?.pngData() else {
+                throw NSError(domain: "LPSample", code: 1, userInfo: [NSLocalizedDescriptionKey: name])
+            }
+            try data.write(to: directory.appendingPathComponent(name + ".png"), options: .atomic)
+        }
+    }
+}
+#endif

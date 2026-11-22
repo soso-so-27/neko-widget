@@ -376,6 +376,9 @@
 		B92DA9FBA54722ACD00E9483 /* ProductionGroupWindowClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006D /* ProductionGroupWindowClient.swift */; };
 		12A88AF25B1A22DBBE66A8A6 /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
 		FA2611160000000000000002 /* FamilyNotebookRepresentativePhoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2611160000000000000001 /* FamilyNotebookRepresentativePhoto.swift */; };
+
+        FA1122A00000000000000001 = {isa = PBXBuildFile; fileRef = F00000000000000000000312; };
+        FA1122A00000000000000002 = {isa = PBXBuildFile; fileRef = F00000000000000000000314; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1389,6 +1392,8 @@
 				DA7100010000000000000003 /* CatProfileTransferView.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
+                FA1122A00000000000000001,
+                FA1122A00000000000000002,
 				100000000000000000000185 /* BillingInternalDiagnostics.swift in Sources */,
 				100000000000000000000176 /* AppStoreScreenshotFixture.swift in Sources */,
 		100000000000000000001110 /* OwnerStoreCaptureFixture.swift in Sources */,
@@ -1828,7 +1833,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_HOST_APP";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_HOST_APP LP_ASSET_CAPTURE";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;

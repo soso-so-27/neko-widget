@@ -4131,3 +4131,14 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
         }
     }
 }
+
+
+#if DEBUG && LP_ASSET_CAPTURE
+struct LPDeliveryCaptureRoot: View {
+    var body: some View {
+        if let image = LPWidgetSample.image("lp-ball"), let jpeg = image.jpegData(compressionQuality: 0.9) {
+            GroupSendConfirmSheet(photo: .init(jpeg: jpeg), windowName: "実家のまど", deliver: { _ in })
+        } else { Text("LP sample photo missing") }
+    }
+}
+#endif

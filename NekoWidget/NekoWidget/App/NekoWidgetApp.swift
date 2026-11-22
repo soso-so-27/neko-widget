@@ -90,7 +90,11 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains("--client-upgrade-response-fixture") {
+            if CommandLine.arguments.contains("--lp-widget-export") {
+                LPWidgetExportRoot()
+            } else if CommandLine.arguments.contains("--lp-send-capture") {
+                LPDeliveryCaptureRoot()
+            } else if CommandLine.arguments.contains("--client-upgrade-response-fixture") {
                 ClientUpgradeResponseFixture()
             } else if CommandLine.arguments.contains("--family-unshare-ui-fixture") {
                 FamilyNotebookUnshareFixture()

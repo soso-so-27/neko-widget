@@ -276,11 +276,11 @@ enum AppStoreScreenshotFixture {
             func stamp<Value>(_ value: Value) -> CatCareStamped<Value> { .init(value: value, editedAt: now, editedBy: by) }
             if let faceRef { state.cats[index].setIdentifyingPhoto(.face, faceRef, editedAt: now, editedBy: by) }
             if let bodyRef { state.cats[index].setIdentifyingPhoto(.body, bodyRef, editedAt: now, editedBy: by) }
-            state.cats[index].sex = stamp(.female)
+            state.cats[index].sex = stamp(OwnerStoreCaptureFixture.isRequested ? .male : .female)
             state.cats[index].neutered = stamp(.yes)
             state.cats[index].indoorOnly = stamp(.yes)
-            state.cats[index].birthday = stamp(CatCareDay(year: 2021, month: 5, day: 3))
-            state.cats[index].coat = stamp(OwnerStoreCaptureFixture.isRequested ? "茶白" : "三毛")
+            state.cats[index].birthday = stamp(CatCareDay(year: 2022, month: 7, day: 10))
+            state.cats[index].coat = stamp(OwnerStoreCaptureFixture.isRequested ? "灰色" : "三毛")
             state.cats[index].temperament = stamp("抱っこは少し苦手。名前を呼ぶと来ます。")
             state.cats[index].litter = stamp("朝と夜に片づける")
             state.cats[index].water = stamp("いつでも新しい水を2か所に")
