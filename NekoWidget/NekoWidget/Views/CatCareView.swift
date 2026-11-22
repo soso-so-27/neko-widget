@@ -604,7 +604,8 @@ struct CatCareDetailView: View {
             }
         }
         statusSections
-        progressSection
+        // 11/22: no ring and 「あと…つで…そろいます」 line here; each tool's
+        // 「この子のこと」 row says what that tool still needs.
         // 11/9: the photos every tool shows, open on the page, so a tool's
         // 「この子のこと」を開く lands right on them.
         identifyingPhotosSection
@@ -640,30 +641,6 @@ struct CatCareDetailView: View {
                     .accessibilityIdentifier("cat-care-save-failed")
                 Button("もう一度") { save() }
                     .accessibilityIdentifier("cat-care-save-retry")
-            }
-        }
-    }
-
-    @ViewBuilder private var progressSection: some View {
-        if farewell == nil {
-            // The same count as the line on the この子 tab, so writing here visibly fills it.
-            // One line beside it, not a dashboard: what the next entry is for.
-            Section {
-                HStack(spacing: 12) {
-                    // 11/20: the ring counts what the line says (one tool's
-                    // items); 「あと…つでそろいます」 and 「すべて」 the whole page.
-                    CatCareRing(progress: progress, lineWidth: 4,
-                                followsNextHint: progress.filled < progress.total)
-                        .frame(width: 30, height: 30)
-                    // 11/12 (round 2): in the text colour, a size up: it was
-                    // gray and small, and easy to miss.
-                    Text(progress.filled >= progress.total ? "すべてそろっています"
-                         : progress.nextHint ?? "あと\(progress.total - progress.filled)つでそろいます")
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("cat-care-next-hint")
             }
         }
     }
@@ -804,8 +781,8 @@ struct CatCareDetailView: View {
         .accessibilityIdentifier("cat-care-part-\(key)")
     }
 
-    /// A choice's name with its icon, the same as a ToolValueRow's.
-    /// (11/20: its value is coloured by `choiceTint`.)
+    /// A toggle's name with its icon, the same as a ToolValueRow's. 11/22:
+    /// the choices are ToolChoiceRow (nothing at the side until one is chosen).
     private static func rowLabel(_ title: String, _ systemImage: String) -> some View {
         Label {
             Text(title).foregroundStyle(Color.primary)
@@ -911,49 +888,29 @@ struct CatCareDetailView: View {
     }
 
     private var sexPicker: some View {
-        Picker(selection: $draft.sex) {
-            Text(ToolEmptyValue.unset).tag(CatCareSex.unknown)
-            Text("オス").tag(CatCareSex.male)
-            Text("メス").tag(CatCareSex.female)
-        } label: { Self.rowLabel("性別", "pawprint") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.sex != .unknown)
+        ToolChoiceRow(title: "性別", systemImage: "pawprint", selection: $draft.sex,
+                      choices: [(CatCareSex.unknown, ToolEmptyValue.unset), (CatCareSex.male, "オス"), (CatCareSex.female, "メス")])
         .familyNotebookNote(catID, .sex)
         .accessibilityIdentifier("cat-care-sex")
     }
 
     private var neuteredPicker: some View {
-        Picker(selection: $draft.neutered) {
-            Text(ToolEmptyValue.unset).tag(CatCareTriState.unknown)
-            Text("済み").tag(CatCareTriState.yes)
-            Text("まだ").tag(CatCareTriState.no)
-        } label: { Self.rowLabel("去勢・避妊", "checkmark.seal") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.neutered != .unknown)
+        ToolChoiceRow(title: "去勢・避妊", systemImage: "checkmark.seal", selection: $draft.neutered,
+                      choices: [(CatCareTriState.unknown, ToolEmptyValue.unset), (CatCareTriState.yes, "済み"), (CatCareTriState.no, "まだ")])
         .familyNotebookNote(catID, .neutered)
         .accessibilityIdentifier("cat-care-neutered")
     }
 
     private var indoorPicker: some View {
-        Picker(selection: $draft.indoorOnly) {
-            Text(ToolEmptyValue.unset).tag(CatCareTriState.unknown)
-            Text("室内だけ").tag(CatCareTriState.yes)
-            Text("外にも出る").tag(CatCareTriState.no)
-        } label: { Self.rowLabel("飼い方", "house") }  // 11/20: was 「室内飼い」, a yes/no label
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.indoorOnly != .unknown)
+        ToolChoiceRow(title: "飼い方", systemImage: "house", selection: $draft.indoorOnly,
+                      choices: [(CatCareTriState.unknown, ToolEmptyValue.unset), (CatCareTriState.yes, "室内だけ"), (CatCareTriState.no, "外にも出る")])  // 11/20: was 「室内飼い」, a yes/no label
         .familyNotebookNote(catID, .indoorOnly)
         .accessibilityIdentifier("cat-care-indoor")
     }
 
     private var microchipPicker: some View {
-        Picker(selection: $draft.microchipStatus) {
-            Text(ToolEmptyValue.unset).tag(CatCareMicrochipStatus.unknown)
-            Text("入っている").tag(CatCareMicrochipStatus.recorded)
-            Text("入っていない").tag(CatCareMicrochipStatus.none)
-        } label: { Self.rowLabel("マイクロチップ", "memorychip") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.microchipStatus != .unknown)
+        ToolChoiceRow(title: "マイクロチップ", systemImage: "memorychip", selection: $draft.microchipStatus,
+                      choices: [(CatCareMicrochipStatus.unknown, ToolEmptyValue.unset), (CatCareMicrochipStatus.recorded, "入っている"), (CatCareMicrochipStatus.none, "入っていない")])
         .familyNotebookNote(catID, .microchip)
         .accessibilityIdentifier("cat-care-microchip-status")
     }
@@ -1211,25 +1168,15 @@ struct CatCareDetailView: View {
 
     /// Like アレルギー: 「なし」 is an answer too, so a healthy cat's page can be all filled in.
     private var conditionsPicker: some View {
-        Picker(selection: $draft.conditionsStatus) {
-            Text(ToolEmptyValue.unset).tag(CatCareConditionsStatus.unknown)
-            Text("なし").tag(CatCareConditionsStatus.none)
-            Text("あり").tag(CatCareConditionsStatus.recorded)
-        } label: { Self.rowLabel("持病", "heart.text.square") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.conditionsStatus != .unknown)
+        ToolChoiceRow(title: "持病", systemImage: "heart.text.square", selection: $draft.conditionsStatus,
+                      choices: [(CatCareConditionsStatus.unknown, ToolEmptyValue.unset), (CatCareConditionsStatus.none, "なし"), (CatCareConditionsStatus.recorded, "あり")])
         .familyNotebookNote(catID, .conditions)
         .accessibilityIdentifier("cat-care-conditions-status")
     }
 
     private var allergyPicker: some View {
-        Picker(selection: $draft.allergyStatus) {
-            Text(ToolEmptyValue.unset).tag(CatCareAllergy.Status.unknown)
-            Text("なし").tag(CatCareAllergy.Status.none)
-            Text("あり").tag(CatCareAllergy.Status.recorded)
-        } label: { Self.rowLabel("アレルギー", "allergens") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.allergyStatus != .unknown)
+        ToolChoiceRow(title: "アレルギー", systemImage: "allergens", selection: $draft.allergyStatus,
+                      choices: [(CatCareAllergy.Status.unknown, ToolEmptyValue.unset), (CatCareAllergy.Status.none, "なし"), (CatCareAllergy.Status.recorded, "あり")])
         .familyNotebookNote(catID, .allergyStatus)
         .accessibilityIdentifier("cat-care-allergy-status")
     }
@@ -1282,13 +1229,8 @@ struct CatCareDetailView: View {
     }
 
     private var vetPicker: some View {
-        Picker(selection: $draft.vetStatus) {
-            Text(ToolEmptyValue.unset).tag(CatCareVetStatus.unknown)
-            Text("決まっている").tag(CatCareVetStatus.recorded)
-            Text("まだない").tag(CatCareVetStatus.none)
-        } label: { Self.rowLabel("かかりつけ", "cross.case") }
-        .pickerStyle(.menu)
-        .choiceTint(chosen: draft.vetStatus != .unknown)
+        ToolChoiceRow(title: "かかりつけ", systemImage: "cross.case", selection: $draft.vetStatus,
+                      choices: [(CatCareVetStatus.unknown, ToolEmptyValue.unset), (CatCareVetStatus.recorded, "決まっている"), (CatCareVetStatus.none, "まだない")])
         .familyNotebookNote(catID, .vetName)
         .accessibilityIdentifier("cat-care-vet-status")
     }
@@ -1600,13 +1542,6 @@ struct CatCareRing: View {
     }
 }
 
-extension View {
-    /// 11/20: a menu row's value as a ToolValueRow's: gray while 「未記入」,
-    /// the text colour once chosen (it was the blue accent, like a button).
-    func choiceTint(chosen: Bool) -> some View {
-        tint(chosen ? Color.primary : Color.secondary)
-    }
-}
 
 // MARK: - Draft (single values edited on the page)
 
@@ -2654,7 +2589,9 @@ extension ToolCatCareSection where Extra == EmptyView {
 // The four tools (病院・迷子・預ける・避難) each had their own layout: it was
 // unclear what to do first or where to look. Every input page reads the same
 // way, top to bottom (ねこのまど_ツール入力ページの型_1108):
-//   1. the cat row, then one gray sentence: what the page makes (ToolPurpose)
+//   1. the cat row (11/22: only with two or more cats and no cat menu in the
+//      bar, ToolCatNameHeader; the gray sentence of what the page makes is
+//      gone, the title says it)
 //   2. numbered steps, each a Section with a ToolStepHeader; done shows a check
 //   3. 「この子のこと」 folded to one row (ToolCatCareSection(folded: true))
 //   4. notes, 「診察済み」-style marks and delete, last and small
@@ -2668,7 +2605,8 @@ extension ToolCatCareSection where Extra == EmptyView {
 // the bar instead of the row of faces (ToolRowParts.swift). 預けるとき and
 // 迷子のとき were then made the same way; 避難に備える keeps the shape above.
 // 11/12 (round 2): 避難に備える's main page has the same rows too; its cat's
-// page (猫の情報) keeps the row of faces and the numbered parts.
+// page (11/22: 「この子のこと」, was 猫の情報) keeps the row of faces and the
+// numbered parts.
 
 /// Where a step stands: the first one not done is the one to do now.
 enum ToolStepState: Equatable {
@@ -2710,19 +2648,6 @@ struct ToolStepHeader: View {
         .textCase(nil)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(number)、\(title)" + (state == .done ? "、済み" : ""))
-    }
-}
-
-/// One gray sentence under the cat row: what this page makes.
-struct ToolPurpose: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
     }
 }
 

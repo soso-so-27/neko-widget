@@ -2622,7 +2622,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let open = app.buttons["evacuation-cats-open"]
         XCTAssertTrue(open.waitForExistence(timeout: 10)); open.tap()
-        // 11/7: 「猫の情報」 opens the first cat in place. The only cat is the one
+        // 11/7: 「この子のこと」 (was 「猫の情報」) opens the first cat in place. The only cat is the one
         // written in 預けるとき, so its page is made from it at once, and the
         // row of cats stays away with a single cat.
         let edit = app.buttons["evacuation-cat-edit"]
@@ -2768,17 +2768,18 @@ final class SoloMemoriesUITests: XCTestCase {
         let boundaries = app.staticTexts["evacuation-boundary-result"]
         XCTAssertTrue(boundaries.waitForExistence(timeout: 10))
         XCTAssertEqual(boundaries.label, "境界検証成功")
-        app.buttons["evacuation-packing-open"].tap()
-        let supply = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-supply-")).firstMatch
+        // 11/22: the one checklist is on 「いま避難する」, and its checks are kept.
+        app.buttons["evacuation-now-open"].tap()
+        let supply = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "evacuation-now-supply-")).firstMatch
         XCTAssertTrue(supply.waitForExistence(timeout: 5))
         let supplyID = supply.identifier
         supply.tap()
         XCTAssertEqual(supply.value as? String, "そろっている")
-        XCTAssertTrue(app.staticTexts["evacuation-packing-count"].label.hasPrefix("そろっているもの"))
+        XCTAssertTrue(app.staticTexts["evacuation-now-count"].label.hasPrefix("持ち出すもの"))
         capture("evacuation-packing")
         app.terminate()
         app.launch()
-        app.buttons["evacuation-packing-open"].tap()
+        app.buttons["evacuation-now-open"].tap()
         let restored = app.buttons[supplyID]
         XCTAssertTrue(restored.waitForExistence(timeout: 5))
         XCTAssertEqual(restored.value as? String, "そろっている")
@@ -2802,8 +2803,8 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<6 where !share.isHittable { app.swipeUp() }
         XCTAssertTrue(share.isHittable)
         share.tap()
-        // The show screen's 「印刷用のPDF」 asks once before making the file.
-        let confirmation = app.buttons["印刷用のPDFを作る"]
+        // The show screen's 「PDFで渡す」 asks once before making the file.
+        let confirmation = app.buttons["PDFを作って渡す"]
         let presented = confirmation.waitForExistence(timeout: 5)
         capture("evacuation-print-confirmation")
         XCTAssertTrue(presented, "The print confirmation must be presented before confirming export")
@@ -3238,7 +3239,8 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             XCTAssertTrue(evacuation.isHittable)
             evacuation.tap()
-            XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
+            // 11/22: the hub's rows are 「この子のこと」 and 「行き先と連絡先」.
+            XCTAssertTrue(app.buttons["evacuation-cats-open"].waitForExistence(timeout: 5))
             capture("tools-entry-\(appearance)")
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(evacuation.waitForExistence(timeout: 5))
@@ -3865,7 +3867,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let evacuation = app.buttons["tools-evacuation-open"]
         for _ in 0..<5 where !evacuation.isHittable { app.swipeUp() }
         evacuation.tap()
-        XCTAssertTrue(app.buttons["evacuation-packing-open"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["evacuation-cats-open"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
         app.terminate()
     }
@@ -4542,7 +4544,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(source.isHittable)
         capture("photo-settings-shortcuts")
         source.tap()
-        XCTAssertTrue(app.navigationBars["写真の対象"].waitForExistence(timeout: 5))
+        // 11/22: 「使う写真」 (was 「写真の対象」).
+        XCTAssertTrue(app.navigationBars["使う写真"].waitForExistence(timeout: 5))
         capture("photo-source-direct")
         let allPhotos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "すべての写真")).firstMatch
         XCTAssertTrue(allPhotos.isHittable)
@@ -4554,8 +4557,9 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<5 where !excluded.isHittable { app.swipeUp() }
         XCTAssertTrue(excluded.isHittable)
         excluded.tap()
-        XCTAssertTrue(app.navigationBars["外した写真"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["写真の対象"].exists)
+        // 11/22: 「出さない写真」 (was 「外した写真」).
+        XCTAssertTrue(app.navigationBars["出さない写真"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["使う写真"].exists)
         app.terminate()
 
         // The cat-list entrance keeps browsing prominent; secondary actions

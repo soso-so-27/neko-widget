@@ -8,10 +8,13 @@ import SwiftUI
 
 /// A row like 設定's, used by every tool page made as a list of rows: an
 /// icon, the name, and what is written now at the side, one line. Gray when
-/// nothing is written, the text colour when something is, red when the page
-/// it opens has something to fix. A NavigationLink around it adds the
-/// chevron. At the largest text sizes LabeledContent puts the value under
+/// what it says is not filled in, the text colour when something is, red when
+/// the page it opens has something to fix. A NavigationLink around it adds
+/// the chevron. At the largest text sizes LabeledContent puts the value under
 /// the name.
+/// 11/22: an empty row shows nothing at the side, only its chevron (the
+/// gray 「未記入」 on every row made the pages look busy); VoiceOver still
+/// hears the word, so an empty row is known to be empty.
 struct ToolValueRow: View {
     let title: String
     let systemImage: String
@@ -20,12 +23,20 @@ struct ToolValueRow: View {
     /// In red: the row whose page has something to fix.
     var problem = false
 
+    /// The value shown at the side; nil for an empty row.
+    private var shown: String? {
+        ToolEmptyValue.isEmptyMarker(value, filled: filled, problem: problem) ? nil : value
+    }
+
     var body: some View {
+        let side = shown
         LabeledContent {
-            Text(value)
-                .foregroundStyle(problem ? Color.red : (filled ? Color.primary : Color.secondary))
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if let side {
+                Text(side)
+                    .foregroundStyle(problem ? Color.red : (filled ? Color.primary : Color.secondary))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         } label: {
             Label {
                 Text(title).foregroundStyle(Color.primary)
@@ -33,6 +44,88 @@ struct ToolValueRow: View {
                 Image(systemName: systemImage).foregroundStyle(Color.accentColor)
             }
         }
+        .modifier(ToolEmptyValueSpoken(word: side == nil ? value : nil))
+    }
+}
+
+/// The word an empty row no longer shows, for VoiceOver only (11/22).
+struct ToolEmptyValueSpoken: ViewModifier {
+    let word: String?
+
+    func body(content: Content) -> some View {
+        if let word { content.accessibilityValue(word) } else { content }
+    }
+}
+
+/// The top of a tool page (11/22): the bar's title says what the page is,
+/// so no sentence says what it makes. The cat's name is shown only where it
+/// tells cats apart: two or more cats, and no cat menu in the bar to name
+/// it. With one cat there is nothing to tell apart. `detail` is a state the
+/// page is in (病院's 「診察済み」); nothing at all leaves no row.
+struct ToolCatNameHeader: View {
+    let name: String?
+    var detail: String? = nil
+
+    /// The name is shown with two or more cats, while the bar has no menu.
+    static func showsName(catCount: Int, menuInBar: Bool) -> Bool {
+        catCount >= 2 && !menuInBar
+    }
+
+    var body: some View {
+        if name != nil || detail != nil {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let name { Label(name, systemImage: "cat").font(.headline) }
+                    if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+            }
+        }
+    }
+}
+
+/// A choice in a row (11/22), as in 「この子のこと」: the icon and the name,
+/// the chosen answer at the side with ⌃⌄, and a menu of the answers. Nothing
+/// chosen yet shows only ⌃⌄, so the row still looks like it can be tapped;
+/// VoiceOver hears 「未記入」. The first choice is "not chosen yet".
+struct ToolChoiceRow<Value: Hashable>: View {
+    let title: String
+    let systemImage: String
+    @Binding var selection: Value
+    /// Each answer and its words.
+    let choices: [(Value, String)]
+
+    private var chosen: Bool { selection != choices.first?.0 }
+    private var current: String { choices.first { $0.0 == selection }?.1 ?? "" }
+
+    var body: some View {
+        Menu {
+            Picker(title, selection: $selection) {
+                ForEach(choices.indices, id: \.self) { index in
+                    Text(choices[index].1).tag(choices[index].0)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 6) {
+                Label {
+                    Text(title).foregroundStyle(Color.primary)
+                } icon: {
+                    Image(systemName: systemImage).foregroundStyle(Color.accentColor)
+                }
+                Spacer(minLength: 8)
+                if chosen {
+                    Text(current).foregroundStyle(Color.primary).lineLimit(1)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(chosen ? current : ToolEmptyValue.unset)
     }
 }
 
@@ -46,10 +139,18 @@ struct ToolValueRow: View {
 ///   「none」 answer (持病なし, 首輪なし).
 /// An answer the owner chose (「なし」, 「わからない」) is in the text colour;
 /// the words above are gray.
+/// 11/22: a row no longer shows these words when nothing is there (only its
+/// chevron); they stay as what VoiceOver hears (`isEmptyMarker`).
 enum ToolEmptyValue {
     static let unwritten = "未記入"
     static let unset = "未記入"
     static let none = "なし"
+
+    /// True when a row's value only says nothing is there yet: 「未記入」, or
+    /// 「なし」 for nothing added. A chosen 「なし」 (首輪なし) is filled, so it stays.
+    static func isEmptyMarker(_ value: String, filled: Bool, problem: Bool) -> Bool {
+        !filled && !problem && (value == unwritten || value == none)
+    }
 }
 
 /// The chevron of a row that opens something: a NavigationLink draws its

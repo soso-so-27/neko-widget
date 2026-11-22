@@ -797,7 +797,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。")
+            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「出さない写真」から戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -1152,7 +1152,7 @@ struct LikedPhotosView: View {
                         ContentUnavailableView {
                             Label("選んでいたアルバムが見つかりません", systemImage: "photo.on.rectangle")
                         } description: {
-                            Text("「写真」タブから、写真の対象を選び直してください。")
+                            Text("「写真」タブから、使う写真を選び直してください。")
                         } actions: {
                             Button(action: recoverPhotoSource) {
                                 Label("「写真」タブを開く", systemImage: "arrow.right")
@@ -2922,15 +2922,15 @@ struct PhotoBrowserView: View {
     /// The plain viewer's title is the photo's date (「写真」 said nothing).
     private var showsDateAsTitle: Bool { navigationTitleText == "写真" }
 
-    /// The date in the title's place, and 「1 / 8」 under it. Keeps the
-    /// identifier and spoken date the row under the bar had; 「1 / 8」 is
-    /// read as its own element, as the row's position was.
+    /// The date in the title's place, and the years-ago context under it.
+    /// Keeps the identifier and spoken date the row under the bar had.
+    /// 11/22: no 「1 / 8」 under the date (swiping says there are more);
+    /// VoiceOver still hears the position, in the date's hint.
     @ViewBuilder
     private func titleDate(_ photo: PhotoPresentation) -> some View {
         let spokenDate = photo.creationDate?.formatted(.dateTime.year().month().day()) ?? "撮影日不明"
         let context = PhotoRediscoveryContext.yearsAgo(for: photo.creationDate)
         let position = browserPhotos.count > 1 ? pagePositionText : nil
-        let detail = [context, position].compactMap { $0 }
         VStack(spacing: 0) {
             Text(spokenDate)
                 .font(.headline)
@@ -2939,17 +2939,15 @@ struct PhotoBrowserView: View {
                 // 11/14: the day once, as the value (it was the label too).
                 .accessibilityLabel("撮影日")
                 .accessibilityValue(spokenDate)
-                .accessibilityHint(context ?? "")
+                .accessibilityHint([context, position].compactMap { $0 }.joined(separator: "、"))
                 .accessibilityIdentifier("photo-browser-date")
-            if !detail.isEmpty {
-                // The years-ago context is the date's hint; this line is read as the position.
-                Text(detail.joined(separator: "・"))
+            if let context {
+                // Read as the date's hint.
+                Text(context)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .accessibilityLabel(position ?? "")
-                    .accessibilityHidden(position == nil)
-                    .accessibilityIdentifier("photo-browser-position")
+                    .accessibilityHidden(true)
             }
         }
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -3289,7 +3287,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。")
+            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「出さない写真」から戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -3919,7 +3917,7 @@ struct DayPhotosView: View {
                 ContentUnavailableView(
                     "この日の写真を表示できません",
                     systemImage: "photo.stack",
-                    description: Text("写真へのアクセスや、写真の対象を確かめてください。")
+                    description: Text("写真へのアクセスや、使う写真を確かめてください。")
                 )
                 .frame(maxWidth: .infinity, minHeight: 420)
             } else {

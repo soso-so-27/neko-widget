@@ -35,11 +35,18 @@ struct EvacuationPreparationView: View {
             } else {
                 List {
                     // Round 2 (11/9): the day itself, first, from what is on this iPhone.
+                    // 11/22: also the one checklist (「持ち出すもの」 was a second,
+                    // almost the same list); its state is at the side: 「3 / 12」
+                    // or the nearest 期限, red once past.
                     Section {
                         NavigationLink { EvacuationNowView(profiles: profiles, store: store) } label: {
-                            Label("いま避難する", systemImage: "figure.walk.departure")
-                                .font(.headline).foregroundStyle(Color.red)
-                                .frame(minHeight: 44)
+                            LabeledContent {
+                                EvacuationChecklistState(state: packingState)
+                            } label: {
+                                Label("いま避難する", systemImage: "figure.walk.departure")
+                                    .font(.headline).foregroundStyle(Color.red)
+                            }
+                            .frame(minHeight: 44)
                         }
                         .accessibilityIdentifier("evacuation-now-open")
                     }
@@ -59,20 +66,16 @@ struct EvacuationPreparationView: View {
                         }
                         .accessibilityIdentifier("evacuation-review-reminder")
                     }
-                    ToolPurpose(text: "災害のときに持ち出すものと、猫の避難メモを用意します。")
                     // 11/12 (round 2): the same rows as every other tool (an icon,
                     // the name, what is there now at the side, a chevron), in
                     // place of numbered two-line steps that looked grayed out.
+                    // 11/22: no sentence of what the page makes (the title says
+                    // it); 「猫の情報」 is 「この子のこと」, the name every tool uses.
                     Section {
-                        NavigationLink { EvacuationPackingView(store: store) } label: {
-                            ToolValueRow(title: "持ち出すもの", systemImage: "backpack", value: packingState.value,
-                                         filled: packingState.filled, problem: packingState.problem)
-                        }
-                        .accessibilityIdentifier("evacuation-packing-open")
                         NavigationLink {
                             EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store, reuseStore: reuseStore)
                         } label: {
-                            ToolValueRow(title: "猫の情報", systemImage: "cat", value: catsState,
+                            ToolValueRow(title: "この子のこと", systemImage: "cat", value: catsState,
                                          filled: !livingCats.isEmpty)
                         }
                         .accessibilityIdentifier("evacuation-cats-open")
@@ -128,7 +131,8 @@ struct EvacuationPreparationView: View {
         }
         .navigationTitle("避難に備える").navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(bookError ?? showError)
-        .navigationDestination(isPresented: $openPacking) { EvacuationPackingView(store: store) }
+        // 11/22: the review opens the one checklist, on 「いま避難する」.
+        .navigationDestination(isPresented: $openPacking) { EvacuationNowView(profiles: profiles, store: store) }
         .navigationDestination(item: $showing) { EvacuationDisplayView(record: $0.record) }
         .task {
             // Usage (11/7): once per opening, not again after a pushed screen.
@@ -138,7 +142,7 @@ struct EvacuationPreparationView: View {
             store.retryPhotoCleanup()
             if noticeSetting == 1 { noticesBlocked = !(await EvacuationNotice.allowed()) }
         }
-        .confirmationDialog("印刷用のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
+        .confirmationDialog("避難メモをPDFで作ります", isPresented: $confirmBook, titleVisibility: .visible) {
             Button("PDFを作る") { Task { await makeBook() } }
         } message: {
             Text("病歴・薬・連絡先・ワクチン・マイクロチップ番号・飼い主と一緒の写真も載ります。")
@@ -194,7 +198,8 @@ struct EvacuationPreparationView: View {
         profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName
     }
 
-    /// 「持ち出すもの」's value (11/12, round 2): how many are ready, 「3 / 12」;
+    /// The checklist's state, at the side of 「いま避難する」 (11/22; it was
+    /// 「持ち出すもの」's value, 11/12, round 2): how many are ready, 「3 / 12」;
     /// the nearest 期限 first (red once past) when one is near (round 2,
     /// 「フードの期限まであと12日」); 「なし」 with no item on the list.
     private var packingState: (value: String, filled: Bool, problem: Bool) {
@@ -211,7 +216,7 @@ struct EvacuationPreparationView: View {
         store.plan.livingCats(departed: CatFarewell.departedIdentifiers())
     }
 
-    /// 「猫の情報」's value: 「未記入」, a cat with no photo to tell it apart, or the names.
+    /// 「この子のこと」's value: 「未記入」 (not shown), a cat with no photo to tell it apart, or the names.
     private var catsState: String {
         let cats = livingCats
         if cats.isEmpty { return ToolEmptyValue.unwritten }
@@ -230,12 +235,14 @@ struct EvacuationPreparationView: View {
     /// be pressed (it was gray with blue words, which read as 「cannot be
     /// pressed」, the way a disabled button looks); gray only while it cannot.
     private var bookButton: some View {
+        // 11/22: named for what it makes, as 「お世話メモを作る」 is (it was
+        // 「印刷用のPDFを作る」).
         Button { confirmBook = true } label: {
             Group {
                 if makingBook {
-                    WorkingLabel(title: "印刷用のPDFを作る", workingTitle: "作っています…", working: true)
+                    WorkingLabel(title: "避難メモを作る", workingTitle: "作っています…", working: true)
                 } else {
-                    Label("印刷用のPDFを作る", systemImage: "printer")
+                    Label("避難メモを作る", systemImage: "doc.text")
                 }
             }
                 .frame(maxWidth: .infinity)
@@ -267,6 +274,19 @@ private extension EvacuationCat {
     }
 }
 
+/// The checklist's state at the side of 「いま避難する」 (11/22): 「3 / 12」 or
+/// the nearest 期限, red once past; nothing while the list is empty.
+private struct EvacuationChecklistState: View {
+    let state: (value: String, filled: Bool, problem: Bool)
+    var body: some View {
+        if !ToolEmptyValue.isEmptyMarker(state.value, filled: state.filled, problem: state.problem) {
+            Text(state.value)
+                .foregroundStyle(state.problem ? Color.red : Color.secondary)
+                .lineLimit(1)
+        }
+    }
+}
+
 private struct EvacuationSaveNotice: View {
     @ObservedObject var store: EvacuationStore
     /// Inside ToolMakeBar, which has its own padding and background.
@@ -288,72 +308,6 @@ private struct EvacuationSaveNotice: View {
     }
 }
 
-private struct EvacuationPackingView: View {
-    @ObservedObject var store: EvacuationStore
-    @State private var resetRequested = false
-    /// 11/21: without the items kept for a departed cat.
-    private var needed: [EvacuationSupply] { store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers()) }
-    private var confirmedCount: Int { needed.filter { store.plan.carriedIDs.contains($0.id) }.count }
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(needed) { item in
-                    Button {
-                        store.update { $0.toggleCarried(item.id) }
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: store.plan.carriedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                .font(.title2).foregroundStyle(Color.accentColor)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(item.title.isEmpty ? "名前のない持ち物" : item.title).foregroundStyle(.primary)
-                                if let cat = store.plan.cats.first(where: { $0.id == item.catID }) {
-                                    Text(cat.displayName).font(.caption).foregroundStyle(.secondary)
-                                }
-                                // 11/12 (round 2): the amount and the place, only what is
-                                // written (the same gray sentence was on every item).
-                                let detail = [item.quantity, item.location].filter { !$0.isEmpty }.joined(separator: "・")
-                                if !detail.isEmpty {
-                                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
-                                }
-                                EvacuationExpiryLine(item: item)
-                            }
-                        }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityValue(store.plan.carriedIDs.contains(item.id) ? "そろっている" : "まだ")
-                    .accessibilityIdentifier("evacuation-supply-\(item.id.uuidString)")
-                }
-            } header: {
-                Text("そろっているもの  \(confirmedCount) / \(needed.count)")
-                    .accessibilityIdentifier("evacuation-packing-count")
-            } footer: {
-                // 11/8: the one date of this tool (the half-year review counts from it).
-                if let date = store.plan.lastReadyDate {
-                    Text("最後に見直した日：\(date.formatted(date: .numeric, time: .omitted))")
-                        .accessibilityIdentifier("evacuation-last-reviewed")
-                }
-            }
-            Section {
-                NavigationLink("リストと置き場所を編集") { EvacuationSuppliesEditor(store: store) }
-                Button("チェックをやり直す") { resetRequested = true }
-                    .disabled(store.plan.carriedIDs.isEmpty)
-            }
-        }
-        .navigationTitle("持ち出すもの").navigationBarTitleDisplayMode(.inline)
-        .toolChrome()
-        .confirmationDialog("チェックをすべて外しますか？", isPresented: $resetRequested, titleVisibility: .visible) {
-            Button("すべて外す", role: .destructive) {
-                store.update { $0.clearChecks() }
-            }
-        } message: { Text("持ち物と置き場所は消えません。") }
-        .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
-        // Medicines follow 「この子のこと」 and amounts the number of cats (11/8).
-        .task { store.followCatsAndMedicines() }
-    }
-}
-
 /// 「期限まであと〇日」 within 30 days, 「期限切れ」 after (round 2).
 private struct EvacuationExpiryLine: View {
     let item: EvacuationSupply
@@ -366,48 +320,67 @@ private struct EvacuationExpiryLine: View {
 }
 
 /// 「いま避難する」 (round 2, 11/9): the day itself on one screen, from what is
-/// kept on this iPhone only, so it works without a connection: what to take
-/// (tapped as it goes in the bag), each cat's memo to show, and where to go,
-/// with a call and the map. The list's own checks stay as they are; a check
-/// here records the day (recordTaken), and leaving without one changes nothing.
+/// kept on this iPhone only, so it works without a connection: what to take,
+/// each cat's memo to show, and where to go, with a call and the map.
+/// 11/22: also the one checklist of the tool. 「持ち出すもの」 was a second
+/// list of the same items with its own checks; it is now this one, with
+/// everything it had: the saved checks, 期限, 「最後に見直した日」, editing
+/// the list and starting the checks over. The half-year review opens here.
 private struct EvacuationNowView: View {
     let profiles: [CatProfilePresentation]
     @ObservedObject var store: EvacuationStore
     @State private var showing: EvacuationPreviewItem?
     @State private var showError: String?
+    @State private var resetRequested = false
     /// 11/21: without the items kept for a departed cat, and without the cat.
     private var needed: [EvacuationSupply] { store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers()) }
     private var livingCats: [EvacuationCat] { store.plan.livingCats(departed: CatFarewell.departedIdentifiers()) }
-    private var takenCount: Int { needed.filter { store.takenIDs.contains($0.id) }.count }
+    private var carriedCount: Int { needed.filter { store.plan.carriedIDs.contains($0.id) }.count }
 
     var body: some View {
         List {
-            ToolPurpose(text: "持ち物を確かめて、猫と一緒に避難します。")
             Section {
                 if needed.isEmpty { Text("持ち物はまだありません。").foregroundStyle(.secondary) }
                 ForEach(needed) { item in
-                    Button { take(item.id) } label: {
+                    Button {
+                        store.update { $0.toggleCarried(item.id) }
+                    } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: store.takenIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                            Image(systemName: store.plan.carriedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
                                 .font(.title2).foregroundStyle(Color.accentColor)
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(item.title.isEmpty ? "名前のない持ち物" : item.title).foregroundStyle(.primary)
                                 if let cat = store.plan.cats.first(where: { $0.id == item.catID }) {
                                     Text(name(of: cat)).font(.caption).foregroundStyle(.secondary)
                                 }
+                                // The place and the amount, only what is written.
                                 let detail = [item.location, item.quantity].filter { !$0.isEmpty }.joined(separator: "・")
                                 if !detail.isEmpty { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
+                                EvacuationExpiryLine(item: item)
                             }
                         }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityValue(store.takenIDs.contains(item.id) ? "持った" : "まだ")
+                    .accessibilityValue(store.plan.carriedIDs.contains(item.id) ? "そろっている" : "まだ")
                     .accessibilityIdentifier("evacuation-now-supply-\(item.id.uuidString)")
                 }
             } header: {
-                Text("持ち出すもの  \(takenCount) / \(needed.count)")
+                Text("持ち出すもの  \(carriedCount) / \(needed.count)")
                     .accessibilityIdentifier("evacuation-now-count")
+            } footer: {
+                // 11/8: the one date of this tool (the half-year review counts from it).
+                if let date = store.plan.lastReadyDate {
+                    Text("最後に見直した日：\(date.formatted(date: .numeric, time: .omitted))")
+                        .accessibilityIdentifier("evacuation-last-reviewed")
+                }
+            }
+            Section {
+                NavigationLink("リストと置き場所を編集") { EvacuationSuppliesEditor(store: store) }
+                    .accessibilityIdentifier("evacuation-supplies-edit")
+                Button("チェックをやり直す") { resetRequested = true }
+                    .disabled(store.plan.carriedIDs.isEmpty)
+                    .accessibilityIdentifier("evacuation-checks-reset")
             }
             if !livingCats.isEmpty {
                 Section {
@@ -446,14 +419,14 @@ private struct EvacuationNowView: View {
         .toolChrome()
         .announcesWhenShown(showError)
         .navigationDestination(item: $showing) { EvacuationDisplayView(record: $0.record) }
+        .confirmationDialog("チェックをすべて外しますか？", isPresented: $resetRequested, titleVisibility: .visible) {
+            Button("すべて外す", role: .destructive) {
+                store.update { $0.clearChecks() }
+            }
+        } message: { Text("持ち物と置き場所は消えません。") }
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
-    }
-
-    /// Only a check records the day; taking it off again leaves the day.
-    private func take(_ id: UUID) {
-        if store.takenIDs.contains(id) { store.takenIDs.remove(id); return }
-        store.takenIDs.insert(id)
-        store.update { $0.recordTaken(id) }
+        // Medicines follow 「この子のこと」 and amounts the number of cats (11/8).
+        .task { store.followCatsAndMedicines() }
     }
 
     private func show(_ cat: EvacuationCat) {
@@ -661,7 +634,7 @@ private struct EvacuationCatsView: View {
             if stripCats.isEmpty {
                 // No cat yet: add one here.
                 List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }) {} }
-                    .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+                    .navigationTitle("この子のこと").navigationBarTitleDisplayMode(.inline)
                     .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
             } else if let id = openedID, store.plan.cats.contains(where: { $0.id == id }) {
                 // The chosen cat's page, with the row of cats above it to switch in place.
@@ -674,7 +647,7 @@ private struct EvacuationCatsView: View {
                     if couldNotOpen && store.isFullOfCats {
                         LimitNote(AppLimitCopy.catsInTool)
                     } else if couldNotOpen {
-                        Text("猫の情報を作れませんでした。上の猫をもう一度押してください。")
+                        Text("記録を作れませんでした。上の猫をもう一度押してください。")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else {
                         // No cat open, e.g. right after its record was deleted (11/7).
@@ -691,7 +664,7 @@ private struct EvacuationCatsView: View {
                         }
                     }
                 }
-                .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("この子のこと").navigationBarTitleDisplayMode(.inline)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     ToolCatStrip(cats: stripCats, selectedID: nil) { select($0) }
                 }
@@ -811,7 +784,6 @@ private struct EvacuationCatView: View {
     var body: some View {
         List {
             if let cat {
-                ToolPurpose(text: "避難所で見せる、この子の避難メモを作ります。")
                 // The two steps, numbered, with a check once done (11/8 型).
                 let states = ToolStepState.states([cat.identificationPhoto(store: store) != nil, true])
                 let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
@@ -820,8 +792,10 @@ private struct EvacuationCatView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
-                        Text(CatCareSummary.features(catCareRecord(cat), legacy: cat.features) ?? "特徴は未記入")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                        // 11/22: nothing under the name while no feature is written.
+                        if let features = CatCareSummary.features(catCareRecord(cat), legacy: cat.features) {
+                            Text(features).font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
                     // 11/9: chosen in 「この子のこと」 only; shown here.
                     ToolIdentifyingPhotos(faceFile: cat.identifyingPhoto(.face, store: store),
@@ -834,8 +808,11 @@ private struct EvacuationCatView: View {
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
                             otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
                     } label: {
-                        LabeledContent(isGuest ? "名前と飼い主と一緒の写真" : "飼い主と一緒の写真",
-                                       value: cat.photos["withOwner"] == nil ? ToolEmptyValue.none : "あり")
+                        // 11/22: 「あり」 once chosen; nothing at the side before.
+                        LabeledContent(isGuest ? "名前と飼い主と一緒の写真" : "飼い主と一緒の写真") {
+                            if cat.photos["withOwner"] != nil { Text("あり") }
+                        }
+                        .modifier(ToolEmptyValueSpoken(word: cat.photos["withOwner"] == nil ? ToolEmptyValue.none : nil))
                     }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 } header: { ToolStepHeader(number: 1, title: "見分ける写真", state: states[0]) }
@@ -869,7 +846,7 @@ private struct EvacuationCatView: View {
                     Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }
                 }
             }
-        }.navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("この子のこと").navigationBarTitleDisplayMode(.inline)
         .toolPageSpacing()
             .announcesWhenShown(error)
             .toolBottomBar {
@@ -1062,12 +1039,12 @@ private struct EvacuationDisplayView: View {
             }
         }
         // A container keeps the buttons' own identifiers; on a plain view the
-        // screen's identifier replaced 「印刷用のPDF」 and 「画像で渡す」 (as c8880b79).
+        // screen's identifier replaced 「PDFで渡す」 and 「画像で渡す」 (as c8880b79).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
-            Button(wantsPrint == true ? "印刷用のPDFを作る" : "画像を作って渡す") { Task { await createExport() } }
+            Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { Task { await createExport() } }
         } message: {
             Text(record.includesPrivateInformation
                  ? "選んだ病歴や連絡先が載るので、渡す相手を確かめてください。"
@@ -1109,9 +1086,9 @@ private struct EvacuationDisplayView: View {
         Button { wantsPrint = true; confirmShare = true } label: {
             Group {
                 if busy && wantsPrint == true {
-                    WorkingLabel(title: "印刷用のPDF", workingTitle: "作っています…", working: true)
+                    WorkingLabel(title: "PDFで渡す", workingTitle: "作っています…", working: true)
                 } else {
-                    Label("印刷用のPDF", systemImage: "printer")
+                    Label("PDFで渡す", systemImage: "doc.richtext")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1137,7 +1114,7 @@ private struct EvacuationDisplayView: View {
         defer { busy = false }
         try? await Task.sleep(for: .milliseconds(100))
         do {
-            // 11/8: one PDF. Its print copy is 「印刷用のPDF」, drawn as the hub's,
+            // 11/8: one PDF. Its print copy (「PDFで渡す」, 11/22: was 「印刷用のPDF」) is drawn as the hub's,
             // with what this memo shows; images stay for showing on a screen.
             let made = try (wantsPrint == true
                 ? EvacuationExporter.createBook([record])

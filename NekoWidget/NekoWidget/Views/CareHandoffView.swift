@@ -212,7 +212,8 @@ struct CareHandoffView: View {
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
         return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore,
-                             profiles: profiles, showsName: menuHidden,
+                             profiles: profiles,
+                             showsName: ToolCatNameHeader.showsName(catCount: profiles.count, menuInBar: !menuHidden),
                              onDeleted: {
                                  // Stay here: the next memo, or none (11/7: it left the tool).
                                  lastCatID = Self.afterDelete
@@ -272,7 +273,7 @@ private struct CareField: View {
 }
 
 /// 11/12: one page as a list of rows, as in 設定 (the shape 病院で見せる has):
-/// 「この子について」 and 「今回のお願い」 as rows that each open their own page,
+/// the cat's rows and 「今回のお願い」 as rows that each open their own page,
 /// 「この子のこと」, then the notes; the memo is made from here in one step.
 /// What was the second page (期間とお願い・家の中のこと・お願いする猫・載せるもの)
 /// is part of this page, and its choices live here, for this memo only.
@@ -283,7 +284,8 @@ private struct CareCatEditor: View {
     @ObservedObject var store: CareHandoffStore
     @ObservedObject var reuseStore: EvacuationStore
     var profiles: [CatProfilePresentation] = []
-    /// The cat's name at the top, when the bar has no cat menu to name it.
+    /// The cat's name at the top: two or more cats, and no cat menu in the
+    /// bar to name it (11/22, ToolCatNameHeader.showsName).
     var showsName = false
     /// Set when the memo is the tool's page: it stays after a delete.
     var onDeleted: (() -> Void)? = nil
@@ -426,18 +428,10 @@ private struct CareCatEditor: View {
         }
         CareHandoffDetachedPhotos(store: store)
     }
-    /// The cat's name when the bar does not show it, then what this page makes.
+    /// 11/22: the cat's name only where it tells cats apart; the title says
+    /// what the page makes.
     private func headerSection(_ cat: CareCat) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                if showsName, let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
-                    Label(profile.displayName, systemImage: "cat").font(.headline)
-                }
-                ToolPurpose(text: "預ける人に渡すお世話メモを作ります。")
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
-        }
+        ToolCatNameHeader(name: showsName ? profiles.first(where: { $0.identifier == cat.profileID })?.displayName : nil)
     }
     @ViewBuilder private var errorSection: some View {
         if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
@@ -467,8 +461,9 @@ extension CareCatEditor {
                             filled: words != nil)
     }
 
-    /// 「この子について」: the name (a cat without a profile), the photo, what
-    /// to say first, when to call.
+    /// The name (a cat without a profile), the photo, what to say first, when
+    /// to call. 11/22: no heading; it read 「この子について」 right above the
+    /// row 「この子のこと」, two names for the same cat's things.
     private func aboutSection(_ cat: CareCat) -> some View {
         Section {
             if !profiles.contains(where: { $0.identifier == cat.profileID }) {
@@ -485,8 +480,6 @@ extension CareCatEditor {
                 textRow("こんなときは連絡を", "phone", [cat.callWhen ?? ""])
             }
             .accessibilityIdentifier("care-row-call-when")
-        } header: {
-            Text("この子について")
         }
     }
     /// 「載せる」 with the photo, 「載せない」 after 「このメモには載せない」,

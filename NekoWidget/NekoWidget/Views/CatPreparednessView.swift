@@ -261,17 +261,10 @@ struct LostCatDraftView: View {
     }
 
     @ViewBuilder private func formContent(_ issues: [String: String]) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                // With two or more cats the cat menu in the bar already names it.
-                if menuHidden, let profile = profiles.first(where: { $0.identifier == key }) {
-                    Label(profile.displayName, systemImage: "cat").font(.headline)
-                }
-                ToolPurpose(text: "探すためのチラシを作ります。")
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
-        }
+        // 11/22: the cat's name only where it tells cats apart (two or more
+        // cats, no cat menu in the bar); the title says what the page makes.
+        ToolCatNameHeader(name: ToolCatNameHeader.showsName(catCount: profiles.count, menuInBar: !menuHidden)
+            ? profiles.first(where: { $0.identifier == key })?.displayName : nil)
         guideSection
         flyerSection(issues).disabled(!loaded)
         foundSection

@@ -945,7 +945,7 @@ struct HomeView: View {
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("写真の対象を選び直す")
+                    Text("使う写真を選び直す")
                     Text("選んだアルバムが見つかりません")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -955,7 +955,7 @@ struct HomeView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
-        .accessibilityHint("選んだアルバムが見つかりません。写真の対象を選び直す画面を開きます")
+        .accessibilityHint("選んだアルバムが見つかりません。使う写真を選び直す画面を開きます")
         .accessibilityIdentifier("photo-hub-source-recovery")
     }
 

@@ -32,7 +32,7 @@ struct CatCandidateCurationView: View {
             Section {
                 if excludedPhotos.isEmpty {
                     ContentUnavailableView(
-                        "外した写真はありません",
+                        "出さない写真はありません",
                         systemImage: "cat",
                         description: Text("写真の「…」から「猫の写真から外す」を選ぶと外せます。")
                     )
@@ -61,10 +61,10 @@ struct CatCandidateCurationView: View {
                 Text("猫の写真から外した写真")
             }
         }
-        .navigationTitle(showsSourceSettings ? "写真の整理" : "外した写真")
+        .navigationTitle(showsSourceSettings ? "写真の整理" : "出さない写真")
         .task { await refreshSourceAlbums() }
         .confirmationDialog(
-            "外した写真をすべて猫の写真に戻しますか？",
+            "出さない写真をすべて猫の写真に戻しますか？",
             isPresented: $showsRestoreAllConfirmation,
             titleVisibility: .visible
         ) {
@@ -89,7 +89,7 @@ struct CatCandidateCurationView: View {
                     selectSourceAlbum: selectSourceAlbum
                 )
             } label: {
-                LabeledContent("写真の対象", value: sourceTitle)
+                LabeledContent("使う写真", value: sourceTitle)
             }
 
             if sourceStatus == .unavailable {
@@ -205,7 +205,7 @@ struct PhotoSourceAlbumSelectionView: View {
                 }
             }
         }
-        .navigationTitle("写真の対象")
+        .navigationTitle("使う写真")
         .navigationBarTitleDisplayMode(.inline)
     }
 

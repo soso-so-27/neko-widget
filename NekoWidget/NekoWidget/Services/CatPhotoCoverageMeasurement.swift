@@ -419,7 +419,7 @@ enum CatPhotoCoverageRunner {
                 options: options
             ).map(\.localIdentifier))
         } catch {
-            return .blocked("選んだ写真の対象のアルバムを開けません。")
+            return .blocked("使う写真に選んだアルバムを開けません。")
         }
         if Task.isCancelled { return .cancelled }
 
