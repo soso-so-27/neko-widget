@@ -91,8 +91,12 @@ enum AppStoreScreenshotFixture {
 
     static var photos: [PhotoPresentation] {
         if OwnerStoreCaptureFixture.isRequested {
-            if OwnerStoreCaptureFixture.screen == "album" { return albumPhotos }
-            return ([1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30]).enumerated().map { index, number in
+            if ["album", "album-refresh"].contains(OwnerStoreCaptureFixture.screen) { return albumPhotos }
+            let firstPhotos = [1, 2, 3, 4, 5, 6, 7, 8, 27, 28, 29, 30]
+            let photoNumbers = OwnerStoreCaptureFixture.screen == "photo-grid"
+                ? firstPhotos + [9, 10, 11, 12, 13, 14, 15, 16, 17, 24, 32]
+                : firstPhotos
+            return photoNumbers.enumerated().map { index, number in
                 PhotoPresentation(localIdentifier: "\(identifierPrefix)\(number)",
                     creationDate: date(year: 2026, month: 11, day: 9).addingTimeInterval(Double(-index)),
                     catBoundingBox: nil)
@@ -139,22 +143,29 @@ enum AppStoreScreenshotFixture {
         calendar.locale = Locale(identifier: "en_US_POSIX")
         guard let thisMonth = calendar.dateInterval(of: .month, for: Date())?.start,
               let lastMonth = calendar.date(byAdding: .month, value: -1, to: thisMonth) else { return [] }
-        return zip(identifiers[18...23], [2, 5, 9, 14, 20, 26]).enumerated().map { index, pair in
-            let (identifier, day) = pair
-            return PhotoPresentation(
-                localIdentifier: identifier,
-                creationDate: calendar.date(byAdding: DateComponents(day: day - 1, hour: 12), to: lastMonth)!,
-                catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
-                isLiked: false,
-                likedAt: nil,
-                albumPostures: index == 2 ? [.sleeping] : [],
-                albumContainsPerson: false,
-                albumIsOuting: index == 4,
-                detectedCatCount: 1,
-                largestCatAreaRatio: 0.34,
-                isGrowthEligible: true,
-                hasCurrentAlbumAnalysis: true
-            )
+        let latest = Array(identifiers[18...23])
+        let datesAndPhotos = OwnerStoreCaptureFixture.isRequested && OwnerStoreCaptureFixture.screen == "album-refresh"
+            ? [(0, latest), (2, [1, 4, 5, 6, 7, 8].map { "\(identifierPrefix)\($0)" })]
+            : [(0, latest)]
+        return datesAndPhotos.flatMap { offset, photos -> [PhotoPresentation] in
+            guard let start = calendar.date(byAdding: .month, value: -offset, to: lastMonth) else { return [] }
+            return zip(photos, [2, 5, 9, 14, 20, 26]).enumerated().map { index, pair in
+                let (identifier, day) = pair
+                return PhotoPresentation(
+                    localIdentifier: identifier,
+                    creationDate: calendar.date(byAdding: DateComponents(day: day - 1, hour: 12), to: start)!,
+                    catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
+                    isLiked: false,
+                    likedAt: nil,
+                    albumPostures: index == 2 ? [.sleeping] : [],
+                    albumContainsPerson: false,
+                    albumIsOuting: index == 4,
+                    detectedCatCount: 1,
+                    largestCatAreaRatio: 0.34,
+                    isGrowthEligible: true,
+                    hasCurrentAlbumAnalysis: true
+                )
+            }
         }
     }
 

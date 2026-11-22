@@ -38,6 +38,11 @@ on:
         type: boolean
         default: false
 
+      refresh_store_screens_406:
+        description: Capture the photo grid, album shelf, and cat home on the pinned build 406 source
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   actions: read
@@ -62,13 +67,19 @@ jobs:
           OWNER_ASSET_ID: ${{ inputs.media_asset_id }}
           SYNTHETIC: ${{ inputs.synthetic }}
           WIDGET_PROBE: ${{ inputs.widget_probe }}
+          REFRESH_STORE_SCREENS_406: ${{ inputs.refresh_store_screens_406 }}
+          CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
         shell: bash
         run: |
           set -Eeuo pipefail
           umask 077
           [[ "$WIDGET_PROBE" != 'true' || "$SYNTHETIC" == 'true' ]]
           asset_id="$OWNER_ASSET_ID"
-          if [[ "$SYNTHETIC" == 'true' ]]; then asset_id=731575605; fi
+          if [[ "$REFRESH_STORE_SCREENS_406" == 'true' ]]; then
+            [[ "$WIDGET_PROBE" == 'false' && "$CAPTURE_BUILD_358" == 'false' ]]
+          elif [[ "$SYNTHETIC" == 'true' ]]; then
+            asset_id=731575605
+          fi
           [[ "$asset_id" =~ ^[0-9]+$ ]]
           mkdir -p "$RUNNER_TEMP/neko-capture-ingress"
           gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > "$RUNNER_TEMP/neko-capture-ingress/input.nekoenc"
@@ -121,6 +132,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
+          REFRESH_STORE_SCREENS_406: ${{ inputs.refresh_store_screens_406 }}
         shell: bash
         working-directory: NekoWidget
         run: |
@@ -129,7 +141,7 @@ jobs:
           printf '%s' "$udid" > "$PRIVATE_ROOT/simulator-id"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b > "$PRIVATE_ROOT/boot.log" 2>&1
-          if [[ "$CAPTURE_BUILD_358" != 'true' ]]; then
+          if [[ "$CAPTURE_BUILD_358" != 'true' && "$REFRESH_STORE_SCREENS_406" != 'true' ]]; then
             xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLanguages -array ja-JP
             xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLocale ja_JP
             xcrun simctl shutdown "$udid"
@@ -145,11 +157,24 @@ jobs:
           CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
           SYNTHETIC: ${{ inputs.synthetic }}
           WIDGET_PROBE: ${{ inputs.widget_probe }}
+          REFRESH_STORE_SCREENS_406: ${{ inputs.refresh_store_screens_406 }}
         shell: bash
         working-directory: NekoWidget
         run: |
           set -Eeuo pipefail
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          if [[ "$REFRESH_STORE_SCREENS_406" == 'true' ]]; then
+            release_sha=b85a8182b4404aed72d2a303ef78b0ecec3b9d2b
+            git fetch --no-tags origin "$release_sha" --depth=1
+            (cd "$GITHUB_WORKSPACE"; git diff --exit-code "$release_sha" "$GITHUB_SHA" -- NekoWidget \
+              ':(exclude)NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift' \
+              ':(exclude)NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift')
+            if [[ "$SYNTHETIC" == 'false' ]]; then
+              [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" --jq '
+                [.jobs[] | select(.name == "synthetic" and .conclusion == "success")] | length' | grep -Fxq 1
+            fi
+          fi
           if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
             [[ "$SYNTHETIC" == 'false' && "$WIDGET_PROBE" == 'false' && "$GITHUB_REF" == 'refs/heads/main' && "$BUILD_RUN_ID" == '42995201621' ]]
           fi
@@ -266,6 +291,7 @@ jobs:
       - name: Capture actual app views and SpringBoard
         env:
           CAPTURE_BUILD_358: ${{ inputs.capture_build_358 }}
+          REFRESH_STORE_SCREENS_406: ${{ inputs.refresh_store_screens_406 }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -274,7 +300,13 @@ jobs:
           unset NEKO_CAPTURE_KEY
           udid=$(cat "$PRIVATE_ROOT/simulator-id")
           test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
-          if [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
+          if [[ "$REFRESH_STORE_SCREENS_406" == 'true' ]]; then
+            targets=(
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreRefreshPhotoGrid
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreRefreshAlbumShelf
+              -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreRefreshCatHome
+            )
+          elif [[ "$CAPTURE_BUILD_358" == 'true' ]]; then
             targets=(
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAppScreens
               -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureOwnerStoreAlbum
