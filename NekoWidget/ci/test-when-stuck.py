@@ -105,14 +105,15 @@ class AppWordsTests(unittest.TestCase):
         self.assertNotIn("setError(NekoWidgetError.noCatPhotos)", app)
 
     def test_a4_a5_confirmations(self):
-        restore = "写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。"
+        # 11/22: the row is 「出さない写真」 (was 「外した写真」).
+        restore = "写真アプリの写真は消えません。設定の「写真の表示と整理」→「出さない写真」から戻せます。"
         for path, count in (("NekoWidget/Views/CatProfilePhotoCurationViews.swift", 2),
                             ("NekoWidget/Views/LikedPhotosView.swift", 2),
                             ("NekoWidget/Views/GrowthAlbumView.swift", 1)):
             self.assertEqual(read(path).count(restore), count, path)
         settings = read("NekoWidget/Views/SettingsView.swift")
         self.assertIn('Label("写真の表示と整理"', settings)
-        self.assertIn('"外した写真",', settings)
+        self.assertIn('"出さない写真",', settings)
         for path in ("NekoWidget/Views/PhotoMemoryNoteView.swift", "NekoWidget/Views/PhotoMemoryNoteLibraryView.swift",
                      "NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatCareView.swift", "NekoWidget/Views/PhotoDetailComponents.swift"):

@@ -123,7 +123,7 @@ struct VeterinaryVisitsView: View {
                         store: store, profiles: profiles,
                         pastVisits: Array(visits.filter { $0.id != current.id && $0.catID == current.catID }.reversed()),
                         pastClosed: { Task { await reload() } },
-                        showsCatName: fixedStripCat != nil ? true : nil,
+                        showsCatName: ToolCatNameHeader.showsName(catCount: profiles.count, menuInBar: menuInBar),
                         onDeleted: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
                             Task { await reload(); await open(cat) }
@@ -181,6 +181,13 @@ struct VeterinaryVisitsView: View {
                 Task { await open(cat) }
             }
         }
+    }
+
+    /// True when the bar shows the cat menu, which names the cat (11/22).
+    private var menuInBar: Bool {
+        guard fixedStripCat == nil else { return false }
+        let selected = current?.catID.uuidString
+        return stripCats.filter { $0.id == selected || !$0.isDeparted(farewellJSON) }.count > 1
     }
 
     private var menuName: String {
@@ -330,9 +337,9 @@ private struct VeterinaryConsultationView: View {
     /// a past memo opened from there is closed.
     var pastVisits: [VeterinaryVisit] = []
     var pastClosed: (() -> Void)? = nil
-    /// True when the bar has no cat menu because the memo was opened for one
-    /// cat; nil: named only with fewer than two cats.
-    var showsCatName: Bool? = nil
+    /// 11/22: the cat's name at the top only with two or more cats and no
+    /// cat menu in the bar (ToolCatNameHeader.showsName).
+    var showsCatName = false
     var onDeleted: (() -> Void)? = nil
     /// After 「新しい診察メモを始める」 on the tool's page: open the next memo.
     var onFinished: (() -> Void)? = nil
@@ -524,28 +531,13 @@ private struct VeterinaryConsultationView: View {
         }
     }
     @ViewBuilder private func headerSections(_ visit: VeterinaryVisit) -> some View {
-        // The cat's name, then what this page makes; its dates are in
-        // この子のこと below (11/7).
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                // With two or more cats the cat menu in the bar already names it (11/12).
-                if showsCatName ?? (profiles.count < 2) {
-                    Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
-                          systemImage: "cat").font(.headline)
-                }
-                ToolPurpose(text: "先生に見せる診察メモを作ります。")
-                if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
-                // The day the memo was started (11/8).
-                // 11/21: the stored day, so a time-zone change never moves it.
-                if let started = visit.createdDay {
-                    Text("書き始めた日 \(DayText.japanese(started))")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("vet-started-day")
-                }
-            }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
-        }
+        // 11/22: the title says what the page makes; the cat's name only
+        // where it tells cats apart, and 「診察済み」 on a finished memo.
+        ToolCatNameHeader(
+            name: showsCatName
+                ? (profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName)
+                : nil,
+            detail: visit.completedAt != nil ? "診察済み" : nil)
         // A question about where the memo stands, so it stays near the top.
         if looksFinished(visit) {
             Section {
@@ -642,8 +634,8 @@ private struct VeterinaryConsultationView: View {
         return applied ? nil : CatCareListEditor.Kind.weight.limitSentence
     }
     /// 「診察メモ」 (11/12): this cat's past memos as one row that opens them,
-    /// then starting a new memo, which files the one on the page there. The
-    /// footer says so; nothing else on the page talks about finishing.
+    /// then starting a new memo, which files the one on the page there.
+    /// 11/22: no footer; VoiceOver hears where the memo went (announceNewMemo).
     @ViewBuilder private func memoSection(_ visit: VeterinaryVisit) -> some View {
         let starts = startsNewMemo(visit)
         if starts || hasPast {
@@ -652,8 +644,6 @@ private struct VeterinaryConsultationView: View {
                 if starts { newMemoRow }
             } header: {
                 Text("診察メモ")
-            } footer: {
-                if starts { Text("始めると、いまのメモは「これまでの診察メモ」に入ります。") }
             }
         }
     }

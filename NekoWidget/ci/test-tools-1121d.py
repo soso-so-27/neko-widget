@@ -61,9 +61,9 @@ class VetMemoNeverLosesTypedTextTests(unittest.TestCase):
 
 class EvacuationDepartedCatsTests(unittest.TestCase):
     def test_no_screen_lists_every_item_or_cat(self):
-        # Checklists, いま避難する and the hub read the active items only.
+        # The checklist (11/22: one, on いま避難する) and the hub read the active items only.
         self.assertNotIn("store.plan.supplies.filter(\\.isNeeded)", EVAC_VIEW)
-        self.assertEqual(EVAC_VIEW.count("store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers())"), 2)
+        self.assertEqual(EVAC_VIEW.count("store.plan.activeSupplies(departed: CatFarewell.departedIdentifiers())"), 1)
         self.assertIn("store.plan.activeSupplies(departed: departed)", EVAC_VIEW)
         self.assertIn("store.plan.expiryState(departed: departed)", EVAC_VIEW)
         self.assertNotIn("ForEach(store.plan.cats)", EVAC_VIEW)

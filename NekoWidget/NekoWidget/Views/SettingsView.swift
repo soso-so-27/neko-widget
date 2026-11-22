@@ -666,7 +666,7 @@ struct SettingsView: View {
                     )
                     .task { await refreshPhotoSourceAlbums() }
                 } label: {
-                    LabeledContent("写真の対象", value: sourceSummary)
+                    LabeledContent("使う写真", value: sourceSummary)
                 }
                 .accessibilityIdentifier("settings-photo-source")
 
@@ -685,7 +685,7 @@ struct SettingsView: View {
                     )
                 } label: {
                     LabeledContent(
-                        "外した写真",
+                        "出さない写真",
                         value: excludedCatPhotos.isEmpty
                             ? "なし"
                             : "\(excludedCatPhotos.count.formatted())枚"

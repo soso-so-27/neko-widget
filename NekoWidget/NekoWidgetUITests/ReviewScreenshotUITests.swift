@@ -369,22 +369,22 @@ final class ReviewScreenshotUITests: XCTestCase {
             settle(1)
             return nil
         }
-        back(app)
+        // 11/22: the one checklist is on 「いま避難する」 (the 「持ち出すもの」
+        // page is gone); its lower part, with editing the list, is shot here.
         shot("20_evac_packing", app) {
-            let packing = app.buttons["evacuation-packing-open"]
-            guard reveal(packing, app) else { return "「持ち出すもの」 not hittable" }
-            packing.tap()
-            guard app.navigationBars["持ち出すもの"].waitForExistence(timeout: 10) else { return "持ち出すもの did not open" }
+            guard app.navigationBars["いま避難する"].exists else { return "いま避難する not shown" }
+            let edit = app.buttons["evacuation-supplies-edit"]
+            guard reveal(edit, app) else { return "「リストと置き場所を編集」 not hittable" }
             settle(1)
             return nil
         }
         back(app)
         shot("21_evac_memo", app) {
             let cats = app.buttons["evacuation-cats-open"]
-            guard reveal(cats, app) else { return "「猫の情報」 not hittable" }
+            guard reveal(cats, app) else { return "「この子のこと」 not hittable" }
             cats.tap()
             let open = app.buttons["evacuation-preview-open"]
-            guard open.waitForExistence(timeout: 15) else { return "猫の情報 did not open" }
+            guard open.waitForExistence(timeout: 15) else { return "この子のこと did not open" }
             guard reveal(open, app), open.isEnabled else { return "「避難メモ」 button not usable" }
             open.tap()
             let memo = app.navigationBars.matching(NSPredicate(format: "identifier CONTAINS %@ OR label CONTAINS %@",

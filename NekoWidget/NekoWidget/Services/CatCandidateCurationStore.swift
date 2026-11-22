@@ -8,9 +8,9 @@ enum CatCandidateCurationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedSchema:
-            "外した写真の一覧を読み込めません。App Storeでアプリを最新にしてください。"
+            "出さない写真の一覧を読み込めません。App Storeでアプリを最新にしてください。"
         case .selectedSourceUnavailable:
-            "選んだアルバムが見つかりません。設定で写真の対象を選び直してください。"
+            "選んだアルバムが見つかりません。設定で使う写真を選び直してください。"
         }
     }
 }

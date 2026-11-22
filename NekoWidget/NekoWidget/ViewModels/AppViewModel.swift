@@ -4543,7 +4543,7 @@ final class AppViewModel: ObservableObject {
         }
         if let value = error as? CatCandidateCurationError {
             return value.errorDescription
-                ?? "写真の対象を読み込めませんでした。設定を開き直してください。"
+                ?? "使う写真を読み込めませんでした。設定を開き直してください。"
         }
         if let value = error as? CatProfilePhotoAlbumError {
             return value.errorDescription

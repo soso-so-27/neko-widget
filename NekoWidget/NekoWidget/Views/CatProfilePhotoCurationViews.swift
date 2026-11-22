@@ -589,7 +589,7 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。")
+            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「出さない写真」から戻せます。")
         }
     }
 
@@ -760,7 +760,7 @@ struct UnassignedCatPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「外した写真」から戻せます。")
+            Text("写真アプリの写真は消えません。設定の「写真の表示と整理」→「出さない写真」から戻せます。")
         }
     }
 
