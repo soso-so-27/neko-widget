@@ -48,7 +48,7 @@
 
   <!-- App Store の画面写真 5 枚。1 枚 1 画面で見せる。 -->
   <section class="shots" aria-label="ねこのまどでできること">
-    <figure><img src="images/store/01.webp" alt="撮るだけ撮って、見返せていない。毎日ちがう1枚が、ホーム画面に。" width="900" height="1955" loading="eager"></figure>
+    <figure class="shot-1"><img src="images/store/01.webp" alt="撮るだけ撮って、見返せていない。毎日ちがう1枚が、ホーム画面に。" width="900" height="1955" loading="eager"><div class="frost" data-frost aria-hidden="true"><i class="fog"></i><svg class="paw paw-1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg><svg class="paw paw-2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg><span class="tap-tag">タップで、きょうの1枚</span></div></figure>
     <figure><img src="images/store/02.webp" alt="かわいい1枚が、トークだと流れる。家族の1枚は、ホーム画面に届く。" width="900" height="1955" loading="lazy"></figure>
     <figure><img src="images/store/03.webp" alt="ひらけば、ぜんぶ猫。スクショもレシートも、まざらない。" width="900" height="1955" loading="lazy"></figure>
     <figure><img src="images/store/04.webp" alt="この子との毎日は、あっという間。毎月1日、先月がアルバムになる。" width="900" height="1955" loading="lazy"></figure>
@@ -101,6 +101,39 @@
     </div>
   </section>
 </main>
+<script>
+/* 動き：1枚目の画面写真のウィジェットは、くもったまどで始まり、見えたら肉球の跡が付いて
+   拭いたように晴れる（押しても晴れる）。画面写真は見えたときに下からそっと上がる。
+   のわは見えたときに一度跳ねる。動きを減らす設定では何もしない。 */
+(function () {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.documentElement.classList.add('lp-still'); return;
+  }
+  document.documentElement.classList.add('lp-play');
+  var frost = document.querySelector('[data-frost]');
+  var cleared = false;
+  function clear(x, y) {
+    if (cleared || !frost) return; cleared = true;
+    if (x != null) { frost.style.setProperty('--x', x + 'px'); frost.style.setProperty('--y', y + 'px'); }
+    frost.classList.add('clear');
+  }
+  if (frost) frost.addEventListener('click', function (e) {
+    var r = frost.getBoundingClientRect(); clear(e.clientX - r.left, e.clientY - r.top);
+  });
+  if (!('IntersectionObserver' in window)) { clear(); return; }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      e.target.classList.add('seen'); io.unobserve(e.target);
+      if (e.target.classList.contains('shot-1')) {
+        e.target.classList.add('pawing');
+        setTimeout(function () { clear(); }, 2600);
+      }
+    });
+  }, { threshold: 0.45 });
+  document.querySelectorAll('.shots figure, .end .nowa').forEach(function (el) { io.observe(el); });
+})();
+</script>
 
 <footer class="foot">
   <div class="in">
