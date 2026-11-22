@@ -32,6 +32,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var verifiedWindowAt: [String: Date] = [:]
     /// 11/20: windows the last list read could not verify (left out of it).
     private var unreadableWindows = Set<String>()
+    private var unreadableReasonCodes: [String: String] = [:]
     private var closedWindows = Set<String>()
     private var managementInFlight = Set<UUID>()
     private struct VerifiedListEntry {
@@ -573,6 +574,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             let identity = try await registeredIdentity()
             var result: [GroupWindow] = []
             var unreadable = Set<String>()
+            var reasons: [String: String] = [:]
             for item in items {
                 if closedWindows.contains(item.windowID) { continue }
                 // 11/20: one window that cannot be verified (or a value only a
@@ -594,10 +596,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                     verifiedListEntries.removeValue(forKey: item.windowID)
                     // A window left on this iPhone is simply not listed again.
                     let left = (try? load(GroupLocalWindow.self, "window:" + item.windowID))?.left == true
-                    if !left { unreadable.insert(item.windowID) }
+                    if !left { unreadable.insert(item.windowID); reasons[item.windowID] = Self.reasonCode(error) }
                 }
             }
             unreadableWindows = unreadable
+            unreadableReasonCodes = reasons
             // Fetch every immutable-ID page before changing display order.
             // Arrival dates come only from photos already received on this phone.
             var received: [String: Date] = [:]
@@ -634,6 +637,14 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         }
     }
     func unreadableWindowIDs() -> Set<String> { unreadableWindows }
+    func unreadableReasons() -> [String: String] { unreadableReasonCodes }
+
+    /// 11/22: a short code for an error: its type and its case number (the
+    /// bridged NSError code), never its text or a value from the relay.
+    /// Shown only in test builds.
+    nonisolated static func reasonCode(_ error: Error) -> String {
+        "\(type(of: error))#\((error as NSError).code)"
+    }
 
     /// The relay's delivery fields, bound to the verified roster's owner.
     /// 11/20: a value only a newer relay sends is kept as `unknown` (sending
