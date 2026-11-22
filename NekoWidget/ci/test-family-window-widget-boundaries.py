@@ -8039,7 +8039,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertLess(footer.index("groupFavoriteSourceView(source)"), footer.index("quickActions(selectedPhoto)"))
         self.assertIn("source.localIdentifier == selectedPhoto.localIdentifier", footer)
         view = section(self.browser, "private func groupFavoriteSourceView(_ source: GroupFavoriteSource) -> some View {",
-                       "/// The three things people do with a photo")
+                       "/// The two things people do with a photo")
         self.assertLess(view.index("Text(source.senderLabel)"), view.index("Text(caption)"))
         self.assertIn(".foregroundStyle(.secondary)", view)
         self.assertIn('"photo-browser-group-source"', view)
