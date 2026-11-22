@@ -3,10 +3,11 @@ import {test} from 'node:test';import assert from 'node:assert/strict';import {r
 import {Miniflare,convertV4MiniflareOptions} from '../NekoWidget/SharingService/node_modules/miniflare/dist/src/index.js';
 import worker,{validate,digest,store} from './worker.mjs';
 const now=Date.now(),day=new Date(now-86400000).toISOString().slice(0,10);
-const sample=()=>({schema:1,day,batch:crypto.randomUUID(),app:'1.0 (343)',os:'18',state:{plus:true,widget:false,cats:'2',windows:'1-2',family:true,photoAccess:'limited'},counts:{mado_opened:3,'plus_offer_shown.create-family':1,'plus_purchased.settings':1,unknown_private_text:900}});
+const sample=()=>({schema:1,day,batch:crypto.randomUUID(),app:'1.0 (343)',os:'18',state:{plus:true,widget:false,cats:'2',windows:'1-2',family:true,photoAccess:'limited'},counts:{mado_opened:3,mado_cloudy_cleared:2,'plus_offer_shown.create-family':1,'plus_purchased.settings':1,unknown_private_text:900}});
 test('input bounds, daily keyed HMAC, no payload identifiers retained',async()=>{
  const r=validate(sample());assert(!('os' in r));assert(!('unknown_private_text' in r.counts));
- for(const change of [{schema:2},{day:'2026-02-30'},{batch:'device-id'},{counts:{mado_opened:-1}},{counts:{mado_opened:1.5}},{counts:{mado_opened:10001}},{app:'person@example.com'}])assert.throws(()=>validate({...sample(),...change}));
+ assert.equal(r.counts.mado_cloudy_cleared,2);
+ for(const change of [{schema:2},{day:'2026-02-30'},{batch:'device-id'},{counts:{mado_opened:-1}},{counts:{mado_opened:1.5}},{counts:{mado_opened:10001}},{counts:{mado_cloudy_cleared:'private text'}},{app:'person@example.com'}])assert.throws(()=>validate({...sample(),...change}));
  assert.notEqual(await digest('a'.repeat(43),day,r.batch),await digest('a'.repeat(43),'2020-01-01',r.batch));
  assert.notEqual(await digest('a'.repeat(43),day,r.batch),await digest('b'.repeat(43),day,r.batch));
  assert(r.expires-now<8*86400000);
@@ -19,6 +20,7 @@ test('real D1 transaction: parallel retry once, rollback, aggregation, expiry an
  assert.deepEqual(await Promise.all([store(db,r,h),store(db,r,h)]),[204,204]);
  assert.equal((await db.prepare('SELECT devices FROM usage_days').first()).devices,1);
  assert.equal((await db.prepare("SELECT total FROM usage_events WHERE name='mado_opened'").first()).total,3);
+ assert.deepEqual(await db.prepare("SELECT total, devices FROM usage_events WHERE name='mado_cloudy_cleared'").first(),{total:2,devices:1});
  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM usage_states').first()).n,6);
  assert.equal((await db.prepare('SELECT marker FROM usage_dedup').first()).marker,null);
  assert(!JSON.stringify((await db.prepare('SELECT * FROM usage_dedup').all()).results).includes(raw.batch));
