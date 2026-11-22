@@ -176,20 +176,40 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .widget { border-radius: 22px; overflow: hidden; position: relative; background: #8d7f70; box-shadow: 0 8px 18px -10px rgba(0,0,0,0.4); }
 .widget img { width: 100%; height: 100%; object-fit: cover; }
 .widget-big { aspect-ratio: 1; flex: none; }
-/* 11/22: the hero widget starts as the app's くもりのまど and clears once,
-   with the app's timing (blur 1.9 s, fog 1.7 s). Reduced motion: clear. */
-.cloudy img { animation: lp-clear-photo 1.9s ease-in-out 1.4s both; }
-.cloudy .fog { position: absolute; inset: 0; background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.75), rgba(255,255,255,.45) 60%, rgba(255,255,255,.55)); animation: lp-clear-fog 1.7s ease-in-out 1.4s both; }
-.cloudy .tap-tag { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 700; color: #fff; background: rgba(60,60,67,.55); border-radius: 999px; padding: 5px 11px; animation: lp-clear-tag .25s ease-in 1.2s both; }
-.bubble-hero { animation: lp-after-clear .5s ease-out 3.3s both; }
-@keyframes lp-clear-photo { from { filter: blur(9px); transform: scale(1.06); } to { filter: blur(0); transform: scale(1); } }
-@keyframes lp-clear-fog { from { opacity: 1; } to { opacity: 0; } }
-@keyframes lp-clear-tag { from { opacity: 1; transform: translateX(-50%) scale(1); } to { opacity: 0; transform: translateX(-50%) scale(.82); } }
-@keyframes lp-after-clear { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .cloudy img, .bubble-hero { animation: none; }
-  .cloudy .fog, .cloudy .tap-tag { display: none; }
-}
+/* 11/22: くもりのまど on the LP (see the script at the end of index.html).
+   Values follow the app: blur ~9px, five-puff white fog, clear in ~1.8 s. */
+@property --r { syntax: '<length>'; inherits: false; initial-value: 0px; }
+.cloudy .frost { position: absolute; inset: 0; --x: 50%; --y: 88%;
+  -webkit-mask-image: radial-gradient(circle at var(--x) var(--y), transparent var(--r), #000 calc(var(--r) + 46px));
+  mask-image: radial-gradient(circle at var(--x) var(--y), transparent var(--r), #000 calc(var(--r) + 46px));
+  transition: --r 1.8s cubic-bezier(.45,.05,.35,1), opacity .5s ease 1.5s; }
+.cloudy .frost .blur { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(9px) saturate(.9); transform: scale(1.08); }
+.cloudy .fog { position: absolute; inset: 0; background:
+  radial-gradient(42% 36% at 28% 26%, rgba(255,255,255,.62), transparent 70%),
+  radial-gradient(40% 34% at 74% 30%, rgba(255,255,255,.55), transparent 70%),
+  radial-gradient(46% 40% at 50% 60%, rgba(255,255,255,.5), transparent 72%),
+  radial-gradient(36% 30% at 20% 78%, rgba(255,255,255,.5), transparent 70%),
+  radial-gradient(38% 32% at 80% 80%, rgba(255,255,255,.5), transparent 70%),
+  rgba(255,255,255,.22); }
+.cloudy .paw { position: absolute; width: 30px; height: 30px; fill: rgba(255,255,255,.85); opacity: 0; filter: drop-shadow(0 0 1px rgba(0,0,0,.08)); }
+.cloudy .paw-1 { left: 26%; top: 30%; transform: rotate(-18deg); }
+.cloudy .paw-2 { left: 44%; top: 18%; transform: rotate(-8deg); }
+.cloudy .tap-tag { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); white-space: nowrap; font: 700 11px/1 var(--font-body); color: #fff; background: rgba(60,60,67,.55); border: 0; border-radius: 999px; padding: 7px 12px; cursor: pointer; transition: opacity .25s ease, transform .25s ease; }
+.cloudy .tap-tag:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.cloudy.clear .frost { --r: 520px; opacity: 0; }
+.cloudy.clear .tap-tag { opacity: 0; transform: translateX(-50%) scale(.82); pointer-events: none; }
+.lp-play .cloudy .paw-1 { animation: lp-paw .35s ease-out .9s both; }
+.lp-play .cloudy .paw-2 { animation: lp-paw .35s ease-out 1.3s both; }
+@keyframes lp-paw { from { opacity: 0; scale: .6; } to { opacity: .9; scale: 1; } }
+.lp-play .bubble-hero { opacity: 0; transition: opacity .5s ease .2s; }
+.lp-play .hero-cleared .bubble-hero { opacity: 1; transition-delay: 1.6s; }
+.lp-play .hero-cleared .nowa-peek { animation: lp-hop .7s ease-out 1.5s; }
+/* Sections: each phone clears once as it scrolls in; its のわ hops. */
+.lp-play .feature .shot.watch:not(.seen) .phone img { filter: blur(7px) saturate(.9); }
+.lp-play .feature .shot.watch .phone img { transition: filter 1.4s ease-in-out; }
+.lp-play .feature .shot.watch.seen .nowa { animation: lp-hop .7s ease-out .9s; }
+@keyframes lp-hop { 0%,100% { translate: 0 0; } 40% { translate: 0 -10px; } 70% { translate: 0 2px; } }
+.lp-still .cloudy .frost, .lp-still .cloudy .tap-tag { display: none; }
 .widget-label { display: block; margin-top: 5px; font-size: 9.5px; color: #6b5f52; line-height: 1.2; text-align: center; letter-spacing: 0; }
 .icons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px 14px; margin-top: 14px; }
 .icons i { display: block; aspect-ratio: 1; border-radius: 24%; }
