@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata} from './asc-metadata-apply.mjs';
 
 test('1111d permits only the daily-photo copy changes in the Japanese descriptions',()=>{
   const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description;
@@ -16,6 +16,29 @@ test('1111d permits only the daily-photo copy changes in the Japanese descriptio
   assert.throws(()=>dailyPlusDescriptionChange('別の説明'),/STOP_SCOPE/u);
 });
 import {readFileSync} from 'node:fs';
+test('1121f removes exactly two movie mentions and the movie keyword',()=>{
+  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
+  const before=desired.description
+    .replace('12 月には 1 年の作品も届きます。','12 月には 1 年の作品も届きます。季節のムービーもあります。')
+    .replace('・月の作品、1年の作品','・月の作品、季節のムービー');
+  assert.notEqual(before,desired.description);
+  assert.ok(desired.keywords.split(',').includes('迷子'));
+  assert.doesNotMatch(desired.keywords,/ムービー/u);
+  assert.match(desired.description,/病院で見せる：気付いたことと写真・動画・体重/u);
+
+  const current={description:before,keywords:'ねこ, ウィジェット,ムービー,家族,共有'};
+  const approved={description:desired.description,keywords:'ねこ, ウィジェット,迷子,家族,共有'};
+  assert.deepEqual(seasonalMovieAppMetadata(current,desired),approved);
+  assert.deepEqual(seasonalMovieAppMetadata(approved,desired),approved);
+  assert.deepEqual(seasonalMovieAppMetadata({...current,keywords:'ねこ,迷子,ウィジェット,ムービー,家族'},desired),
+    {description:desired.description,keywords:'ねこ,迷子,ウィジェット,家族'});
+  for(const unexpected of [
+    {...current,description:before.replace('980 円','990 円')},
+    {...current,description:before.replace('季節のムービーもあります。','')},
+    {...current,keywords:'ねこ,ウィジェット,家族'},
+    {...current,keywords:'猫,ムービー,ムービー'},
+  ])assert.throws(()=>seasonalMovieAppMetadata(unexpected,desired),/STOP_SCOPE/u);
+});
 test('1113d removes only the paid photo-memo bullet',()=>{
   const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description;
   const before=desired.replace('■ ねこのまど Plus\n','■ ねこのまど Plus\n・写真に新しいメモを書く\n');

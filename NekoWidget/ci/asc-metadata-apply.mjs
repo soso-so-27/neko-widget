@@ -10,11 +10,32 @@ import {safeText,validationSummary} from './asc-readonly.mjs';
 
 const root=resolve('NekoWidget/ci/asc-metadata-1109d');
 const scopes={localizations:['app-info/ja.json','version/1.0/ja.json'],categories:['categories.json'],'age-rating':['age-rating.json'],'review-information':['review-information.json']};
-function expected(files,fields){
-  return files.flatMap(file=>Object.entries(JSON.parse(readFileSync(join(root,file),'utf8'))).filter(([field])=>!fields||fields.includes(field)).map(([field,value])=>({
+function expected(files,fields,directory){
+  return files.flatMap(file=>Object.entries(JSON.parse(readFileSync(join(directory,file),'utf8'))).filter(([field])=>!fields||fields.includes(field)).map(([field,value])=>({
     scope:file.startsWith('app-info/')?'app-info':file.startsWith('version/')?'version':file.replace('.json',''),
     locale:file.includes('/')?'ja':'',field,value:String(value),version:file.startsWith('version/')?'1.0':undefined,
   })));
+}
+export function seasonalMovieAppMetadata(current,desired){
+  if(typeof current?.description!=='string'||typeof current.keywords!=='string')throw Error('STOP_SCOPE');
+  const movieSentence='季節のムービーもあります。';
+  const movieBenefit='・月の作品、季節のムービー';
+  let description=current.description;
+  if(description!==desired.description){
+    if(description.split(movieSentence).length!==2||description.split(movieBenefit).length!==2)throw Error('STOP_SCOPE');
+    description=description.replace(movieSentence,'').replace(movieBenefit,'・月の作品、1年の作品');
+    if(description!==desired.description)throw Error('STOP_SCOPE');
+  }
+  if(description.includes('ムービー'))throw Error('STOP_SCOPE');
+
+  const tokens=current.keywords.split(',');
+  const movieCount=tokens.filter(token=>token.trim()==='ムービー').length;
+  const missingCatCount=tokens.filter(token=>token.trim()==='迷子').length;
+  if(movieCount>1||missingCatCount>1||(!movieCount&&!missingCatCount))throw Error('STOP_SCOPE');
+  const keywords=missingCatCount
+    ? tokens.filter(token=>token.trim()!=='ムービー').join(',')
+    : tokens.map(token=>token.trim()==='ムービー'?token.replace('ムービー','迷子'):token).join(',');
+  return {description,keywords};
 }
 export function approvedDescriptionUpdate(current,desired){
   if(typeof current!=='string'||typeof desired!=='string')return false;
@@ -103,7 +124,7 @@ export function permissionFailure(text){
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const selection=process.env.ASC_METADATA_SCOPE||'approved-groups';
-  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description'].includes(selection))throw Error('STOP_SCOPE');
+  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata'].includes(selection))throw Error('STOP_SCOPE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
   const sensitive=[env.APP_STORE_CONNECT_KEY_ID,env.APP_STORE_CONNECT_ISSUER_ID,env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64];
   function call(args,allowFindings=false){
@@ -149,14 +170,15 @@ function main(){
     }
     walk(dir);return values;
   }
-  function runScope(scope,files,probe=false,fields,checkBefore){
+  function runScope(scope,files,probe=false,fields,checkBefore,approvedOverrides={}){
     const dir=mkdtempSync(join(tmpdir(),'asc-approved-'));
     for(const file of files){const dest=join(dir,file);mkdirSync(resolve(dest,'..'),{recursive:true});
-      const value=JSON.parse(readFileSync(join(root,file),'utf8'));
+      const value={...JSON.parse(readFileSync(join(root,file),'utf8')),...approvedOverrides[file]};
       writeFileSync(dest,JSON.stringify(Object.fromEntries(Object.entries(value).filter(([field])=>!fields||fields.includes(field)))),{mode:0o600});}
     const args=['metadata','apply','--app',app,'--version','1.0','--platform','IOS','--dir',dir,'--include',scope,'--output','json'];
     const plan=call([...args,'--dry-run']);
-    const changes=checkPlan(plan,expected(files,fields));
+    const allowed=expected(files,fields,dir);
+    const changes=checkPlan(plan,allowed);
     console.log(JSON.stringify({dryRun:true,scope,probe,changes}));
     if(mode==='--apply'&&changes.length){
       const before=snapshot(scope);
@@ -171,13 +193,21 @@ function main(){
         for(const field of new Set([...Object.keys(before[file]??{}),...Object.keys(after[file]??{})])){
           if(!writable.includes(field)&&!isDeepStrictEqual(before[file]?.[field]??'',after[file]?.[field]??''))throw Error('STOP_SCOPE');
           if(writable.includes(field)&&!isDeepStrictEqual(before[file]?.[field],after[file]?.[field])
-             &&!isDeepStrictEqual(after[file]?.[field],JSON.parse(readFileSync(join(root,file),'utf8'))[field]))throw Error('STOP_SCOPE');
+               &&!isDeepStrictEqual(after[file]?.[field],JSON.parse(readFileSync(join(dir,file),'utf8'))[field]))throw Error('STOP_SCOPE');
         }
       }
       if(writeError)throw writeError;
-      if(checkPlan(call([...args,'--dry-run']),expected(files,fields)).length)throw Error('STOP_READBACK');
+      if(checkPlan(call([...args,'--dry-run']),allowed).length)throw Error('STOP_READBACK');
       console.log(JSON.stringify({applied:true,scope,probe,readbackMatches:true}));
     }
+  }
+  if(selection==='seasonal-movie-app-metadata'){
+    const file='version/1.0/ja.json';
+    const desired=JSON.parse(readFileSync(join(root,file),'utf8'));
+    const approved=seasonalMovieAppMetadata(snapshot('localizations')[file],desired);
+    runScope('localizations',[file],false,['description','keywords'],
+      before=>isDeepStrictEqual(seasonalMovieAppMetadata(before[file],desired),approved),{[file]:approved});
+    return;
   }
   if(selection==='version-description'||selection==='daily-photo-app-description'){
     const file='version/1.0/ja.json';
