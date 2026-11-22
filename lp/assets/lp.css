@@ -229,7 +229,10 @@ body.is-night::before { background: #0c1131; }
 .dots li { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background .3s ease, transform .3s ease; }
 .dots li.on { background: var(--blue); transform: scale(1.35); }
 .steps { pointer-events: none; }
-.step { height: 78svh; }
+.step { height: 78svh; scroll-snap-align: end; scroll-snap-stop: always; }
+/* One flick, one chapter: each step's end is where its chapter has played
+   (p ≈ .9). Proximity, so the rest of the page scrolls freely. */
+html { scroll-snap-type: y proximity; }
 
 @media (min-width: 900px) {
   .stage { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; max-width: 1120px; margin: 0 auto; }
