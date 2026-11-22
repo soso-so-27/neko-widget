@@ -65,18 +65,6 @@
     </div>
   </section>
 
-  <!-- 2. 毎日ちがう -->
-  <section class="block days">
-    <div class="in">
-      <h2>くもったまどで届いて、<br>晴らすと、きょうの1枚。</h2>
-      <ol class="day-row" aria-label="3日分のウィジェット">
-        <li><div class="tile"><img src="images/photo-lap.webp" alt="ひざの上の猫"></div><span>おととい</span></li>
-        <li><div class="tile"><img src="images/photo-grey-ball.webp" alt="ボールで遊ぶ灰色の猫" style="object-position: 50% 40%"></div><span>きのう</span></li>
-        <li class="today"><button type="button" class="tile cloudy-sm" data-today aria-label="きょうの1枚を晴らす"><img src="images/photo-stretch.webp" alt="のびをする猫"><b>タップ</b></button><span>きょう</span></li>
-      </ol>
-      <p class="small">誕生日やうちに来た日には、その子の1枚。</p>
-    </div>
-  </section>
 
   <!-- 3. 見つける -->
   <section class="block find">
@@ -238,9 +226,7 @@
   });
   setTimeout(function () { clear(); }, 4200);
 })();
-document.querySelectorAll('[data-today]').forEach(function (t) {
-  t.addEventListener('click', function () { t.classList.add('clear'); });
-});
+
 </script>
 </body>
 </html>
