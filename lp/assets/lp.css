@@ -91,3 +91,37 @@ details p { padding: 0 0 16px; font-size: 14px; color: var(--ink-2); }
 .foot { padding-block: 28px 40px; font-size: 12px; color: var(--ink-3); border-top: 1px solid var(--line); }
 .foot nav { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 10px; }
 .foot nav a { color: var(--ink-2); }
+
+/* ---- motion (11/22) ---- */
+.shots figure { position: relative; }
+/* the widget photo inside screenshot 1 (measured on the 1320x2868 image) */
+.shot-1 .frost { position: absolute; left: 18.8%; top: 35.6%; width: 63%; height: 29%; border-radius: 6% / 6%; overflow: hidden; cursor: pointer;
+  -webkit-backdrop-filter: blur(14px) saturate(.9); backdrop-filter: blur(14px) saturate(.9);
+  --x: 50%; --y: 86%; --r: 0px;
+  -webkit-mask-image: radial-gradient(circle at var(--x) var(--y), transparent var(--r), #000 calc(var(--r) + 50px));
+  mask-image: radial-gradient(circle at var(--x) var(--y), transparent var(--r), #000 calc(var(--r) + 50px));
+  transition: --r 1.9s cubic-bezier(.45,.05,.35,1), opacity .5s ease 1.6s;
+  /* leave the 「こんな時もあったな」 bubble (top-left) unfrosted */
+  clip-path: polygon(40% 0, 100% 0, 100% 100%, 0 100%, 0 19%, 40% 19%); }
+@property --r { syntax: '<length>'; inherits: false; initial-value: 0px; }
+.shot-1 .fog { position: absolute; inset: 0; background:
+  radial-gradient(42% 36% at 28% 26%, rgba(255,255,255,.6), transparent 70%),
+  radial-gradient(40% 34% at 74% 30%, rgba(255,255,255,.52), transparent 70%),
+  radial-gradient(46% 40% at 50% 60%, rgba(255,255,255,.48), transparent 72%),
+  rgba(255,255,255,.22); }
+.shot-1 .paw { position: absolute; width: 12%; aspect-ratio: 1; fill: rgba(255,255,255,.9); opacity: 0; }
+.shot-1 .paw-1 { left: 26%; top: 36%; rotate: -18deg; }
+.shot-1 .paw-2 { left: 46%; top: 20%; rotate: -6deg; }
+.shot-1.pawing .paw-1 { animation: lp-paw .35s ease-out .5s both; }
+.shot-1.pawing .paw-2 { animation: lp-paw .35s ease-out .95s both; }
+@keyframes lp-paw { from { opacity: 0; scale: .6; } to { opacity: .9; scale: 1; } }
+.shot-1 .tap-tag { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); white-space: nowrap; font: 700 clamp(10px, 3vw, 13px)/1 var(--font-body); color: #fff; background: rgba(60,60,67,.55); border-radius: 999px; padding: .6em 1em; transition: opacity .25s ease; }
+.shot-1 .frost.clear { --r: 600px; opacity: 0; pointer-events: none; }
+.shot-1 .frost.clear .tap-tag { opacity: 0; }
+/* screenshots rise a little as they arrive (they are never hidden) */
+.lp-play .shots figure:not(.shot-1) { transition: transform .8s cubic-bezier(.2,.7,.2,1); transform: translateY(28px) scale(.97); }
+.lp-play .shots figure.seen { transform: none; }
+/* のわ at the end hops once */
+.lp-play .end .nowa.seen { animation: lp-hop .7s ease-out .2s; }
+@keyframes lp-hop { 0%, 100% { translate: 0 0; } 40% { translate: 0 -12px; } 70% { translate: 0 2px; } }
+.lp-still .shot-1 .frost { display: none; }
