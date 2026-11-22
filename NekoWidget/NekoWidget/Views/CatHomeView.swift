@@ -51,6 +51,8 @@ final class CatHomePageActions {
     var choosePhoto: (String) -> Void = { _ in }
     /// VoiceOver's 「次の子」「前の子」: from a page (its index) by -1 or 1.
     var turn: (_ from: Int, _ by: Int) -> Void = { _, _ in }
+    /// 11/22: a tapped page dot: that page (the cats' count is the add page).
+    var go: (_ page: Int) -> Void = { _ in }
     var saveLifeDates: (String, CatProfileLifeDatesPresentation) async -> Bool = { _, _ in false }
 }
 
@@ -454,6 +456,7 @@ struct CatHomeView: View {
             if let cat = familyNotebook.unlinkedFamilyCats.first(where: { $0.toolID.uuidString == id }) { choosePhoto(for: cat) }
         }
         pageActions.turn = { index, by in turn(from: index, by: by) }
+        pageActions.go = { page in go(to: page) }
     }
 
     // MARK: Cats
@@ -631,6 +634,7 @@ struct CatHomeView: View {
                            linksHere: hasLinkCandidates(toolID: cat.id),
                            inFamilyNotebook: isFamilyCat(record),
                            familyPhoto: familyPhoto(for: cat),
+                           pageNames: cats.map(\.name),
                            actions: pageActions)
     }
 
@@ -769,6 +773,18 @@ struct CatHomeView: View {
             withAnimation(reduceMotion ? nil : .snappy) { pageID = Self.addPageID }
         } else {
             show(cats[target].id)
+        }
+    }
+
+    /// 11/22: a tapped page dot, with the same page move; the 「＋」 is the
+    /// add page (never kept as the remembered page).
+    private func go(to page: Int) {
+        let cats = self.cats
+        guard page >= 0, page <= cats.count else { return }
+        if page == cats.count {
+            withAnimation(reduceMotion ? nil : .snappy) { pageID = Self.addPageID }
+        } else {
+            show(cats[page].id)
         }
     }
 }
@@ -959,6 +975,8 @@ private struct CatHomePage: View {
     var inFamilyNotebook = false
     /// 11/17: the photo the family delivered, shown in place of のわ.
     var familyPhoto: FamilyRepresentativePhotos.Shown?
+    /// 11/22: every cat's name, in page order, for the tappable page dots.
+    var pageNames: [String] = []
     /// 設定, 写真を見せる, the cat menu and the birthday editor's save.
     let actions: CatHomePageActions
 
@@ -967,7 +985,8 @@ private struct CatHomePage: View {
             VStack(spacing: 0) {
                 CatHomeHero(cat: cat, facts: facts, metrics: metrics, pageIndex: pageIndex, pageCount: pageCount,
                             menuCats: menuCats, choose: { actions.choose($0) },
-                            turn: { [pageIndex] by in actions.turn(pageIndex, by) }, familyPhoto: familyPhoto)
+                            turn: { [pageIndex] by in actions.turn(pageIndex, by) }, familyPhoto: familyPhoto,
+                            pageNames: pageNames, go: { actions.go($0) })
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
                     if choosesPhoto {
@@ -1019,7 +1038,7 @@ extension CatHomePage: Equatable {
             && lhs.care == rhs.care && lhs.careLinks.catID == rhs.careLinks.catID
             && lhs.menuCats == rhs.menuCats && lhs.choosesPhoto == rhs.choosesPhoto && lhs.linksHere == rhs.linksHere
             && lhs.inFamilyNotebook == rhs.inFamilyNotebook && lhs.familyPhoto == rhs.familyPhoto
-            && lhs.actions === rhs.actions
+            && lhs.pageNames == rhs.pageNames && lhs.actions === rhs.actions
     }
 }
 
@@ -1042,6 +1061,9 @@ private struct CatHomeHero: View {
     let turn: (Int) -> Void
     /// 11/17: a family cat with no cat of this iPhone: the family's photo.
     var familyPhoto: FamilyRepresentativePhotos.Shown? = nil
+    /// 11/22: the cats' names for the page dots, and a dot's tap (its page).
+    var pageNames: [String] = []
+    var go: (Int) -> Void = { _ in }
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.colorScheme) private var colorScheme
@@ -1162,9 +1184,9 @@ private struct CatHomeHero: View {
                 .accessibilityHidden(true)
             }
             if pageCount > 1 {
-                CatHomePageDots(count: pageCount, current: pageIndex)
+                // 11/22: each dot is a button (that cat, or 「＋」 the add page).
+                CatHomePageDots(count: pageCount, current: pageIndex, names: pageNames, go: go)
                     .padding(.top, 4)
-                    .accessibilityHidden(true)
             }
         }
         .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
@@ -1341,28 +1363,63 @@ private struct CatHomeHero: View {
 /// more cats the seven around this page show and the ends shrink, as the
 /// system page control does (CatHomeHeroLayout.dots). The last page adds a
 /// cat: its dot is a small 「＋」 with the same size and opacity rules.
+///
+/// 11/22: each dot is a button to its page (the 「＋」 to the add page), so
+/// with fewer than five cats a cat is chosen without swiping. The dots stay
+/// small; each one is pressed in a `hitWidth` × 44 area that reaches past
+/// the 6pt row (the row keeps its height, so the name does not move).
 private struct CatHomePageDots: View {
     let count: Int
     let current: Int
+    /// The cats' names in page order (the add page has none).
+    var names: [String] = []
+    var go: (Int) -> Void = { _ in }
+
+    static let hitWidth: CGFloat = 22
+    static let hitHeight: CGFloat = 44
 
     var body: some View {
-        HStack(spacing: 6) {
+        let firstSide = 6 * CGFloat(CatHomeHeroLayout.dots(count: count, current: current).first?.scale ?? 1)
+        HStack(spacing: 0) {
             ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \.index) { dot in
-                let side = 6 * CGFloat(dot.scale)
-                let tone = Color.white.opacity(dot.index == current ? 1 : 0.45)
-                if dot.index == count - 1 {
-                    Image(systemName: "plus")
-                        .font(.system(size: (side * 1.4).rounded(), weight: .heavy))
-                        .foregroundStyle(tone)
-                        .frame(width: side, height: side)
-                } else {
-                    Circle()
-                        .fill(tone)
-                        .frame(width: side, height: side)
+                Button { go(dot.index) } label: {
+                    mark(dot)
+                        .frame(width: Self.hitWidth, height: Self.hitHeight)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(label(dot.index))
+                .accessibilityAddTraits(dot.index == current ? .isSelected : [])
+                .accessibilityIdentifier(dot.index == count - 1 ? "cat-home-dot-add" : "cat-home-dot-\(dot.index)")
             }
         }
+        // The first dot stays at the name's leading edge, and the row keeps
+        // its 6pt height in the layout.
+        .padding(.leading, -(Self.hitWidth - firstSide) / 2)
+        .padding(.vertical, -(Self.hitHeight - 6) / 2)
         .frame(height: 6)
+    }
+
+    @ViewBuilder
+    private func mark(_ dot: CatHomeHeroLayout.Dot) -> some View {
+        let side = 6 * CGFloat(dot.scale)
+        let tone = Color.white.opacity(dot.index == current ? 1 : 0.45)
+        if dot.index == count - 1 {
+            Image(systemName: "plus")
+                .font(.system(size: (side * 1.4).rounded(), weight: .heavy))
+                .foregroundStyle(tone)
+                .frame(width: side, height: side)
+        } else {
+            Circle()
+                .fill(tone)
+                .frame(width: side, height: side)
+        }
+    }
+
+    private func label(_ index: Int) -> String {
+        if index == count - 1 { return "この子を追加" }
+        guard names.indices.contains(index), !names[index].isEmpty else { return "この子" }
+        return names[index]
     }
 }
 
