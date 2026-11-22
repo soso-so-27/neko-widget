@@ -330,6 +330,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       REVIEW_SET: light
       TEST_RUNNER_REVIEW_SET: light
+      LP_CAPTURE_TEST: ${{ inputs.only || 'testLPCaptureAssets' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -389,17 +390,18 @@ jobs:
           print('Bundled only LP stock photos; no owner media or configured service endpoints')
           PY
           codesign --force --sign - "$app"
-      - name: Capture the eight requested assets once
+      - name: Capture the selected native views
         working-directory: NekoWidget
         timeout-minutes: 10
         run: |
           set -euo pipefail
           WORK="$RUNNER_TEMP/lp-capture"
+          [[ "$LP_CAPTURE_TEST" == testLPCaptureAssets || "$LP_CAPTURE_TEST" == testLPCaptureKonokoOnly ]]
           xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$LP_DEVICE" \
             -derivedDataPath "$WORK/DerivedData" -resultBundlePath "$WORK/LP.xcresult" \
             -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
-            -only-testing:NekoWidgetUITests/ReviewScreenshotUITests/testLPCaptureAssets \
+            "-only-testing:NekoWidgetUITests/ReviewScreenshotUITests/$LP_CAPTURE_TEST" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
             test-without-building > "$WORK/test.log" 2>&1 || { tail -n 100 "$WORK/test.log"; exit 1; }
           tail -n 15 "$WORK/test.log"
@@ -410,7 +412,7 @@ jobs:
           set -euo pipefail
           WORK="$RUNNER_TEMP/lp-capture"
           [[ -d "$WORK/LP.xcresult" ]] || exit 0
-          python3 ci/collect-review-screenshots.py collect --set light --only testLPCaptureAssets --output "$WORK/export" "$WORK/LP.xcresult"
+          python3 ci/collect-review-screenshots.py collect --set light --only "$LP_CAPTURE_TEST" --output "$WORK/export" "$WORK/LP.xcresult"
           mkdir -p ../lp/images/screens
           for source in "$WORK/export/light/"lp_screen_*.png; do
             [[ -f "$source" ]] || continue

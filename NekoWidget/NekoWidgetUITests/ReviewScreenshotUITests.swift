@@ -38,6 +38,19 @@ final class ReviewScreenshotUITests: XCTestCase {
 
 
     @MainActor
+    func testLPCaptureKonokoOnly() {
+        continueAfterFailure = false
+        let sample = fixture + ["--owner-store-capture", "--app-store-screenshot-cat-care", "--cat-home-care-fixture"]
+        let home = launch(sample, tools: true)
+        XCTAssertTrue(tapTab(home, "main-tab-tools", "この子"))
+        XCTAssertTrue(chooseHomeCat(home, Self.mike))
+        XCTAssertTrue(home.buttons["tools-care-open"].waitForExistence(timeout: 20))
+        settle(3)
+        shot("lp_screen_konoko", home) { nil }
+        home.terminate()
+    }
+
+    @MainActor
     func testLPCaptureAssets() {
         continueAfterFailure = false
         executionTimeAllowance = 420

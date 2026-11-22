@@ -289,7 +289,7 @@ enum AppStoreScreenshotFixture {
                 CatCareMeal(time: "19:00", food: "ウェットフード", amount: "1袋", order: 1, editedAt: now, editedBy: by),
             ]
             if let day = CatCareDay(year: 2026, month: 10, day: 12) {
-                state.cats[index].weights = [CatCareWeight(measuredOn: day, grams: 4_200, editedAt: now, editedBy: by)]
+                state.cats[index].weights = [CatCareWeight(measuredOn: day, grams: 5_560, editedAt: now, editedBy: by)]
             }
             state.household.vet = stamp(CatCareVet(name: "みどり動物病院"))
         }
@@ -316,10 +316,9 @@ enum AppStoreScreenshotFixture {
         CatCareStore.shared.update { state in
             guard let index = state.cats.firstIndex(where: { $0.profileID == catID && $0.deletedAt == nil }),
                   state.cats[index].vaccinations.isEmpty,
-                  let given = calendar.date(byAdding: .month, value: -11, to: now).flatMap({ CatCareDay(date: $0) }),
-                  let due = calendar.date(byAdding: .day, value: 21, to: now).flatMap({ CatCareDay(date: $0) })
+                  let given = CatCareDay(year: 2026, month: 11, day: 8)
             else { return }
-            state.cats[index].vaccinations = [CatCareVaccination(kind: "3種混合", givenOn: given, nextDueOn: due,
+            state.cats[index].vaccinations = [CatCareVaccination(kind: "3種混合", givenOn: given, nextDueOn: nil,
                                                                  editedAt: now, editedBy: state.deviceID)]
         }
         let store = VeterinaryVisitStore.shared
@@ -328,8 +327,8 @@ enum AppStoreScreenshotFixture {
         else { return }
         var finished = open
         finished.doctorNote = "体重は順調です。歯石が少しあるので様子を見ます。"
-        finished.nextVisitOn = VeterinaryVisit.day(calendar.date(byAdding: .day, value: 26, to: now) ?? now)
-        finished.completedAt = calendar.date(byAdding: .day, value: -60, to: now)
+        finished.nextVisitOn = nil
+        finished.completedAt = calendar.date(from: DateComponents(year: 2026, month: 11, day: 11))
         _ = try? await store.save(finished, expectedRevision: open.revision)
     }
 
@@ -515,7 +514,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                                         creationDate: $0.creationDate)
         }
-        let values: [CatProfilePresentation] = (0..<2).map { index in
+        let values: [CatProfilePresentation] = (0..<(OwnerStoreCaptureFixture.isRequested ? 1 : 2)).map { index in
             let identifier = widgetRecoveryCase == "tool-profiles" ? (index == 0 ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222") : "fixture-cat-\(index)"
             let selected = widgetRecoveryCase == "rediscovery"
                 ? Array(all[(index * 2)..<(index * 2 + 2)]) : [all[index]]
