@@ -1176,6 +1176,11 @@ struct FamilyNotebookView: View {
     /// 11/20: this open already asked for replies after 機種変更.
     @State private var askedReportReplies = false
     @State private var showsCats = false
+    /// 11/22: the cat whose page on この子 opened the notebook. A notebook made
+    /// here starts with it, as 「手帳に入れる猫を選ぶ」→「決める」 would put it in.
+    var startingCat: CatCareSubject? = nil
+    /// The notebook was made here; the cat goes in once it is open.
+    @State private var putsInStartingCat = false
     /// The server's answer, or before it comes, the family as last shown here.
     private var shownMembership: FamilyMembership? {
         sharing.state.membership ?? (sharing.state == .checking ? model.lastShownMembership : nil)
@@ -1287,7 +1292,12 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsName) {
                 FamilyNotebookNameView {
                     showsName = false
-                    Task { if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) { UsageCounter.shared.count(.familyCreated) } }  // Usage (11/7)
+                    Task {
+                        if await sharing.perform({ try await sharing.service.createFamily(operationID: $0) }) {
+                            UsageCounter.shared.count(.familyCreated)  // Usage (11/7)
+                            putsInStartingCat = startingCat != nil
+                        }
+                    }
                 }
             }
             .sheet(isPresented: $showsCats) { FamilyNotebookCatSelectionView() }
@@ -1348,6 +1358,15 @@ struct FamilyNotebookView: View {
             askedReportReplies = true
             await FamilyReportReplies.discoverReplies(notebookLoaded: model.hasFamily)
         }
+        // 11/22: a notebook made from a cat's page starts with that cat
+        // (right after creating, the 猫 section was empty). The same path as
+        // the chooser's 「決める」; if it does not go through, the notebook
+        // stays as made and the chooser is there as before.
+        .task(id: putsInStartingCat && model.hasFamily) {
+            guard putsInStartingCat, model.hasFamily, let startingCat else { return }
+            putsInStartingCat = false
+            await putIn(startingCat)
+        }
         .onChange(of: presentsSheet, initial: true) { _, open in FamilyNotebookAutoCheck.shared.holdsRedraw = open }
         // 11/16: the notebook gone, nothing on screen waits for a sheet; a
         // hold left on would stop every automatic read until it opens again.
@@ -1356,6 +1375,21 @@ struct FamilyNotebookView: View {
         .onDisappear { model.markSeen() }
         // 11/19 (UI/UX 整理): 「同じ子ですか」 is asked by the この子 tab only,
         // not again when the notebook opens.
+    }
+
+    /// 11/22: the cat of the page the notebook was made from, put in with
+    /// `sharePersonalCats`, as the chooser does. A cat already in it, or one
+    /// whose record cannot be read, is left to the chooser.
+    private func putIn(_ subject: CatCareSubject) async {
+        guard model.isReal, CatCareStore.shared.canSave,
+              let record = CatCareStore.shared.ensureRecord(for: subject),
+              !model.familyCats.contains(where: { $0.toolID == record.catID }) else { return }
+        do {
+            try await model.sharePersonalCats([record.catID])
+            await sharing.refresh()
+        } catch {
+            // Nothing said: the notebook is made, and 「手帳に入れる猫を選ぶ」 still puts it in.
+        }
     }
 
     /// Who is in the family, and what they wrote lately (like the activity of
@@ -2706,51 +2740,6 @@ struct FamilyNotebookLinkQuestionView: View {
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("family-link-question")
-    }
-}
-
-/// The toolbar button on 「この子のこと」: the way into the family notebook,
-/// out of the way for anyone who keeps it to themselves (test builds only).
-struct FamilyNotebookButton: View {
-    var accessibilityIdentifier = "cat-care-family-notebook"
-    /// On a cat that is in the notebook. 11/20: the same icon and words as
-    /// any family member's button (the overlapped initials were hard to read).
-    var shared = false
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
-    /// Read only: the pause this session already knows, no request of its own.
-    @ObservedObject private var sharing = FamilyNotebookSharing.shared
-    @State private var shows = false
-
-    /// Sharing stopped shows before the notebook is opened (11/7).
-    private var paused: Bool { model.hasFamily && sharing.pause != nil }
-
-    var body: some View {
-        Button { shows = true } label: {
-            // Words beside the icon: a bare person icon was not found (1031).
-            // One name for it everywhere: 家族の手帳 (11/7). 11/20: a shared
-            // cat shows the same, without the family's initials.
-            Label("家族の手帳", systemImage: shared || model.hasFamily ? "person.2.fill" : "person.badge.plus")
-                .labelStyle(.titleAndIcon)
-                .overlay(alignment: .topTrailing) {
-                    // 11/7: a mark with a symbol, not a 7pt dot of color alone.
-                    if paused {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.caption.weight(.bold))
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(Color.white, Color.orange)
-                            .background(Circle().fill(Color(.systemBackground)).padding(-1))
-                            .offset(x: 6, y: -6)
-                    } else if model.hasNewFromFamily {
-                        Circle().fill(Color.accentColor)
-                            .frame(width: 10, height: 10)
-                            .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
-                            .offset(x: 4, y: -4)
-                    }
-                }
-        }
-        .accessibilityValue(paused ? "共有が止まっています" : model.hasNewFromFamily ? "新しい記録があります" : "")
-        .accessibilityIdentifier(accessibilityIdentifier)
-        .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
 }
 

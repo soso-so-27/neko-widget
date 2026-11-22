@@ -179,6 +179,7 @@ python3 ci/test-mado-1121e.py
 python3 ci/test-save-1121g.py
 python3 ci/test-widget-1121h.py
 python3 ci/test-wall-1121i.py
+python3 ci/test-ux-notebook-1122g.py
 python3 ci/test-left-1121k.py
 python3 ci/test-family-1121l.py
 python3 ci/test-mado2-1121m.py
