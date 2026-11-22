@@ -1493,6 +1493,8 @@ private struct GroupPhotoTile: View {
     /// Hearts sent from this tile (not removed): one light haptic each, as
     /// the photo's own page gives. The page's taps do not count here.
     @State private var heartsSentHere = 0
+    /// 11/22: hearts sent by a double-tap on the photo: a big ♥ over it each.
+    @State private var heartBursts = 0
 
     private var heartCount: Int { model.shownHearts(entry.id).count }
     private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
@@ -1523,9 +1525,10 @@ private struct GroupPhotoTile: View {
                         Image(uiImage: image).resizable().scaledToFill()
                     }
                 }
+                .overlay { GroupHeartBurst(trigger: heartBursts) }
                 .clipped()
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) { toggleHeart() }
+                .onTapGesture(count: 2) { doubleTapHeart() }
                 .onTapGesture(count: 1, perform: open)
                 // 11/14: VoiceOver opens the photo here; it says who sent it
                 // and when, so the name and the day under it are not read again.
@@ -1607,6 +1610,14 @@ private struct GroupPhotoTile: View {
         Task { await model.toggleHeart(entry.id) }
     }
 
+    /// 11/22: a double-tap that sends a heart shows it on the photo; one
+    /// that takes the heart back, or that cannot send one, does not.
+    private func doubleTapHeart() {
+        let sends = canHeart && !model.myHeartIsActive(entry.id)
+        toggleHeart()
+        if sends { heartBursts &+= 1 }
+    }
+
     private var heartButton: some View {
         Button(action: toggleHeart) {
             let mine = model.myHeartIsActive(entry.id)
@@ -1632,6 +1643,42 @@ private struct GroupPhotoTile: View {
         .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
         .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
         .accessibilityIdentifier("group-photo-tile-heart")
+    }
+}
+
+/// 11/22: the answer to sending a heart from the photo: a big white ♥ over
+/// it that grows from 0.6 to full size and fades, 0.7 s in all (with
+/// Reduce Motion it only fades in and out). Each new `trigger` plays it
+/// once; at rest it is not seen and never takes a tap.
+private struct GroupHeartBurst: View {
+    let trigger: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private struct Frame {
+        var scale: CGFloat
+        var opacity: Double = 0
+    }
+
+    var body: some View {
+        Image(systemName: "heart.fill")
+            .font(.system(size: 88, weight: .semibold))
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(0.3), radius: 12, y: 3)
+            .keyframeAnimator(initialValue: Frame(scale: reduceMotion ? 1 : 0.6), trigger: trigger) { content, frame in
+                content.scaleEffect(frame.scale).opacity(frame.opacity)
+            } keyframes: { _ in
+                KeyframeTrack(\.scale) {
+                    SpringKeyframe(1, duration: 0.3, spring: .bouncy)
+                    LinearKeyframe(1, duration: 0.4)
+                }
+                KeyframeTrack(\.opacity) {
+                    LinearKeyframe(1, duration: 0.1)
+                    LinearKeyframe(1, duration: 0.3)
+                    LinearKeyframe(0, duration: 0.3)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
@@ -2000,6 +2047,8 @@ private struct GroupPhotoDetail: View {
     @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
     @State private var showsBlockConfirmation = false
     @State private var showsReportUnavailable = false
+    /// 11/22: hearts sent from ♥ here: a big ♥ over the photo each.
+    @State private var heartBursts = 0
     @ObservedObject private var safety = GroupSafety.shared
 
     init(model: GroupWindowScreenModel, startID: String) {
@@ -2025,6 +2074,7 @@ private struct GroupPhotoDetail: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .overlay { GroupHeartBurst(trigger: heartBursts) }
                 if let current {
                     details(current)
                     if let caption = current.caption, !current.isHidden,
@@ -2186,6 +2236,8 @@ private struct GroupPhotoDetail: View {
         HStack(spacing: 0) {
             if shown && !entry.isOwn && !model.isFormer {
                 Button {
+                    // 11/22: a heart sent (not taken back) shows on the photo.
+                    if model.acceptsHearts(entry.id) && !model.myHeartIsActive(entry.id) { heartBursts &+= 1 }
                     Task { await model.toggleHeart(entry.id) }
                 } label: {
                     VStack(spacing: 3) {
