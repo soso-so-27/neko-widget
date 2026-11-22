@@ -676,7 +676,7 @@ test("public guide requires the exact title, revision, daily free copy and shari
       /guide contains forbidden policy content/u);
   }
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, { h1: "wrong" })]])), /unexpected h1/u);
-  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年11月21日</p>", "")]])), /missing the visible policy revision/u);
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年11月22日</p>", "")]])), /missing the visible policy revision/u);
   await assert.rejects(check(publicOne, new Map([["guide", new Response("missing", { status: 404 })]])), /guide returned HTTP 404/u);
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
     links: [...profileUrls(publicOne), "http://policy.example.net/unsafe"],
@@ -686,9 +686,9 @@ test("public guide requires the exact title, revision, daily free copy and shari
 
 test("public support requires its exact content date while the policy revision stays shared", async () => {
   const page = publicOne.definition.pages.find(page => page.name === "support");
-  assert.equal(page.visibleRevisionDate, "2026-11-11");
+  assert.equal(page.visibleRevisionDate, "2026-11-22");
   for (const wrong of ["2026年11月9日", "2026年11月10日", ""]) {
-    const html = pageHtml(publicOne, page).replace("2026年11月11日", wrong);
+    const html = pageHtml(publicOne, page).replace("2026年11月22日", wrong);
     await assert.rejects(check(publicOne, new Map([["support", html]])), /visible policy revision/);
   }
   const result = await check(publicOne);
