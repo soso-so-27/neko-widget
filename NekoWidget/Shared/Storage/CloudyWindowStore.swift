@@ -1137,6 +1137,16 @@ struct CloudyWindowStore: Sendable {
         }) ?? false
     }
 
+    /// 11/23: when each window was cleared by its tag (read only), times
+    /// alone, for the anonymous count `mado_cloudy_cleared`. A repeated tap
+    /// keeps the first time, so one clear is one time here.
+    func clearedTimes() -> [Date] {
+        guard internalPresentation else { return [] }
+        return (try? authorityStore.withAuthoritySnapshot { _ in
+            try read().selections.compactMap(\.revealedAt)
+        }) ?? []
+    }
+
     /// Photos revealed in the window between the dates (read only), for the
     /// album prototype's monthly story.
     func revealedPhotos(from start: Date, to end: Date) -> [(photoID: String, revealedAt: Date)] {
