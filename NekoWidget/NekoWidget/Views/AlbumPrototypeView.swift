@@ -702,7 +702,7 @@ struct AlbumPrototypeView: View {
         guard !reduceMotion else { open(); return }
         clearingCover = id
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(CloudyFrostLook.clearDuration))
+            try? await Task.sleep(for: .seconds(CloudyFrostLook.openAfter))
             clearingCover = nil
             open()
         }
@@ -717,6 +717,9 @@ struct AlbumPrototypeView: View {
 /// moves. Reduce Motion: no animation.
 enum CloudyFrostLook {
     static let clearDuration: Double = 1.9
+    /// 11/22: a tap opens the work once most of the frost has gone; waiting
+    /// the whole 1.9 s after a tap felt slow (the Widget's clear is passive).
+    static let openAfter: Double = 1.1
     static let photo = Animation.easeInOut(duration: 1.9)
     static let fog = Animation.easeInOut(duration: 1.7)
     static let puffOpacity = 0.42
