@@ -281,7 +281,12 @@ final class GroupWindowScreenModel: ObservableObject {
     /// (1115s). A background pass calls `sync(background: true)`: automatic.
     func sync() async { await SharingPersonAction.run { await sync(background: false) } }
 
-    func sync(background: Bool) async {
+    func sync(background: Bool) async { await sync(background: background, newestOnly: false) }
+
+    /// `newestOnly` (11/22, A4): the まど list's pass for its cards. The same
+    /// read, check and keep as opening the まど, for the newest listed photo
+    /// alone; the rest come when the まど is opened.
+    func sync(background: Bool, newestOnly: Bool) async {
         guard !Task.isCancelled else { return }
         if isFormer {
             // A window this iPhone left: only what is kept here.
@@ -344,7 +349,10 @@ final class GroupWindowScreenModel: ObservableObject {
                 if triedNew { NotificationCenter.default.post(name: .groupWindowNewPhotosDidChange, object: nil) }
             }
             var stopped = false
-            for photo in photos {
+            let receiving = newestOnly
+                ? (photos.max(by: { $0.createdAt < $1.createdAt }).map { [$0] } ?? [])
+                : photos
+            for photo in receiving {
                 try Task.checkCancellation()
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 triedNew = true
@@ -360,6 +368,8 @@ final class GroupWindowScreenModel: ObservableObject {
                 if stopped { break }
             }
             morePhotosComing = stopped
+            // The list's newest-only pass has no page to fill: its model goes
+            // away with the pass, so a later receive never runs (weak self).
             if stopped { receiveLater() }
             // 11/20: receipts that did not reach the relay are sent again, so
             // it does not keep a photo this iPhone already has for 30 days.
@@ -1006,8 +1016,11 @@ struct GroupWindowScreen: View {
         if navigation.openedWindow?.windowID == model.windowID { navigation.returnToList() } else { dismiss() }
     }
 
+    /// 11/22 (A5): 「ホーム画面に置く」 left the screen right after 「作る」;
+    /// it stays one row on 「メンバー」, under the まど's name.
     private var membersScreen: some View {
-        GroupWindowMembersScreen(client: model.client, windowID: model.windowID, onLeft: closeAfterLeaving)
+        GroupWindowMembersScreen(client: model.client, windowID: model.windowID, onLeft: closeAfterLeaving,
+                                 offersWidgetPlacement: true)
     }
 
 
@@ -2428,6 +2441,7 @@ final class GroupWindowListModel: ObservableObject {
             hasLoaded = true
             GroupWindowListNavigation.shared.rememberListed(windows)
             renewPendingKeys()
+            refreshCovers()
             // 11/21e: unsent reports and the team's answers, for every window.
             let listedIDs = windows.map(\.id)
             Task { await GroupSafety.shared.catchUp(windowIDs: listedIDs) }
@@ -2461,6 +2475,37 @@ final class GroupWindowListModel: ObservableObject {
         }
     }
 
+    /// 11/22 (A4): each card shows its まど's newest photo, not an empty
+    /// window until the まど is opened. One まど after another, in the
+    /// background and automatic (within the call budget), through the same
+    /// receive path as opening it (`sync(background:newestOnly:)`): its
+    /// decryption, safety check, keeping and Widget copy. A stopped or ended
+    /// まど is skipped, and so is the one open now (its page reads it).
+    private var coverRefresh: Task<Void, Never>?
+    /// Shared by every list model (the tab's and 「まどを作る」's), so one
+    /// まど is read at most once in 20 s for its card.
+    private static var coverRefreshedAt: [String: Date] = [:]
+
+    private func refreshCovers() {
+        guard coverRefresh == nil else { return }
+        let due = windows.filter {
+            $0.state == .active && !GroupWindowPresentation.isPaused($0)
+                && SharingForegroundGap.allows(since: Self.coverRefreshedAt[$0.id])
+        }
+        guard !due.isEmpty else { return }
+        for window in due { Self.coverRefreshedAt[window.id] = .now }
+        let client = self.client
+        coverRefresh = Task { [weak self] in
+            for window in due {
+                guard !Task.isCancelled else { break }
+                guard GroupWindowListNavigation.shared.openedWindow?.windowID != window.id else { continue }
+                let model = GroupWindowScreenModel(client: client, windowID: window.id)
+                await SharingPersonAction.automatic { await model.sync(background: true, newestOnly: true) }
+            }
+            self?.coverRefresh = nil
+        }
+    }
+
     /// Set when the relay answers that making a window needs Plus.
     @Published var needsPlus = false
 
@@ -2490,8 +2535,8 @@ final class GroupWindowListModel: ObservableObject {
                 UsageCounter.shared.count(.madoCreated)  // Usage (11/7)
                 GroupDisplayName.remember(owner)
                 // Keep the created window on an invitation-network failure; retrying must not create another window.
-                do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
-                catch { message = "まどを作りました。招待リンクは、まどの「メンバー」から作れます。" }
+                // 11/22 (A5): the next screen's 「招待リンクを送る」 makes the link then.
+                _ = try? await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision))
                 Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
                 await load()
                 return window
@@ -2516,6 +2561,8 @@ struct GroupWindowCreateScreen: View {
     @State private var name = ""
     @State private var ownerName = GroupDisplayName.remembered
     @State private var createdWindowID: String?
+    /// 11/22 (A5): the invitation was sent, or 「あとで」 was pressed.
+    @State private var invitedOrLater = false
     private enum Field { case name, owner }
     @FocusState private var typing: Field?
     /// Plus was bought from the relay's 「Plus required」: make the window
@@ -2554,8 +2601,15 @@ struct GroupWindowCreateScreen: View {
         // The new window takes this page's place, so Back goes to the list,
         // not to the form that already made it (11/6: Back reopened the form).
         if let createdWindowID {
-            // 11/14 (A2): just made, so the members screen offers 「ホーム画面に置く」.
-            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID, offersWidgetPlacement: true)
+            if invitedOrLater {
+                // 11/22 (A5): then the new まど itself, with 「写真を届ける」.
+                GroupWindowScreen(client: model.client, windowID: createdWindowID)
+            } else {
+                // 11/22 (A5): just made, the one thing to do is inviting.
+                GroupWindowFirstInviteScreen(client: model.client, windowID: createdWindowID) {
+                    invitedOrLater = true
+                }
+            }
         } else {
             form
         }
@@ -2710,11 +2764,14 @@ struct GroupInvitationShareSheet: UIViewControllerRepresentable {
     /// 11/14 (A5): the family notebook's invitation uses the same sheet.
     var completedUsage: UsageEvent = .madoInviteShared
     let onFinish: () -> Void
+    /// 11/22 (A5): only when the link was actually handed to an app.
+    var onCompleted: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: [message, item], applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in
             if completed { UsageCounter.shared.count(completedUsage) }  // Usage (11/7)
+            if completed { onCompleted?() }
             onFinish()
         }
         return controller
@@ -3008,8 +3065,8 @@ struct GroupWindowListSection: View {
 }
 
 /// A window is its newest photo: the card shows it (the Widget's copy, or the
-/// newest photo kept on this iPhone; nothing is fetched), the name over it,
-/// and who is in it.
+/// newest photo kept on this iPhone; the list's own pass keeps the newest
+/// one, 11/22), the name over it, and who is in it.
 private struct GroupWindowCard: View {
     let window: GroupWindow
     @State private var cover: UIImage?
@@ -3069,7 +3126,8 @@ private struct GroupWindowCard: View {
         .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))\(hasNew ? "、新着あり" : "")")
         .task(id: window.id) { await loadCover(); await loadNewMark() }
         .onReceive(NotificationCenter.default.publisher(for: .groupWindowNewPhotosDidChange)) { _ in
-            Task { await loadNewMark() }
+            // 11/22 (A4): the list's pass just kept this まど's newest photo.
+            Task { await loadCover(); await loadNewMark() }
         }
     }
 
@@ -3086,13 +3144,19 @@ private struct GroupWindowCard: View {
             senderName = cached.senderDisplayName
             if cover != nil { return }
         }
-        // Not yet on the Widget: the newest photo this iPhone received.
+        // Not yet on the Widget: the newest photo this iPhone received. Not
+        // a hidden, reported, blocked (`entries`) or taken-down photo (11/22).
         let store = GroupWindowLocalPhotoStore.shared
         await GroupSafety.shared.loadRecords(windowID: window.id)
+        let withdrawn = GroupWidgetCache.withdrawnPhotoIDs(windowID: window.id)
         let newest = await store.entries(windowID: window.id)
-            .filter { !$0.isHidden && !GroupSafety.shared.hasReported($0.id, in: window.id) }
+            .filter { !$0.isHidden && !GroupSafety.shared.hasReported($0.id, in: window.id) && !withdrawn.contains($0.id) }
             .max { $0.createdAt < $1.createdAt }
-        guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id) else { return }
+        guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id) else {
+            // Nothing to show any more: のわ's window again, not an old photo.
+            cover = nil
+            return
+        }
         cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
         senderName = newest.isOwn ? nil : newest.senderDisplayName
     }
@@ -3164,6 +3228,120 @@ private struct KnownWindowCard: View {
         .task(id: entry.windowID) {
             guard let url = GroupWidgetCache.imageURL(for: entry) else { return }
             cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
+        }
+    }
+}
+
+/// 11/22 (A5): right after 「作る」, the one thing to do: invite the family.
+/// The link made with the まど is sent from here (or made first, when that
+/// failed), with the members screen's model and share sheet. Once it is
+/// sent, or with 「あとで」, the new まど itself opens. Members, the home
+/// screen and the rest stay on 「メンバー」.
+struct GroupWindowFirstInviteScreen: View {
+    @StateObject private var model: GroupWindowMembersModel
+    private let onDone: () -> Void
+    @State private var sharing: GroupInvitation?
+    @State private var sent = false
+    @State private var preparing = false
+
+    init(client: any GroupWindowClient, windowID: String, onDone: @escaping () -> Void) {
+        _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
+        self.onDone = onDone
+    }
+
+    private var name: String {
+        model.window?.name ?? GroupWindowListNavigation.shared.listedWindows[model.windowID]?.name ?? ""
+    }
+
+    /// Not yet read (the press reads it first), or a link can be sent now.
+    private var canSend: Bool {
+        model.window == nil || model.activeInvitation != nil || model.canInvite
+    }
+
+    private var problem: String? { model.actionErrorMessage ?? model.loadFailureMessage }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // The new まど as its card will show it in the list.
+            ZStack(alignment: .bottomLeading) {
+                Color(uiColor: .secondarySystemGroupedBackground)
+                    .aspectRatio(16 / 10, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .overlay { WindowCardEmptyCover() }
+                    .clipped()
+                Text(name)
+                    .font(.title3.bold())
+                    .foregroundStyle(NekoPalette.ink)
+                    .padding(14)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(name)
+            .accessibilityIdentifier("group-window-first-invite-name")
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("group-window-first-invite-problem")
+            }
+            Button(action: sendInvitation) {
+                Group {
+                    if preparing {
+                        WorkingLabel(title: "招待リンクを送る", workingTitle: "用意しています…", working: true)
+                    } else {
+                        Label("招待リンクを送る", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(preparing || model.isWorking || !canSend)
+            .accessibilityIdentifier("group-window-first-invite-send")
+            Button("あとで") { onDone() }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .disabled(preparing)
+                .accessibilityIdentifier("group-window-first-invite-later")
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(problem)
+        .task { await model.load() }
+        .sheet(item: $sharing, onDismiss: { if sent { onDone() } }) { invitation in
+            GroupInvitationShareSheet(
+                item: invitation.shareText,
+                message: GroupWindowPresentation.inviteMessage(windowName: name),
+                onFinish: { sharing = nil },
+                onCompleted: { sent = true }
+            )
+            .presentationDetents([.medium, .large])
+            .ignoresSafeArea()
+        }
+    }
+
+    /// The link made with the まど goes at once. When making it failed, or
+    /// an older link is remembered, the members screen's own steps run first
+    /// (revoke the old one, make a new one), then the sheet opens (11/7, W3).
+    private func sendInvitation() {
+        if let invitation = model.activeInvitation { sharing = invitation; return }
+        preparing = true
+        Task {
+            defer { preparing = false }
+            if model.window == nil { await model.load() }
+            if let invitation = model.activeInvitation { sharing = invitation; return }
+            if model.earlierInvitation != nil {
+                await model.revokeInvitation()
+                guard model.actionErrorMessage == nil else { return }
+            }
+            guard model.canInvite else { return }
+            await model.createInvitation()
+            guard model.actionErrorMessage == nil, let made = model.activeInvitation else { return }
+            sharing = made
         }
     }
 }

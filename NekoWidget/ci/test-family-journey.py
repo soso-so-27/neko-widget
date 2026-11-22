@@ -83,8 +83,11 @@ class WidgetPlacementTests(unittest.TestCase):
 
     def test_new_window_members_screen_has_one_row(self):
         self.assertIn('static let placeOnHomeScreenAction = "ホーム画面に置く"', SETUP)
+        # 11/22 (A5): the screen right after 「作る」 is the invitation; the
+        # row stays on 「メンバー」, opened from the まど.
         create = section(WINDOW, "struct GroupWindowCreateScreen: View {", "struct GroupWindowStandardsAgreement: View {")
-        self.assertIn("offersWidgetPlacement: true", create)
+        self.assertNotIn("offersWidgetPlacement: true", create)
+        self.assertIn("offersWidgetPlacement: true", section(WINDOW, "private var membersScreen: some View {", "/// The red error line"))
         members = section(SETUP, "struct GroupWindowMembersView: View {", "private func membersSection(")
         self.assertIn("var offersWidgetPlacement = false", members)
         self.assertEqual(members.count('"group-window-place-widget"'), 1)
