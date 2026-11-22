@@ -1067,16 +1067,19 @@ struct MembershipOfferSheet: View {
     let showsClose: Bool
     /// In place of the context's own line (the year's work, 11/12).
     let reasonOverride: String?
+    /// False on the first offer when no work can be opened yet (11/22, ④).
+    let worksFirst: Bool
     let onFinish: (MembershipOfferActionResult) -> Void
 
     init(model: MembershipOfferModel, context: PlusOfferContext, photo: UIImage? = nil,
-         showsClose: Bool = true, reasonOverride: String? = nil,
+         showsClose: Bool = true, reasonOverride: String? = nil, worksFirst: Bool = true,
          onFinish: @escaping (MembershipOfferActionResult) -> Void) {
         _model = StateObject(wrappedValue: model)
         self.context = context
         self.photo = photo
         self.showsClose = showsClose
         self.reasonOverride = reasonOverride
+        self.worksFirst = worksFirst
         self.onFinish = onFinish
     }
 
@@ -1149,7 +1152,8 @@ struct MembershipOfferSheet: View {
             showsClose: showsClose,
             reasonOverride: reasonOverride,
             supportURL: model.offersContact && !model.isMember
-                ? AppPublicLinksConfiguration.current.supportURL : nil
+                ? AppPublicLinksConfiguration.current.supportURL : nil,
+            worksFirst: worksFirst
         )
     }
 

@@ -39,6 +39,8 @@ struct MembershipOfferView: View {
     /// 11/20: お問い合わせ under the message, after a restore failure that
     /// waiting cannot fix (the same link as Settings). nil hides it.
     let supportURL: URL?
+    /// False on the first offer when no work can be opened yet (11/22, ④).
+    let worksFirst: Bool
     /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
     /// purchase button (11/6). Cleared when the work ends.
     @State private var running: String?
@@ -62,6 +64,11 @@ struct MembershipOfferView: View {
         ("家族の手帳を作って、家族と一緒に書く", "book.closed"),
         ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
     ]
+    /// 11/22 (④): with no work to open yet (a kitten just met), the works'
+    /// row goes last, after what Plus already does today. Same rows, same words.
+    static func values(worksFirst: Bool) -> [(String, String)] {
+        worksFirst ? values : Array(values.dropFirst()) + values.prefix(1)
+    }
     static let reassurances = [
         "いつでも解約できます",
         // 11/14: only what this iPhone keeps; the auto-save copy ends 12 months later.
@@ -107,7 +114,8 @@ struct MembershipOfferView: View {
         onClose: @escaping () -> Void,
         showsClose: Bool = true,
         reasonOverride: String? = nil,
-        supportURL: URL? = nil
+        supportURL: URL? = nil,
+        worksFirst: Bool = true
     ) {
         self.context = context
         self.photo = photo
@@ -132,6 +140,7 @@ struct MembershipOfferView: View {
         self.showsClose = showsClose
         self.reasonOverride = reasonOverride
         self.supportURL = supportURL
+        self.worksFirst = worksFirst
     }
 
     var body: some View {
@@ -200,7 +209,7 @@ struct MembershipOfferView: View {
     /// What Plus does: six rows, regular weight; only the heading is bold.
     private var valueRows: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Self.values, id: \.0) { value in
+            ForEach(Self.values(worksFirst: worksFirst), id: \.0) { value in
                 Label {
                     Text(value.0).font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)

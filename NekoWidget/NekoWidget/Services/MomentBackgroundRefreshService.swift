@@ -322,6 +322,8 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         }
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
            response.notification.request.content.userInfo[AlbumArrivalNotice.userInfoKey] != nil {
+            // 11/22 (⑦): a tapped notice counts as opened.
+            AlbumArrivalNotice.noteOpened()
             AlbumArrivalOpenInbox.shared.showsAlbum = true
             return
         }

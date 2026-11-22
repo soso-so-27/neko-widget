@@ -148,6 +148,8 @@ enum AlbumPrototype {
 
     static func markOpened(_ period: String) {
         UsageCounter.shared.count(.albumWorkOpened)  // Usage (11/7): every opening, not only the first.
+        // 11/22 (⑦): before the opened list changes, which sets the notices again.
+        AlbumArrivalNotice.noteOpened()
         let defaults = UserDefaults.standard
         var opened = Set((defaults.string(forKey: openedKey) ?? "").split(separator: ",").map(String.init))
         guard opened.insert(period).inserted else { return }
@@ -828,6 +830,8 @@ struct AlbumWorkGate<Content: View>: View {
                 PlusOfferPrompt(context: .monthlySummary(month: month), decision: decision,
                                 reasonOverride: yearReason, onDeclined: { dismiss() })
                     .environment(\.plusOfferPhoto, coverPhoto)
+                    // 11/22 (⑦): the cover led here, so the work notices come again.
+                    .onAppear { AlbumArrivalNotice.noteOpened() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .toolbar {
                         // A sheet that is only read closes with the × at the
@@ -1455,6 +1459,55 @@ enum AlbumArrivalNotice {
     private static let tryID = "album-arrival.try"
 #endif
     private static let hour = 9
+    /// 11/22 (⑦): when the month's notice that is set now will be shown
+    /// (seconds since 1970). Written only when the notices are set again.
+    static let pendingMonthKey = "albumArrival.month.pending.v1"
+    /// Month notices shown since a work was last opened (their times).
+    static let unopenedKey = "albumArrival.month.unopened.v1"
+    /// Two month notices in a row that led to no work rest the person's work
+    /// notices. The album and the Widget's 「作品がとどきました」 stay as they are.
+    static let restAfterUnopened = 2
+
+    /// A month notice whose time has passed was shown: it joins the unopened
+    /// ones until a work is opened. One still to come is left to `notePending`.
+    static func restsAfterShownNotices(now: Date = Date(), defaults: UserDefaults = .standard) -> Bool {
+        var unopened = defaults.array(forKey: unopenedKey) as? [Double] ?? []
+        if defaults.object(forKey: pendingMonthKey) != nil {
+            let at = defaults.double(forKey: pendingMonthKey)
+            if now.timeIntervalSince1970 >= at {
+                if !unopened.contains(at) {
+                    unopened.append(at)
+                    defaults.set(unopened, forKey: unopenedKey)
+                }
+                defaults.removeObject(forKey: pendingMonthKey)
+            }
+        }
+        return unopened.count >= restAfterUnopened
+    }
+
+    /// The month notice now set (nil: none). Writes only when it changed.
+    static func notePending(_ at: Date?, defaults: UserDefaults = .standard) {
+        if let at {
+            let value = at.timeIntervalSince1970
+            guard defaults.object(forKey: pendingMonthKey) == nil
+                    || defaults.double(forKey: pendingMonthKey) != value else { return }
+            defaults.set(value, forKey: pendingMonthKey)
+        } else if defaults.object(forKey: pendingMonthKey) != nil {
+            defaults.removeObject(forKey: pendingMonthKey)
+        }
+    }
+
+    /// A work was opened, its notice tapped, or its cover led to the Plus
+    /// screen: the work notices come again. Writes only when something is kept.
+    static func noteOpened(now: Date = Date(), defaults: UserDefaults = .standard) {
+        if defaults.object(forKey: pendingMonthKey) != nil,
+           now.timeIntervalSince1970 >= defaults.double(forKey: pendingMonthKey) {
+            defaults.removeObject(forKey: pendingMonthKey)
+        }
+        if defaults.object(forKey: unopenedKey) != nil {
+            defaults.removeObject(forKey: unopenedKey)
+        }
+    }
 
     /// The next 1st at 9:00, and the month whose work it brings.
     static func nextMonthDelivery(after now: Date = Date()) -> (month: Date, at: Date)? {
@@ -1481,15 +1534,22 @@ enum AlbumArrivalNotice {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [monthID, yearID])
         waitingForPermission = nil
+        // 11/22 (⑦): resting, no work notice is set (nor asked for).
+        let resting = restsAfterShownNotices()
+        let month = resting ? nil : month
+        // The year's work comes once a year: its notice is never rested.
+        if month == nil { notePending(nil) }
         guard month != nil || year != nil else { permissionWhenSet = nil; return }
         let permission = await center.notificationSettings().authorizationStatus
         permissionWhenSet = permission
         if permission == .notDetermined {
+            notePending(nil)
             waitingForPermission = (month, year)
             if albumIsShown { Task { await askIfNeeded() } }
             return
         }
-        guard await isAllowed(center) else { return }
+        guard await isAllowed(center) else { notePending(nil); return }
+        notePending(month?.at)
         if let month {
             let number = Calendar.nekoGregorian.component(.month, from: month.start)
             await add(monthID, "\(number)月の作品がとどきました。", trigger: calendarTrigger(month.at))
