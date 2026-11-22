@@ -104,18 +104,21 @@ async function check(profileCase = sharingBeta, overrides = new Map(), options =
 test("requires the published media-staging privacy revision only on the approved Pages base", async () => {
   const githubPages = { ...publicOne, siteBase: "https://soso-so-27.github.io/neko-widget/" };
   const privacy = publicOne.definition.pages.find(page => page.name === "privacy");
-  const disclosure = "家族の手帳を作った人が猫ごとに選んだ代表写真";
-  const mediaPage = { ...privacy, visibleRevisionDate: "2026-11-19" };
+  const disclosure = "家族の手帳を作った人の猫ごとの代表写真";
+  const mediaPage = { ...privacy, visibleRevisionDate: "2026-11-21" };
   const updated = pageHtml(githubPages, mediaPage, { phrases: [...privacy.requiredPhrases, disclosure] });
 
-  await assert.rejects(check(githubPages), /privacy is missing the visible policy revision/u);
+  const stalePage = { ...privacy, visibleRevisionDate: "2026-11-19" };
+  await assert.rejects(check(githubPages, new Map([["privacy", pageHtml(githubPages, stalePage, { phrases: [...privacy.requiredPhrases, disclosure] })]])),
+    /privacy is missing the visible policy revision/u);
+  await assert.rejects(check(githubPages), /privacy is missing required policy content/u);
   await assert.rejects(check(githubPages, new Map([["privacy", pageHtml(githubPages, mediaPage)]])),
     /privacy is missing required policy content/u);
   assert.equal((await check(githubPages, new Map([["privacy", updated]]))).pages.length, 5);
 
   const publicDomain = { ...publicOne, siteBase: "https://nekonomado.com/" };
   assert.equal((await check(publicDomain)).pages.length, 5);
-  await assert.rejects(check(publicDomain, new Map([["privacy", pageHtml(publicDomain, mediaPage)]])),
+  await assert.rejects(check(publicDomain, new Map([["privacy", pageHtml(publicDomain, stalePage)]])),
     /privacy is missing the visible policy revision/u);
 });
 
@@ -673,7 +676,7 @@ test("public guide requires the exact title, revision, daily free copy and shari
       /guide contains forbidden policy content/u);
   }
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, { h1: "wrong" })]])), /unexpected h1/u);
-  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年11月11日</p>", "")]])), /missing the visible policy revision/u);
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年11月21日</p>", "")]])), /missing the visible policy revision/u);
   await assert.rejects(check(publicOne, new Map([["guide", new Response("missing", { status: 404 })]])), /guide returned HTTP 404/u);
   await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
     links: [...profileUrls(publicOne), "http://policy.example.net/unsafe"],

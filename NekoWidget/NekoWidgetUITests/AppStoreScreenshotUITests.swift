@@ -678,7 +678,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(folded, application: app), app.debugDescription)
         folded.tap()
-        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["cat-care-part-basics"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
         // 11/12: the four parts are always open, each a list of rows that
         // show what is written (接し方・ごはん・トイレ in 暮らし).
         // 「見分ける写真」 sits above the parts, so 暮らし can start below the
@@ -854,7 +854,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         chooseCareCat("tool-profile-11111111-1111-4111-8111-111111111111", application: app)
         let folded = app.descendants(matching: .any)["care-cat-care-fields-folded"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(folded, application: app)); folded.tap()
-        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["cat-care-part-basics"].firstMatch.waitForExistence(timeout: 10))
         // 11/12: the parts are always open; the hospital's row shows its name.
         let vet = app.descendants(matching: .any)["cat-care-vet-name-row"].firstMatch
         XCTAssertTrue(scrollUpUntilHittable(vet, application: app))

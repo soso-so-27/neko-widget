@@ -2936,10 +2936,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("closeTitle != nil && windowName == nil", guide)
         self.assertIn('[(image: "onboarding-widget-change-source", text: OnboardingPresentationCopy.widgetChangeSourceStep)]', guide)
         self.assertIn("return placementSteps + cloudy + changeSource", guide)
-        # 11/10: place first, then come back. The hint is on the screen. 11/12:
-        # the button checks nothing, so it says the person goes out to place
-        # it, not that it was placed.
-        self.assertIn('static let widgetAction = "ホーム画面で置いてきます"', presentation)
+        # 11/22: 「つぎへ」 walks through the steps; the last one waits for
+        # the Widget instead of a button that seemed to place it. The button
+        # never says it was placed.
+        self.assertIn('static let widgetNextAction = "つぎへ"', presentation)
+        self.assertIn('static let widgetWaitingText = "ホーム画面に置くのを待っています"', presentation)
+        self.assertNotIn("widgetAction", presentation)
         self.assertNotIn('"置きました"', presentation)
         # 11/12: the guide's last step uses the Widget's own words.
         self.assertIn('[(image: "onboarding-widget-cloudy", text: OnboardingPresentationCopy.widgetCloudyStep)]', guide)
@@ -2949,8 +2951,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("「タップで、きょうの1枚」を押すと", presentation)
         for text in (guide, presentation):
             self.assertNotIn("札を押すと", text)
-        self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
-        self.assertIn("Text(OnboardingPresentationCopy.widgetReturnHint)", guide)
+        # 11/22: the waiting state replaces the return hint.
+        self.assertNotIn("widgetReturnHint", presentation + guide)
+        self.assertIn("Text(OnboardingPresentationCopy.widgetWaitingText)", guide)
         self.assertNotIn("猫を登録すると", guide)
         self.assertNotIn("hasCats", guide)
         self.assertIn(
@@ -5462,22 +5465,17 @@ class CatPageSharedLabelTests(unittest.TestCase):
         care = source("NekoWidget/Views/CatCareView.swift")
         # 11/15: only while this iPhone is in the family (not a left copy).
         self.assertIn("familyNotebook.activeFamilyCats.contains { $0.toolID == catID }", care)
-        # 11/20: no initials; the same button as any family member's, and
-        # nothing inside the notebook (the faces were hard to read).
-        self.assertIn("FamilyNotebookButton(shared: sharedWithFamily)", care)
+        # 11/20: no initials (the faces were hard to read). 11/22: no family
+        # button in the bar of 「この子のこと」 at all: 家族の手帳 is the last
+        # row of the cat's card on この子 (one place).
         self.assertNotIn("家族の手帳で共有しています", care)
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         for text in (care, notebook, detail):
             self.assertNotIn("FamilyFaces", text)
-        self.assertIn("FamilyNotebookButton(shared: familyNames != nil)", detail)
-        button = section(notebook, "struct FamilyNotebookButton: View {", "private struct FamilyNotebookToolSyncModifier")
-        self.assertIn('Label("家族の手帳", systemImage: shared || model.hasFamily ? "person.2.fill" : "person.badge.plus")',
-                      button)
-        # 11/20: on iOS 26, a gap between the button and 「…」 (two controls).
-        for text in (care, detail):
-            self.assertIn("if #available(iOS 26.0, *) {\n", text)
-            self.assertIn("ToolbarSpacer(.fixed, placement: .topBarTrailing)", text)
+            self.assertNotIn("FamilyNotebookButton", text)
+        home_care = source("NekoWidget/Views/CatHomeCareView.swift")
+        self.assertIn('CatHomeCareRow(title: "家族の手帳", value: value)', home_care)
         # The old note showed for every cat once the person had a family.
         self.assertNotIn("家族と一緒に書いています。", care)
 
@@ -6980,8 +6978,8 @@ class NavigationAfterActionTests(unittest.TestCase):
         self.assertNotIn("CatCareDetailView(toolCatID: cat.toolID, name: cat.name)", notebook)
         self.assertIn("if joined == .joined { onJoined?(); dismiss() }", notebook)
         care = source("NekoWidget/Views/CatCareView.swift")
-        self.assertIn("if !insideCatPage, !insideFamilyNotebook,\n"
-                      "               sharedWithFamily || Version1.familyNotebook || familyNotebook.hasFamily {", care)
+        # 11/22: the family button left the cat's page (CatHomeFamilyNotebookRow).
+        self.assertNotIn("FamilyNotebookButton(", care)
         root_view = source("NekoWidget/App/AppRootView.swift")
         self.assertIn("FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true })", root_view)
         self.assertIn(".sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }", root_view)
@@ -8845,16 +8843,18 @@ class MainTabsLook1112Tests(unittest.TestCase):
         self.assertEqual(viewer.count(".background(Self.controlsBand)"), 2)
         self.assertNotIn(".background(.bar)", viewer)
         self.assertNotIn(".background(.ultraThinMaterial)", viewer)
-        deliver = section(self.browser, "private struct DeliverButtonEmphasis: ViewModifier {", "\n}\n")
-        self.assertIn("content.buttonStyle(.bordered).tint(Color.primary)", deliver)
+        # 11/22: 「まどに届ける」 is always the blue main action (grey read as off).
+        self.assertNotIn("DeliverButtonEmphasis", self.browser)
+        self.assertNotIn("knowsAnyWindow", self.browser)
 
     def test_memo_hint_sits_where_writing_starts(self) -> None:
         note = source("NekoWidget/Views/PhotoNoteInput.swift")
         body = section(note, "struct PhotoNoteInput: View {", "#if DEBUG")
-        self.assertLess(body.index("TextEditor(text: $text)"), body.index('Text("このあと、どうなった？")'))
-        self.assertIn(".overlay(alignment: .topLeading) {", body)
-        self.assertIn(".allowsHitTesting(false)", body)
-        self.assertLess(body.index('Text("このあと、どうなった？")'), body.index("Text(audience)"))
+        # 11/22: no faint question in the empty box; who sees it stays under
+        # the box beside the count.
+        self.assertNotIn("このあと、どうなった？", body)
+        self.assertNotIn("photo-note-writing-hint", body)
+        self.assertLess(body.index("TextEditor(text: $text)"), body.index("Text(audience)"))
         self.assertLess(body.index("Text(audience)"), body.index('文字")'))
         # The CI photo fixtures are still filled into this file.
         for name in ("GRAY", "ORANGE", "TUXEDO"):

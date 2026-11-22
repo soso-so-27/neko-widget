@@ -2700,8 +2700,6 @@ struct PhotoBrowserView: View {
     /// A まど photo kept with 「お気に入りに追加」: who sent it and their
     /// ひとこと, read once per opened photo and shown read-only (11/9).
     @State private var groupFavoriteSource: GroupFavoriteSource?
-    /// A まど kept on this iPhone; until checked, the deliver button stays as it was.
-    @State private var knowsAnyWindow = true
     @State private var showsWidgetInformation = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
@@ -2829,18 +2827,15 @@ struct PhotoBrowserView: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
-                // 11/7: with no まど on this iPhone yet, the button is not the
-                // big main action (the sheet then offers to make one).
-                .modifier(DeliverButtonEmphasis(prominent: knowsAnyWindow))
+                // 11/22: always the main action, also before the first まど
+                // (the grey one read as switched off; the sheet offers to make one).
+                .buttonStyle(.borderedProminent)
                 .disabled(isExportingMemoryPhoto)
                 .accessibilityHint("届け先のまどを選んでから、写真とひとことを確認します")
                 .accessibilityIdentifier("photo-browser-deliver-group")
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 // 11/12 (review 16): one band with the actions above it, no step between.
                 .background(Self.controlsBand)
-                .task(id: groupDelivery == nil) {
-                    knowsAnyWindow = !(await GroupWindowLocalPhotoStore.shared.knownWindows().isEmpty)
-                }
             }
         }
     }
@@ -4012,19 +4007,4 @@ struct GroupDeliveryRequest: Identifiable {
     let localIdentifier: String
     /// The ひとこと the sheet starts with: a memo page's words, else empty.
     var initialCaption = ""
-}
-
-/// 「まどに届ける」: the main action once there is a まど, a plain button before.
-private struct DeliverButtonEmphasis: ViewModifier {
-    let prominent: Bool
-
-    @ViewBuilder func body(content: Content) -> some View {
-        if prominent {
-            content.buttonStyle(.borderedProminent)
-        } else {
-            // 11/12 (review 16): a lighter gray with words in the text colour,
-            // so on the black viewer it does not read as switched off.
-            content.buttonStyle(.bordered).tint(Color.primary)
-        }
-    }
 }

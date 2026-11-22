@@ -77,6 +77,9 @@ struct CatHomeCareCard: View {
                 .buttonStyle(CatHomeCarePressStyle())
                 .accessibilityIdentifier(links.cat.profile != nil ? "tools-cat-\(links.cat.id)"
                                                                    : "tools-family-cat-\(links.cat.id)")
+            // 11/22: 家族の手帳 after it, the one way in from a cat (it was a
+            // button in the bar of 「この子のこと」 that nobody found).
+            CatHomeFamilyNotebookRow(cat: links.cat)
         }
         .background(Color(.secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -133,6 +136,50 @@ struct CatHomeCareCard: View {
                 NavigationLink(value: links.about) { row }
                     .buttonStyle(CatHomeCarePressStyle())
             }
+        }
+    }
+}
+
+/// 11/22: 「家族の手帳」, the card's last row. Shown where the notebook can be
+/// made (Version1.familyNotebook) or once this iPhone has one or waits to be
+/// let in. The value is only a state already in memory: nothing before a
+/// notebook. A notebook made from here starts with this cat
+/// (FamilyNotebookView.startingCat).
+private struct CatHomeFamilyNotebookRow: View {
+    let cat: CatHomeCat
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    /// Read only: the pause this session already knows, no request of its own.
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
+    @State private var shows = false
+
+    /// Asked to join and not let in yet (read, never stored here).
+    private var awaitsApproval: Bool { sharing.state == .pendingApproval }
+
+    var body: some View {
+        if Version1.familyNotebook || model.hasFamily || awaitsApproval {
+            Divider().padding(.leading, 16)
+            Button { shows = true } label: { CatHomeCareRow(title: "家族の手帳", value: value) }
+                .buttonStyle(CatHomeCarePressStyle())
+                .accessibilityIdentifier("cat-home-care-family-notebook")
+                .sheet(isPresented: $shows) { FamilyNotebookView(startingCat: subject) }
+        }
+    }
+
+    /// Sharing stopped, or something new from the family (what the bar's
+    /// button marked before, 11/7); waiting to be let in.
+    private var value: CatHomeCareCore.Value? {
+        if model.hasFamily {
+            if sharing.pause != nil { return CatHomeCareCore.Value(text: "止まっています", tone: .unfinished) }
+            if model.hasNewFromFamily { return CatHomeCareCore.Value(text: "新しい書き込み", tone: .soon) }
+            return nil
+        }
+        return awaitsApproval ? CatHomeCareCore.Value(text: "待っています") : nil
+    }
+
+    private var subject: CatCareSubject {
+        switch cat.kind {
+        case let .profile(profile): .profile(profile)
+        case let .toolCat(id): .toolCat(id: id, name: cat.name)
         }
     }
 }

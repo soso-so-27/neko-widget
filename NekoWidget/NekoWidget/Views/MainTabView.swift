@@ -1083,8 +1083,32 @@ struct MainTabView: View {
             hasPhotoAccess: hasPhotoAccess,
             requestPhotoAccess: requestPhotoAccess,
             lettersAreFinal: albumMonthlyWindowLettersAreFinal,
-            lettersAreLoading: albumMonthlyWindowLettersAreLoading
+            lettersAreLoading: albumMonthlyWindowLettersAreLoading,
+            openPhotosMonth: openPhotos(atMonthOf:)
         )
+    }
+
+    /// 11/22: this month's tile on the album shelf. The 写真 tab's すべて
+    /// opens at that month, as 「日付」 does: the row is saved as the reading
+    /// place and the list is made again, so it opens there (the same as
+    /// returning from a photo). With no photo that month, it opens at the top.
+    private func openPhotos(atMonthOf date: Date) {
+        let calendar = Calendar.nekoGregorian
+        let month = calendar.dateComponents([.year, .month], from: date)
+        let photos = photoLibraryCatPhotos
+        let first = photos.first { photo in
+            guard let created = photo.creationDate else { return false }
+            let components = calendar.dateComponents([.year, .month], from: created)
+            return components.year == month.year && components.month == month.month
+        }
+        let row = first.map { PhotoLibraryGridRow.identifier(containing: $0.localIdentifier, in: photos) }
+        // The first row means the top, header and themes included.
+        PhotoLibraryReadingPosition.save(row == photos.first?.localIdentifier ? nil : row,
+                                         section: photoLibraryPositionKey(.all))
+        photoLibraryRevision &+= 1
+        photoLibrarySelection.select(.all)
+        photosPath = NavigationPath()
+        selectedTab = .photos
     }
 
     /// 11/7: until this launch's build is done, the album draws the works
@@ -1687,30 +1711,24 @@ struct MainTabView: View {
     }
 
     private func photoThemeRow(_ albums: [CuratedAlbumPresentation]) -> some View {
-        // 11/7: a small heading says what the row is.
-        VStack(alignment: .leading, spacing: 8) {
-            Text("テーマ")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-                .padding(.horizontal, 16)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(albums) { album in
-                        NavigationLink(value: photoLibraryProfileIdentifier.map {
-                            AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
-                        } ?? AlbumRoute.album(album.id)) {
-                            PhotoThemeTile(album: album)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(album.cardTitle)
-                        .accessibilityIdentifier("photos-theme-\(album.id.title)")
+        // 11/22: no heading: the round photos with their names say what the
+        // row is (「テーマ」 above them was one more word to read).
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(albums) { album in
+                    NavigationLink(value: photoLibraryProfileIdentifier.map {
+                        AlbumRoute.catAlbum(profileIdentifier: $0, album: album.id)
+                    } ?? AlbumRoute.album(album.id)) {
+                        PhotoThemeTile(album: album)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(album.cardTitle)
+                    .accessibilityIdentifier("photos-theme-\(album.id.title)")
                 }
-                .padding(.horizontal, 16)
             }
-            .accessibilityIdentifier("photos-theme-row")
+            .padding(.horizontal, 16)
         }
+        .accessibilityIdentifier("photos-theme-row")
     }
 
     private var settingsSheet: some View {

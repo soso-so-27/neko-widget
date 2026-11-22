@@ -26,16 +26,7 @@ struct CatProfileDetailView: View {
     /// Opened from the family notebook: not a second notebook (11/7).
     var insideFamilyNotebook = false
 
-    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @ObservedObject private var catCare = CatCareStore.shared
-
-    /// The family's names when this cat is in the family notebook, so the
-    /// page shows whose cat it is: the whole page is the shared cat (11/7).
-    private var familyNames: [String]? {
-        guard let catID = CatCareSummary.record(profileIdentifier: profile.identifier)?.catID,
-              familyNotebook.activeFamilyCats.contains(where: { $0.toolID == catID }) else { return nil }
-        return familyNotebook.members.map(\.displayName)
-    }
 
     var body: some View {
         CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
@@ -46,18 +37,8 @@ struct CatProfileDetailView: View {
             // once, large, under its photo (it was in the bar too).
             .navigationTitle("この子のこと")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // 11/20: opened from inside the notebook, nothing here (the
-                // family's initials were hard to read).
-                if !insideFamilyNotebook, familyNames != nil || Version1.familyNotebook || familyNotebook.hasFamily {
-                    // 11/20: on iOS 26 the button and 「…」 (the page's own,
-                    // before it) were one glass capsule; a gap makes them two.
-                    if #available(iOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(shared: familyNames != nil) }
-                }
-            }
+            // 11/22: no family button in the bar. 家族の手帳 is the last row of
+            // the cat's card on この子 (CatHomeFamilyNotebookRow), one place.
             // Memo weights show in この子のこと wherever the page opens (11/7).
             .task { await catCare.importMemoWeights() }
     }

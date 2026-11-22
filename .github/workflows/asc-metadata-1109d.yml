@@ -9,11 +9,11 @@ on:
         type: choice
         options: [dry-run, apply]
       scope:
-        description: Approved groups or one explicitly approved description scope
+        description: Approved App Store metadata scope
         default: approved-groups
         required: true
         type: choice
-        options: [approved-groups, version-description, daily-photo-app-description, daily-photo-plus-description]
+        options: [approved-groups, version-description, daily-photo-app-description, daily-photo-plus-description, seasonal-movie-app-metadata]
 permissions:
   contents: read
 jobs:

@@ -519,23 +519,8 @@ struct CatCareDetailView: View {
                     .accessibilityIdentifier("cat-care-more-menu")
                 }
             }
-            // The family, at the top right like sharing in Notes, so it is
-            // out of the way for anyone who keeps to themselves.
-            // The same page opens from ツール and from the family notebook
-            // (11/6: "two places to write water?"). 11/20: inside the notebook,
-            // nothing here (the family's initials were hard to read).
-            // Inside the cat's page, that page shows it for both tabs (11/7).
-            if !insideCatPage, !insideFamilyNotebook,
-               sharedWithFamily || Version1.familyNotebook || familyNotebook.hasFamily {
-                // 11/20: on iOS 26 the button and 「…」 were one glass capsule;
-                // a gap makes them two.
-                if isProfile || showsFamilyCatMenu {
-                    if #available(iOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton(shared: sharedWithFamily) }
-            }
+            // 11/22: no family button here. 家族の手帳 is the last row of the
+            // cat's card on この子 (one place; it was found by nobody here).
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID, saving: { result in apply(result) })
