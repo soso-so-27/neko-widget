@@ -8,6 +8,12 @@
   <meta name="description" content="撮りためた猫の写真に、毎日会える。iPhoneの中の猫の写真を見つけて、ホーム画面のウィジェットに毎日ちがう1枚を出すアプリです。">
   <!-- 公開するまでは検索に出さない。公開するときに外す。 -->
   <meta name="robots" content="noindex, nofollow">
+  <!-- SNS で共有されたときの見え方。公開先の URL に合わせる。 -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="ねこのまど｜撮りためた猫の写真に、毎日会える">
+  <meta property="og:description" content="毎日ちがう1枚が、ホーム画面のまどに。無料ではじめられます。">
+  <meta property="og:image" content="https://nekonomado.com/images/og.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="images/app-icon-180.png">
   <link rel="apple-touch-icon" href="images/app-icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -65,7 +71,7 @@
       <ol class="day-row" aria-label="3日分のウィジェット">
         <li><div class="tile"><img src="images/photo-lap.webp" alt="ひざの上の猫"></div><span>おととい</span></li>
         <li><div class="tile"><img src="images/photo-grey-ball.webp" alt="ボールで遊ぶ灰色の猫" style="object-position: 50% 40%"></div><span>きのう</span></li>
-        <li class="today"><div class="tile cloudy-sm"><img src="images/photo-stretch.webp" alt="のびをする猫"><b>きょう</b></div><span>きょう</span></li>
+        <li class="today"><button type="button" class="tile cloudy-sm" data-today aria-label="きょうの1枚を晴らす"><img src="images/photo-stretch.webp" alt="のびをする猫"><b>タップ</b></button><span>きょう</span></li>
       </ol>
       <p class="small">誕生日やうちに来た日には、その子の1枚。</p>
     </div>
@@ -80,9 +86,9 @@
       </div>
       <div class="sort" aria-hidden="true">
         <div class="roll">
-          <i class="doc"></i><img src="images/photo-grey-bed.webp" alt=""><i class="doc r"></i>
-          <img src="images/photo-everyday-food.webp" alt=""><img src="images/photo-two-cats.webp" alt=""><i class="doc"></i>
-          <img src="images/photo-everyday-table.webp" alt=""><i class="doc r"></i><img src="images/photo-grey-chair.webp" alt="">
+          <i class="doc"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path class="ln" d="M9.5 7h5M9.5 10h5M9.5 13h3"/></svg></i><img src="images/photo-grey-bed.webp" alt=""><i class="doc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
+          <img src="images/photo-everyday-food.webp" alt=""><img src="images/photo-two-cats.webp" alt=""><i class="doc"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path class="ln" d="M9.5 7h5M9.5 10h5M9.5 13h3"/></svg></i>
+          <img src="images/photo-everyday-table.webp" alt=""><i class="doc"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i><img src="images/photo-grey-chair.webp" alt="">
         </div>
         <span class="arrow">→</span>
         <div class="roll cats">
@@ -231,6 +237,9 @@
   });
   setTimeout(function () { clear(); }, 4200);
 })();
+document.querySelectorAll('[data-today]').forEach(function (t) {
+  t.addEventListener('click', function () { t.classList.add('clear'); });
+});
 </script>
 </body>
 </html>
