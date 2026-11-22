@@ -1131,7 +1131,12 @@ struct ShowcasePreparationView: View {
                                 Text("表示できない写真は省いています")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 Spacer(minLength: 8)
-                                Button("外す") { removeUnavailable() }
+                                // 11/22: pressed in a 44pt-tall area, not only on the word.
+                                Button { removeUnavailable() } label: {
+                                    Text("外す")
+                                        .frame(minWidth: 44, minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
                                     .font(.footnote)
                                     .accessibilityLabel("表示できない写真を外す")
                                     .accessibilityIdentifier("showcase-preparation-remove-unavailable")

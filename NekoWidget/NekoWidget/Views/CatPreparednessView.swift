@@ -1346,8 +1346,13 @@ private struct LostCatGuideView<Report: View>: View {
             HStack {
                 DatePicker("次に確かめる日", selection: Binding(get: { next }, set: { log.nextCheckAt = $0 }),
                            displayedComponents: .date)
-                Button { log.nextCheckAt = nil } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless).foregroundStyle(.tertiary)
+                // 11/22: a 44×44 area, and a tone that reads as a button.
+                Button { log.nextCheckAt = nil } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary)
                     .accessibilityLabel("次に確かめる日を消す")
             }
             .accessibilityIdentifier("lost-cat-next-check")

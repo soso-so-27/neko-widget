@@ -242,6 +242,9 @@ struct GrowthAlbumDetailView: View {
         } label: {
             Label("写真を変える", systemImage: "photo.on.rectangle.angled")
                 .font(.subheadline.weight(.semibold))
+                // 11/22: pressed in a 44pt-tall area, not only on the words.
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.tint)

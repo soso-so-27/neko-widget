@@ -283,7 +283,7 @@ class NameIsTheCatMenu(unittest.TestCase):
     def test_dots_cap_at_seven(self):
         hero = block(HOME, "private struct CatHomeHero: View {")
         words = block(hero, "private var words: some View {")
-        self.assertIn("CatHomePageDots(count: pageCount, current: pageIndex)", words)
+        self.assertIn("CatHomePageDots(count: pageCount, current: pageIndex, names: pageNames, go: go)", words)
         self.assertIn("static let maxDots = 7", CORE)
         self.assertIn("ForEach(CatHomeHeroLayout.dots(count: count, current: current), id: \\.index) { dot in", HOME)
         self.assertIn("func testPageDotsCapAtSevenWithShrinkingEnds()", TESTS)
@@ -420,7 +420,8 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn(".accessibilityAddTraits(.isHeader)", body)
         self.assertEqual(body.count(".accessibilityElement("), 1)
         words = block(hero, "private var words: some View {")
-        self.assertEqual(words.count(".accessibilityHidden(true)"), 2)
+        # 11/22 (1122o): the line only; the page dots are buttons now.
+        self.assertEqual(words.count(".accessibilityHidden(true)"), 1)
 
     def test_the_items_are_the_same(self):
         items = block(HOME, "private func menuButton(_ cats: [CatHomeMenuCat]) -> some View {")

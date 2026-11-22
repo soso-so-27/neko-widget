@@ -697,7 +697,9 @@ struct ScanPresentation: Equatable {
         preliminaryCatAssets != nil || finalCatAssets != nil
     }
     var hasFinalResult: Bool { finalCatAssets != nil }
-    var hasDeferredAssets: Bool { deferredAssets > 0 }
+    /// 11/22: not while a search is running: it may still read them, and
+    /// 「読み込めなかった」 beside the spinner read as a failure.
+    var hasDeferredAssets: Bool { deferredAssets > 0 && !isScanning }
 
     var progress: Double {
         guard totalAssets > 0 else { return isScanning ? 0 : 1 }

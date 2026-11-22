@@ -418,6 +418,23 @@ enum GroupWindowSeen {
     }
 }
 
+/// 11/22 (D): photo → the ♡ count it showed last on this iPhone, for this
+/// person's own photos in one まど, so hearts that arrived since make its ♡
+/// bounce once. Missing or unreadable reads as empty. Written when the
+/// window's page marks its photos seen, never while scrolling.
+enum GroupHeartsShown {
+    private static func key(_ windowID: String) -> String { "groupWindow.heartsShown.v1." + windowID }
+
+    static func load(windowID: String) -> [String: Int] {
+        UserDefaults.standard.dictionary(forKey: key(windowID)) as? [String: Int] ?? [:]
+    }
+
+    static func save(_ counts: [String: Int], windowID: String) {
+        if counts.isEmpty { UserDefaults.standard.removeObject(forKey: key(windowID)) }
+        else { UserDefaults.standard.set(counts, forKey: key(windowID)) }
+    }
+}
+
 extension Notification.Name {
     /// New photos were kept, or a window's photos were seen (11/7).
     static let groupWindowNewPhotosDidChange = Notification.Name("jp.nekowidget.group.new-photos-did-change")
