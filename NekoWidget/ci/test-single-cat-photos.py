@@ -130,5 +130,42 @@ class SingleCatRule(unittest.TestCase):
         self.assertNotIn("#if ", tests)
 
 
+class OnlyCatAtHomeRule(unittest.TestCase):
+    """11/22: with several cats, a photo nobody decided is the photo of the
+    one cat home the day it was taken (迎えた日 to 旅立った日). Behaviour:
+    ci/verify-cat-household-identity.swift verifiesOnlyCatAtHomeRule."""
+
+    def test_rule_reads_the_days_and_writes_nothing(self):
+        rule = block(IDENTITY, "func homeDerivedProfileIDs(")
+        self.assertIn("profiles.count > 1", rule)
+        self.assertIn("!CatSingleCatRule.familyCatsOutsideProfiles", rule)
+        self.assertIn("lifeReference(for: .adoptionDay)", rule)
+        self.assertIn("return [:]", rule)  # a cat without 迎えた日: as before
+        self.assertIn("farewellDays?[profile.id.uuidString]", rule)
+        self.assertIn("home.count == 1", rule)
+        # Hand decisions win: an include anywhere, a linked album, this
+        # cat's exclusion and a household-wide exclusion.
+        self.assertIn("case .included:", rule)
+        self.assertIn("photoAlbumLink?.lastKnownAssetLocalIdentifiers", rule)
+        self.assertIn("excludedByProfile[home[0].profileID]", rule)
+        self.assertIn("globalExcludedAssets", rule)
+        for name in ("func homeDerivedProfileIDs(", "func homeDerivedProfileID("):
+            body = block(IDENTITY, name)
+            self.assertNotIn("setManualMembership", body)
+            self.assertNotIn("memberships.append", body)
+
+    def test_pages_widget_and_corrections_read_the_rule(self):
+        sets = block(MODEL, "private var catProfilePhotoSets: (")
+        self.assertIn("detectedCatPhotoDates: takenAt", sets)
+        sync = block(MODEL, "private func makeCloudyWindowMetadata(")
+        self.assertIn("homeDerivedProfileIDs(", sync)
+        self.assertIn("profiles.insert(homeCat)", sync)
+        key = block(MODEL, "func setCatProfileKeyPhoto(profileID: UUID, localIdentifier: String) async -> Bool")
+        self.assertLess(key.index("state.homeDerivedProfileID("), key.index("state.setProfileKeyPhoto("))
+        replace = block(MODEL, "func replaceCatProfileAssignments(")
+        self.assertIn("profileID == homeCat", replace)
+        self.assertIn("takenAt: takenAt[identifier]", replace)
+
+
 if __name__ == "__main__":
     unittest.main()

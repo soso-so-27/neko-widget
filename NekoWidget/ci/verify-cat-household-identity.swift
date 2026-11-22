@@ -31,6 +31,7 @@ enum CatHouseholdIdentityVerifier {
         try verifiesProfileTransferBoundaries()
         try verifiesReorderedProfilesKeepTheirOrder()
         try verifiesDeletedCatsPhotosStayOffTheRemainingCats()
+        try verifiesOnlyCatAtHomeRule()
         try verifiesPortablePhotoTransferNeedsExplicitConfirmation()
         try verifiesImportPlanSaysWhatApplyingDoes()
         try await verifiesProfileTransferCommitConflict()
@@ -1108,6 +1109,80 @@ enum CatHouseholdIdentityVerifier {
         // She can still be given one by hand.
         state.setManualMembership(assetLocalIdentifier: "for-ame", profileID: mugi, decision: .included)
         try require(state.confirmsAsset("for-ame", for: mugi), "a photo could not be given to the last cat")
+    }
+
+    /// 11/22: a photo taken while one cat was home is that cat's photo.
+    /// Synthetic household: the first cat came home in 2022, the second in 2025.
+    private static func verifiesOnlyCatAtHomeRule() throws {
+        let saved = CatSingleCatRule.familyCatsOutsideProfiles
+        defer { CatSingleCatRule.familyCatsOutsideProfiles = saved }
+        CatSingleCatRule.familyCatsOutsideProfiles = false
+        let first = fixedUUID("22222222-1122-4222-8222-000000000001")
+        let second = fixedUUID("22222222-1122-4222-8222-000000000002")
+        func adopted(_ year: Int, _ month: Int, _ day: Int) -> CatProfileLifeDates {
+            CatProfileLifeDates(adoptionDay: lifeReference(year: year, month: month, day: day).date)
+        }
+        func taken(_ year: Int, _ month: Int, _ day: Int) -> Date {
+            lifeReference(year: year, month: month, day: day).date.date()!
+        }
+        var state = emptyProfiledState()
+        state.upsertProfile(CatProfile(id: first, displayName: "合成ねこA", lifeDates: adopted(2022, 4, 10)))
+        state.upsertProfile(CatProfile(id: second, displayName: "合成ねこB", lifeDates: adopted(2025, 6, 10)))
+        let dates: [String: Date] = [
+            "y2021": taken(2021, 8, 15),          // before either cat came home
+            "y2022-day": taken(2022, 4, 10),      // the first cat's 迎えた日
+            "y2024": taken(2024, 8, 15),
+            "y2025-before": taken(2025, 6, 9),
+            "y2025-after": taken(2025, 7, 15),
+            "y2026": taken(2026, 3, 15),
+            "y2024-for-second": taken(2024, 9, 15),
+            "y2024-not-first": taken(2024, 10, 15),
+            "y2024-hidden": taken(2024, 11, 15)
+        ]
+        let detected = Set(dates.keys).union(["no-date"])
+        state.setManualMembership(assetLocalIdentifier: "y2024-for-second", profileID: second, decision: .included)
+        state.setManualMembership(assetLocalIdentifier: "y2024-not-first", profileID: first, decision: .excluded)
+        state.setGloballyExcluded(true, assetLocalIdentifiers: ["y2024-hidden"])
+
+        let sets = state.effectiveAssetIdentifiersByProfile(
+            detectedCatAssetIdentifiers: detected, detectedCatPhotoDates: dates)
+        try require(sets[first] == ["y2022-day", "y2024", "y2025-before"],
+                    "the first cat's photos were \((sets[first] ?? []).sorted())")
+        try require(sets[second] == ["y2024-for-second"],
+                    "the second cat's photos were \((sets[second] ?? []).sorted())")
+        try require(state.effectiveProfileIDs(for: "y2024", isDetectedCatPhoto: true, takenAt: dates["y2024"]) == [first]
+                    && state.effectiveProfileIDs(for: "y2025-after", isDetectedCatPhoto: true,
+                                                 takenAt: dates["y2025-after"]).isEmpty
+                    && state.effectiveProfileIDs(for: "no-date", isDetectedCatPhoto: true, takenAt: nil).isEmpty,
+                    "one photo's cats disagree with the sets")
+        try require(state.memberships.count == 2, "the rule wrote a decision")
+
+        // The first cat's 旅立った日: from the next day the second cat is the only one home.
+        var departed = state
+        departed.farewellDays = [first.uuidString: CatFarewellDay(year: 2025, month: 12, day: 31)]
+        let afterFarewell = departed.effectiveAssetIdentifiersByProfile(
+            detectedCatAssetIdentifiers: detected, detectedCatPhotoDates: dates)
+        try require(afterFarewell[second] == ["y2024-for-second", "y2026"]
+                    && afterFarewell[first] == ["y2022-day", "y2024", "y2025-before"],
+                    "after the 旅立った日 the photos were \(afterFarewell.mapValues { $0.sorted() })")
+
+        // A cat without 迎えた日, or a family-notebook cat outside the profiles: as before.
+        var undated = state
+        undated.upsertProfile(CatProfile(id: second, displayName: "合成ねこB", lifeDates: CatProfileLifeDates()))
+        try require(undated.homeDerivedProfileIDs(detectedCatPhotoDates: dates).isEmpty,
+                    "a household with a cat without 迎えた日 used the rule")
+        CatSingleCatRule.familyCatsOutsideProfiles = true
+        try require(state.homeDerivedProfileIDs(detectedCatPhotoDates: dates).isEmpty,
+                    "a family-notebook cat outside the profiles did not stop the rule")
+        CatSingleCatRule.familyCatsOutsideProfiles = false
+
+        // One cat: the single-cat rule, unchanged.
+        var one = state
+        one.removeProfile(id: second)
+        try require(one.homeDerivedProfileIDs(detectedCatPhotoDates: dates).isEmpty
+                    && one.effectiveAssetIdentifiers(for: first, detectedCatAssetIdentifiers: detected,
+                                                     detectedCatPhotoDates: dates).contains("no-date"),
+                    "the one-cat household changed")
     }
 
     private static func emptyProfiledState() -> CatHouseholdIdentityState {

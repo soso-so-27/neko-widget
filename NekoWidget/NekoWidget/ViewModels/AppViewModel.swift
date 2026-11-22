@@ -217,8 +217,16 @@ final class AppViewModel: ObservableObject {
         catProfilePhotoSets.assignments
     }
 
+    /// 11/22: when each detected cat photo was taken, for the only-cat-at-home
+    /// rule (CatHouseholdIdentityState.homeDerivedProfileIDs). Empty with
+    /// fewer than two cats, where the rule never applies.
+    var detectedCatPhotoDates: [String: Date] {
+        catProfilePhotoSets.takenAt
+    }
+
     private var catProfilePhotoSets: (
         detected: Set<String>,
+        takenAt: [String: Date],
         sets: [UUID: Set<String>],
         assignments: [String: Set<String>]
     ) {
@@ -226,18 +234,22 @@ final class AppViewModel: ObservableObject {
         let received = receivedPhotoIdentifiers
         if let cached = cachedCatProfilePhotoSets,
            cached.version == version, cached.received == received {
-            return (cached.detected, cached.sets, cached.assignments)
+            return (cached.detected, cached.takenAt, cached.sets, cached.assignments)
         }
         let detected = Self.singleCatDetectedPhotoIdentifiers(
             catAssets: presentationSnapshot.catAssets,
             received: received
         )
+        let takenAt = (catHouseholdIdentity?.profiles.count ?? 0) > 1
+            ? Self.detectedCatPhotoDates(catAssets: presentationSnapshot.catAssets, detected: detected)
+            : [:]
         let sets = catHouseholdIdentity?.effectiveAssetIdentifiersByProfile(
-            detectedCatAssetIdentifiers: detected
+            detectedCatAssetIdentifiers: detected,
+            detectedCatPhotoDates: takenAt
         ) ?? [:]
         let assignments = CatHouseholdIdentityState.profileIdentifiersByAsset(sets)
-        cachedCatProfilePhotoSets = (version, received, detected, sets, assignments)
-        return (detected, sets, assignments)
+        cachedCatProfilePhotoSets = (version, received, detected, takenAt, sets, assignments)
+        return (detected, takenAt, sets, assignments)
     }
 
     private static func singleCatDetectedPhotoIdentifiers(
@@ -249,6 +261,17 @@ final class AppViewModel: ObservableObject {
             detected.insert(asset.localIdentifier)
         }
         return detected
+    }
+
+    private static func detectedCatPhotoDates(
+        catAssets: [AssetRecord],
+        detected: Set<String>
+    ) -> [String: Date] {
+        var result = [String: Date](minimumCapacity: detected.count)
+        for asset in catAssets where detected.contains(asset.localIdentifier) {
+            if let date = asset.creationDate { result[asset.localIdentifier] = date }
+        }
+        return result
     }
 
     /// 11/14 確かな猫 for the app's own picks (covers, widgets, works): the
@@ -378,6 +401,7 @@ final class AppViewModel: ObservableObject {
         version: LibraryPresentationVersion,
         received: Set<String>,
         detected: Set<String>,
+        takenAt: [String: Date],
         sets: [UUID: Set<String>],
         assignments: [String: Set<String>]
     )?
@@ -2197,16 +2221,22 @@ final class AppViewModel: ObservableObject {
             return false
         }
         let detected = singleCatDetectedPhotoIdentifiers
+        let takenAt = detectedCatPhotoDates[localIdentifier]
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
                 // 11/13: a derived photo of the only cat is this cat's photo,
                 // but the model keeps the key photo explicit (it must survive
                 // a second profile), so it is included first in the same save.
+                // 11/22: so is a photo of the only cat home that day.
                 if state.isSingleCatDerivedAsset(
                     localIdentifier,
                     profileID: profileID,
                     isDetectedCatPhoto: detected.contains(localIdentifier)
-                ), !state.confirmsAsset(localIdentifier, for: profileID) {
+                ) || state.homeDerivedProfileID(
+                    for: localIdentifier,
+                    isDetectedCatPhoto: detected.contains(localIdentifier),
+                    takenAt: takenAt
+                ) == profileID, !state.confirmsAsset(localIdentifier, for: profileID) {
                     state.setManualMembership(
                         assetLocalIdentifier: localIdentifier,
                         profileID: profileID,
@@ -2336,6 +2366,7 @@ final class AppViewModel: ObservableObject {
         let requested = profileIDsByLocalIdentifier.filter { !$0.key.isEmpty }
         guard !requested.isEmpty else { return false }
         let detected = singleCatDetectedPhotoIdentifiers
+        let takenAt = detectedCatPhotoDates
         do {
             let committed = try await mutateCatHouseholdIdentity { state in
                 let validProfiles = Set(state.profiles.map(\.id))
@@ -2346,6 +2377,12 @@ final class AppViewModel: ObservableObject {
                 }
                 for (identifier, requestedProfiles) in requested {
                     let selected = requestedProfiles.intersection(validProfiles)
+                    // 11/22: read before this photo's writes change it.
+                    let homeCat = state.homeDerivedProfileID(
+                        for: identifier,
+                        isDetectedCatPhoto: detected.contains(identifier),
+                        takenAt: takenAt[identifier]
+                    )
                     for profileID in validProfiles {
                         let previous = state.membership(
                             for: identifier,
@@ -2359,6 +2396,11 @@ final class AppViewModel: ObservableObject {
                             profileID: profileID
                         ) || (profileID == state.singleCatProfileID
                             && detected.contains(identifier))
+                            // 11/22: likewise the only cat home that day, while
+                            // no other cat is chosen (choosing another is a hand
+                            // decision, which ends the rule for the photo).
+                            || (profileID == homeCat
+                                && selected.isSubset(of: [profileID]))
                         // Saving an unchanged album-derived assignment must not
                         // materialize it as a manual positive; otherwise unlinking
                         // the album would incorrectly retain every linked photo.
@@ -2386,7 +2428,8 @@ final class AppViewModel: ObservableObject {
             return requested.allSatisfy { identifier, selected in
                 committed.effectiveProfileIDs(
                     for: identifier,
-                    isDetectedCatPhoto: detected.contains(identifier)
+                    isDetectedCatPhoto: detected.contains(identifier),
+                    takenAt: takenAt[identifier]
                 ) == selected
             }
         } catch {
@@ -4426,15 +4469,22 @@ final class AppViewModel: ObservableObject {
         // writes the single-cat rule into them (the same derived set as the
         // cat's page). Nothing is added to the identity ledger.
         let singleCatID = catHouseholdIdentity?.singleCatProfileID
+        let detected = Self.singleCatDetectedPhotoIdentifiers(
+            catAssets: source.catAssets,
+            received: received
+        )
         let singleCatPhotos: Set<String> = singleCatID.flatMap { id in
             catHouseholdIdentity?.singleCatDerivedAssetIdentifiers(
                 for: id,
-                detectedCatAssetIdentifiers: Self.singleCatDetectedPhotoIdentifiers(
-                    catAssets: source.catAssets,
-                    received: received
-                )
+                detectedCatAssetIdentifiers: detected
             )
         } ?? []
+        // 11/22: with several cats, the only cat home the day it was taken.
+        let homeCats: [String: UUID] = (catHouseholdIdentity?.profiles.count ?? 0) > 1
+            ? catHouseholdIdentity?.homeDerivedProfileIDs(
+                detectedCatPhotoDates: Self.detectedCatPhotoDates(catAssets: source.catAssets, detected: detected)
+            ) ?? [:]
+            : [:]
         var metadata: [String: CloudyWindowPhotoMetadata] = [:]
         metadata.reserveCapacity(records.count)
         let confirmation = catHouseholdIdentity.map(CatProfileConfirmationIndex.init)
@@ -4442,6 +4492,9 @@ final class AppViewModel: ObservableObject {
             var profiles = confirmation?.confirmedProfileIDs(for: record.localIdentifier) ?? []
             if let singleCatID, singleCatPhotos.contains(record.localIdentifier) {
                 profiles.insert(singleCatID)
+            }
+            if let homeCat = homeCats[record.localIdentifier] {
+                profiles.insert(homeCat)
             }
             metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
                 burstIdentifier: record.burstIdentifier,

@@ -631,23 +631,37 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     /// exists and nothing has to be undone. A 「この子ではない」 (`excluded`)
     /// and a household-wide exclusion still win. With zero or several
     /// profiles this is `confirmedAssetIdentifiers(for:)` unchanged.
+    /// 11/22: with several cats, `detectedCatPhotoDates` (when each detected
+    /// photo was taken) adds the only-cat-at-home rule
+    /// (`homeDerivedProfileIDs`).
     func effectiveAssetIdentifiers(
         for profileID: UUID,
-        detectedCatAssetIdentifiers: Set<String>
+        detectedCatAssetIdentifiers: Set<String>,
+        detectedCatPhotoDates: [String: Date] = [:]
     ) -> Set<String> {
-        confirmedAssetIdentifiers(for: profileID).union(
+        var result = confirmedAssetIdentifiers(for: profileID).union(
             singleCatDerivedAssetIdentifiers(
                 for: profileID,
                 detectedCatAssetIdentifiers: detectedCatAssetIdentifiers
             )
         )
+        for (identifier, homeCat) in homeDerivedProfileIDs(
+            detectedCatPhotoDates: detectedCatPhotoDates.filter {
+                detectedCatAssetIdentifiers.contains($0.key)
+            }
+        ) where homeCat == profileID {
+            result.insert(identifier)
+        }
+        return result
     }
 
     /// The profiles one photo effectively belongs to: `confirmedProfileIDs`
-    /// plus, for a detected cat photo, the only cat unless it is excluded.
+    /// plus, for a detected cat photo, the only cat unless it is excluded,
+    /// or (11/22, with `takenAt`) the only cat home the day it was taken.
     func effectiveProfileIDs(
         for assetLocalIdentifier: String,
-        isDetectedCatPhoto: Bool
+        isDetectedCatPhoto: Bool,
+        takenAt: Date? = nil
     ) -> Set<UUID> {
         var result = confirmedProfileIDs(for: assetLocalIdentifier)
         if let singleCatProfileID,
@@ -659,19 +673,35 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
            ) != .excluded {
             result.insert(singleCatProfileID)
         }
+        if let homeCat = homeDerivedProfileID(
+            for: assetLocalIdentifier,
+            isDetectedCatPhoto: isDetectedCatPhoto,
+            takenAt: takenAt
+        ) {
+            result.insert(homeCat)
+        }
         return result
     }
 
     /// Every profile's effective photo set, computed once per call.
     func effectiveAssetIdentifiersByProfile(
-        detectedCatAssetIdentifiers: Set<String>
+        detectedCatAssetIdentifiers: Set<String>,
+        detectedCatPhotoDates: [String: Date] = [:]
     ) -> [UUID: Set<String>] {
-        Dictionary(uniqueKeysWithValues: profiles.map { profile in
+        var result = Dictionary(uniqueKeysWithValues: profiles.map { profile in
             (profile.id, effectiveAssetIdentifiers(
                 for: profile.id,
                 detectedCatAssetIdentifiers: detectedCatAssetIdentifiers
             ))
         })
+        for (identifier, homeCat) in homeDerivedProfileIDs(
+            detectedCatPhotoDates: detectedCatPhotoDates.filter {
+                detectedCatAssetIdentifiers.contains($0.key)
+            }
+        ) {
+            result[homeCat, default: []].insert(identifier)
+        }
+        return result
     }
 
     /// The inverse of `effectiveAssetIdentifiersByProfile`: each photo's
@@ -707,6 +737,83 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         return detectedCatAssetIdentifiers
             .subtracting(excludedForProfile)
             .subtracting(globallyExcluded)
+    }
+
+    // MARK: Only-cat-at-home rule (11/22)
+
+    /// 11/22: with several cats, a detected cat photo nobody has decided is
+    /// the photo of the one cat that was home the day it was taken: from its
+    /// 迎えた日 to its 旅立った日 (`farewellDays`), or with no such day from
+    /// then on. So a second cat leaves the first cat's earlier photos hers.
+    /// Like the single-cat rule nothing is written; it is derived at read
+    /// time. Empty while any cat has no 迎えた日 or a family-notebook cat lies
+    /// outside the profiles. No entry for a photo without a date or a day
+    /// with no cat or several cats home. What the person decided by hand
+    /// wins: a photo included for any cat or in a linked album, 「この子では
+    /// ない」 for the cat home that day, or excluded household-wide, is left
+    /// as it is. The single-cat rule covers the one-cat household.
+    func homeDerivedProfileIDs(
+        detectedCatPhotoDates: [String: Date]
+    ) -> [String: UUID] {
+        guard profiles.count > 1,
+              !CatSingleCatRule.familyCatsOutsideProfiles,
+              !detectedCatPhotoDates.isEmpty else { return [:] }
+        var spans: [(profileID: UUID, from: Int, until: Int?)] = []
+        for profile in profiles {
+            guard let adoption = profile.lifeReference(for: .adoptionDay)?.inGregorian().date else {
+                return [:]
+            }
+            let farewell = farewellDays?[profile.id.uuidString]
+            spans.append((
+                profile.id,
+                Self.homeDayKey(adoption.year, adoption.month, adoption.day),
+                farewell.map { Self.homeDayKey($0.year, $0.month, $0.day) }
+            ))
+        }
+        var decided = Set(globalExcludedAssets.map(\.localIdentifier))
+        var excludedByProfile: [UUID: Set<String>] = [:]
+        for membership in memberships {
+            switch membership.decision {
+            case .included:
+                decided.insert(membership.assetLocalIdentifier)
+            case .excluded:
+                excludedByProfile[membership.profileID, default: []]
+                    .insert(membership.assetLocalIdentifier)
+            case .unknown:
+                break
+            }
+        }
+        for profile in profiles {
+            decided.formUnion(profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? [])
+        }
+        var result: [String: UUID] = [:]
+        for (identifier, takenAt) in detectedCatPhotoDates where !decided.contains(identifier) {
+            guard let taken = CatLifeDate(date: takenAt) else { continue }
+            let day = Self.homeDayKey(taken.year, taken.month, taken.day)
+            let home = spans.filter { span in
+                span.from <= day && (span.until.map { day <= $0 } ?? true)
+            }
+            guard home.count == 1,
+                  excludedByProfile[home[0].profileID]?.contains(identifier) != true else { continue }
+            result[identifier] = home[0].profileID
+        }
+        return result
+    }
+
+    /// One detected photo's cat under `homeDerivedProfileIDs`, or nil.
+    func homeDerivedProfileID(
+        for assetLocalIdentifier: String,
+        isDetectedCatPhoto: Bool,
+        takenAt: Date?
+    ) -> UUID? {
+        guard isDetectedCatPhoto, let takenAt else { return nil }
+        return homeDerivedProfileIDs(
+            detectedCatPhotoDates: [assetLocalIdentifier: takenAt]
+        )[assetLocalIdentifier]
+    }
+
+    private static func homeDayKey(_ year: Int, _ month: Int, _ day: Int) -> Int {
+        year * 10_000 + month * 100 + day
     }
 
     /// 11/13: call just before a second profile is added. Derived photos stop
