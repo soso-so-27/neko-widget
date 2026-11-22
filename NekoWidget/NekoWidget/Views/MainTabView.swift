@@ -543,6 +543,8 @@ struct MainTabView: View {
     @State private var showsSettings = false
     /// The first Plus offer, once, on a later opening (FirstPlusOfferPolicy).
     @State private var showsFirstPlusOffer = false
+    /// Read when that offer shows: a work can be opened (11/22, ④).
+    @State private var firstPlusOfferHasWork = true
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
@@ -745,7 +747,8 @@ struct MainTabView: View {
         .sheet(isPresented: $showsFirstPlusOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
         }) {
-            MembershipOfferSheet(model: .live(), context: .onboarding) { _ in showsFirstPlusOffer = false }
+            MembershipOfferSheet(model: .live(), context: .onboarding,
+                                 worksFirst: firstPlusOfferHasWork) { _ in showsFirstPlusOffer = false }
         }
         // The Plus screen opens over its own cat (the best candidate, favorites
         // first) from every tab and sheet below, Settings included.
@@ -1916,6 +1919,8 @@ struct MainTabView: View {
             otherScreenPresented: presented) else { return }
         FirstPlusOfferPolicy.promptedThisLaunch = true
         FirstPlusOfferPolicy.noteShown(defaults: defaults)
+        // 11/22 (④): with no work to open yet, the works' row goes last.
+        firstPlusOfferHasWork = !albumMonthlyWindowLetters.isEmpty
         showsFirstPlusOffer = true
     }
 

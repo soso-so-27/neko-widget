@@ -197,6 +197,7 @@ python3 ci/test-vet-1121q.py
 python3 ci/test-family2-1121r.py
 python3 ci/test-mado3-1121s.py
 python3 ci/test-hide-movie-1122b.py
+python3 ci/test-plus-prompt-1122az.py
 python3 ci/test-ux-1122c.py
 python3 ci/test-ux-restore-1122h.py
 python3 ci/test-family-cat-link.py

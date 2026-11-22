@@ -3103,7 +3103,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("!membershipAccess.hasPersonalPlus()", offer)
         self.assertIn("FirstPlusOfferPolicy.promptedThisLaunch = true", offer)
         self.assertIn("FirstPlusOfferPolicy.noteShown(defaults: defaults)", offer)
-        self.assertLess(main.index("MembershipOfferSheet(model: .live(), context: .onboarding)"),
+        # 11/22 (④): the first offer also says whether a work can be opened.
+        self.assertLess(main.index("MembershipOfferSheet(model: .live(), context: .onboarding,\n"
+                                   "                                 worksFirst: firstPlusOfferHasWork)"),
                         main.index(".environment(\\.plusOfferPhoto, bestShowcaseCandidate.map {"),
                         "the first offer must show the person's own cat")
         review = section(main, "private func askForReviewAfterPhotoIfDue() async {", "@ViewBuilder")
