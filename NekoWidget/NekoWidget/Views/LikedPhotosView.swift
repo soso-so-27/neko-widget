@@ -2972,8 +2972,8 @@ struct PhotoBrowserView: View {
         .accessibilityIdentifier("photo-browser-group-source")
     }
 
-    /// The three things people do with a photo, as icons under it:
-    /// お気に入り, メモ, 共有. Everything rarer stays in 「…」.
+    /// The two things people do with a photo, as icons under it:
+    /// お気に入り and メモ. Everything rarer stays in 「…」.
     private func quickActions(_ photo: PhotoPresentation) -> some View {
         let saved = confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked
         let noteState = personalNote.state(for: photo.localIdentifier)
@@ -3007,28 +3007,9 @@ struct PhotoBrowserView: View {
             .accessibilityHint("自分だけのメモです。相手には送られません")
             .disabled(isExportingMemoryPhoto || noteState.isLoading)
 
-            if exportMemoryPhoto != nil {
-                // The public page names this action 「写真を書き出す」; the caption is its short form.
-                Button {
-                    beginMemoryPhotoExport(photo.localIdentifier)
-                } label: {
-                    VStack(spacing: 3) {
-                        Label("写真を書き出す", systemImage: "square.and.arrow.up")
-                            .labelStyle(.iconOnly)
-                            .font(.title3)
-                        Text("書き出す").font(.footnote)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                    // 11/7: full-contrast on the black viewer (was a small gray caption).
-                    .foregroundStyle(Color.primary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("写真を書き出す")
-                .accessibilityHint("位置情報などを除いた画像を共有します")
-                .accessibilityIdentifier("photo-browser-export")
-                .disabled(isExportingMemoryPhoto)
-            }
+            // 11/22: 「写真を書き出す」 moved into 「…」. Sending to family is
+            // 「まどに届ける」 right below, and the photo is already in the
+            // Photos app; two send buttons side by side made people choose.
         }
         .accessibilityElement(children: .contain)
     }
@@ -3131,7 +3112,7 @@ struct PhotoBrowserView: View {
                 ToolbarItem(placement: .principal) { titleDate(selectedPhoto) }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                // お気に入り・メモ・共有 are under the photo. 「…」 holds the rest.
+                // お気に入り・メモ are under the photo. 「…」 holds the rest.
                 Menu {
                     // 「この1枚」 has the same link under the photo; one door (11/8).
                     if rediscoveryEnabled, navigationTitleText != "この1枚",
@@ -3148,6 +3129,17 @@ struct PhotoBrowserView: View {
                         Label("関連する写真", systemImage: "rectangle.stack")
                     }
                     .disabled((relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty)
+                    if exportMemoryPhoto != nil {
+                        // The public page (privacy 12) names this action 「写真を書き出す」.
+                        Button {
+                            beginMemoryPhotoExport(selectedPhotoIdentifier)
+                        } label: {
+                            Label("写真を書き出す", systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityHint("位置情報などを除いた画像を共有します")
+                        .accessibilityIdentifier("photo-browser-export")
+                        .disabled(isExportingMemoryPhoto)
+                    }
                     // 「見せる写真に追加」 is done from 写真を見せる's own picker, not here.
                     // Saving is 自動保存 only (10/31): no one-photo copy from here.
                     Divider()

@@ -60,7 +60,7 @@ struct OnboardingView: View {
 
             case .widgetGuide:
                 if isWidgetPlaced {
-                    OnboardingWidgetPlacedPage(close: finish)
+                    OnboardingWidgetPlacedPage(photo: resultPhotos.first, close: finish)
                 } else {
                     WidgetPlacementGuideView(
                         onComplete: finish,
@@ -782,15 +782,49 @@ private struct OnboardingScanPage: View {
 /// sentence, one button into the 写真 tab. Plus is not offered here; the
 /// person has not met their cat on the Home Screen yet.
 private struct OnboardingWidgetPlacedPage: View {
+    /// 11/22: the first found cat, in the Widget's shape, under the Widget's
+    /// 「くもり」 that clears once. Nil (or a photo that cannot load): the check.
+    let photo: PhotoPresentation?
     let close: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var photoLoaded = false
+    @State private var photoFailed = false
+    @State private var cleared = false
+
+    /// About a Small Widget's size, with the Widget's corner (NekoRadius.hero).
+    private static let photoSide: CGFloat = 148
 
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56, weight: .regular))
-                .foregroundStyle(.tint)
+            if let photo, !photoFailed {
+                CloudyFrostPhoto(isCloudy: !cleared && !reduceMotion, reduceMotion: reduceMotion) {
+                    PhotoAssetImageView(
+                        localIdentifier: photo.localIdentifier,
+                        catBoundingBox: photo.catBoundingBox,
+                        targetPixelSize: CGSize(width: 480, height: 480),
+                        networkAccessAllowed: false,
+                        onLoadResult: { loaded in
+                            if loaded { photoLoaded = true } else { photoFailed = true }
+                        }
+                    )
+                }
+                .frame(width: Self.photoSide, height: Self.photoSide)
+                .clipShape(RoundedRectangle(cornerRadius: NekoRadius.hero, style: .continuous))
                 .accessibilityHidden(true)
+                // Once, a moment after the photo is there (never on a redraw).
+                .task(id: photoLoaded) {
+                    guard photoLoaded, !cleared, !reduceMotion else { return }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    cleared = true
+                }
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 56, weight: .regular))
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+            }
             Text(OnboardingPresentationCopy.widgetPlacedTitle)
                 .font(.title2.bold())
                 .accessibilityAddTraits(.isHeader)

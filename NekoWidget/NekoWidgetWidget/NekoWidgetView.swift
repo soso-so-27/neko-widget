@@ -164,11 +164,20 @@ struct NekoWidgetView: View {
                                     // the longest form that fits on one line, never a cut
                                     // word; then the last form a little smaller; then the
                                     // hand alone. VoiceOver keeps the whole sentence.
+                                    // 11/22: a 節目 or a work's day leads with its own
+                                    // symbol (CloudyWindowDayText.tagSymbol), and drops it
+                                    // first when space is short, before any smaller size.
                                     Button(intent: RevealCloudyWindowIntent(selection: selection)) {
                                         let forms = CloudyWindowDayText.revealForms(selection)
+                                        let symbol = CloudyWindowDayText.tagSymbol(selection)
+                                        let daySymbol = symbol != CloudyWindowDayText.tapSymbol
                                         ViewThatFits(in: .horizontal) {
-                                            ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0]).dayWordsProbe($0) }
-                                            revealCapsuleChrome(ReducedRevealLabel(text: forms[forms.count - 1])
+                                            ForEach(forms.indices, id: \.self) { revealCapsule(forms[$0], symbol: symbol).dayWordsProbe($0) }
+                                            if daySymbol {
+                                                revealCapsuleChrome(Text(forms[forms.count - 1])
+                                                    .font(.caption.weight(.semibold))).dayWordsProbe(3)
+                                            }
+                                            revealCapsuleChrome(ReducedRevealLabel(text: forms[forms.count - 1], showsSymbol: !daySymbol)
                                                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)).dayWordsProbe(4)
                                             revealCapsuleChrome(Image(systemName: "hand.tap.fill")
                                                 .font(.caption.weight(.semibold))).dayWordsProbe(5)
@@ -249,9 +258,10 @@ struct NekoWidgetView: View {
             .accessibilityHidden(true)
     }
 
-    /// The cloudy window's tag: what clearing shows, one line.
-    private func revealCapsule(_ text: String) -> some View {
-        revealCapsuleChrome(Label(text, systemImage: "hand.tap.fill")
+    /// The cloudy window's tag: what clearing shows, one line, after the
+    /// hand or the day's own symbol (11/22) at the same size and colour.
+    private func revealCapsule(_ text: String, symbol: String = CloudyWindowDayText.tapSymbol) -> some View {
+        revealCapsuleChrome(Label(text, systemImage: symbol)
             .font(.caption.weight(.semibold)))
     }
 
@@ -868,10 +878,18 @@ private extension View {
 private struct ReducedRevealLabel: View {
     @ScaledMetric(relativeTo: .caption) private var size: CGFloat = 12
     let text: String
+    /// False on a 節目 or a work's day: its symbol has already gone (11/22).
+    var showsSymbol = true
 
     var body: some View {
-        Label(text, systemImage: "hand.tap.fill")
-            .font(.system(size: size * 0.8, weight: .semibold))
+        Group {
+            if showsSymbol {
+                Label(text, systemImage: CloudyWindowDayText.tapSymbol)
+            } else {
+                Text(text)
+            }
+        }
+        .font(.system(size: size * 0.8, weight: .semibold))
     }
 }
 

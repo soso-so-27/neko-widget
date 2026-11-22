@@ -2974,7 +2974,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("advance()", installed)
         self.assertIn("isWidgetPlaced: widgetInstallationChecker.isInstalled,", app_root)
         onboarding_view = source("NekoWidget/Views/OnboardingView.swift")
-        self.assertIn("if isWidgetPlaced {\n                    OnboardingWidgetPlacedPage(close: finish)", onboarding_view)
+        self.assertIn("if isWidgetPlaced {\n                    OnboardingWidgetPlacedPage(photo: resultPhotos.first, close: finish)", onboarding_view)
         self.assertNotIn("(.widgetGuide, .plusOffer)", app_root)
         # The cloudy images are prepared when the guide opens, before the
         # person reaches the Home Screen (11/10).
@@ -8039,7 +8039,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertLess(footer.index("groupFavoriteSourceView(source)"), footer.index("quickActions(selectedPhoto)"))
         self.assertIn("source.localIdentifier == selectedPhoto.localIdentifier", footer)
         view = section(self.browser, "private func groupFavoriteSourceView(_ source: GroupFavoriteSource) -> some View {",
-                       "/// The three things people do with a photo")
+                       "/// The two things people do with a photo")
         self.assertLess(view.index("Text(source.senderLabel)"), view.index("Text(caption)"))
         self.assertIn(".foregroundStyle(.secondary)", view)
         self.assertIn('"photo-browser-group-source"', view)
