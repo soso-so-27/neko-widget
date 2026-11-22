@@ -766,6 +766,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture",
             "--review-public-presentation", "--owner-store-capture", "--tools-hub-light",
             "--app-store-screenshot-album", "--app-store-screenshot-cat-care", "--group-window-screens-fixture"]
+        if screen == "konoko" { app.launchArguments.append("--cat-home-care-fixture") }
         app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
         app.launchEnvironment["NEKO_CAPTURE_SCREEN"] = screen
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
@@ -780,6 +781,46 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.buttons["photos-section-all"].tap()
         XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]))
         captureScreenshot(named: "02_photos")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreRefreshPhotoGrid() throws {
+        let app = try launchOwnerCapture("photo-grid")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        app.buttons["photos-section-all"].tap()
+        XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1), (2, 1), (3, 1)]))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.36))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: [27, 28, 29, 30, 9, 10, 11]))
+        captureScreenshot(named: "15_photos_grid_405")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreRefreshAlbumShelf() throws {
+        let app = try launchOwnerCapture("album-refresh")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
+        XCTAssertTrue(app.buttons["album-prototype-latest"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)["album-prototype-shelf"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAnyFixturePhoto(in: app, numbers: Array(19...24)))
+        captureScreenshot(named: "16_album_shelf_405")
+        app.terminate()
+    }
+
+    @MainActor
+    func testCaptureOwnerStoreRefreshCatHome() throws {
+        let app = try launchOwnerCapture("konoko")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
+        chooseHomeCat("11111111-1111-4111-8111-111111111111", application: app)
+        let hero = app.staticTexts.matching(identifier: "cat-home-hero")
+            .matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "むぎ、", "歳")).firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 10))
+        for row in ["birthday", "vaccine", "vet", "weight"] {
+            XCTAssertTrue(app.descendants(matching: .any)["cat-home-care-" + row].firstMatch.waitForExistence(timeout: 15))
+        }
+        captureScreenshot(named: "17_konoko_405")
         app.terminate()
     }
 
