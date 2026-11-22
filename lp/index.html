@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light only">
   <title>ねこのまど</title>
   <meta name="claude:viewport-fit-sides" content="cover">
-  <meta name="description" content="撮りためた猫の写真に、毎日会える。iPhoneの中の猫の写真を見つけて、ホーム画面のウィジェットに毎日ちがう1枚を出すアプリです。">
+  <meta name="description" content="撮りためた猫の写真に、毎日会える。iPhoneの中から猫の写真だけを見つけて、ホーム画面のウィジェットに毎日ちがう1枚を出すアプリです。">
   <!-- 公開するまでは検索に出さない。公開するときに外す。 -->
   <meta name="robots" content="noindex, nofollow">
   <!-- SNS で共有されたときの見え方。公開先の URL に合わせる。 -->
@@ -33,143 +33,124 @@
 
 <main id="top">
 
-<!-- 背景は1日の空。スクロールで、夜明け→朝→昼→夕方→夜と移る。 -->
-<div class="daysky" aria-hidden="true"></div>
-
-<!-- 夜のまど。開いて少しすると（またはスクロールすると）夜が明けて、くもりが晴れる -->
-<section class="hero dark" data-hero data-sky="#fdf1e2">
-  <div class="sky" aria-hidden="true"><i class="sky-morning"></i><i class="sky-night"></i><i class="stars"></i><i class="sun"></i></div>
+<!-- 最初の1画面：ホーム画面にうちの子が出ている姿と、何をするアプリか -->
+<section class="hero">
   <div class="hero-in">
-    <div class="night" aria-hidden="true">
-      <div class="win">
-        <div class="arch">
-          <img class="cat" src="images/photo-grey-bed.webp" alt="" style="object-position: 66% 40%">
-          <i class="mist"></i><svg class="spaw" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-          <i class="bar v"></i><i class="bar h"></i>
+    <div class="hero-pic" aria-hidden="true">
+      <div class="phone tilt">
+        <div class="island"></div>
+        <div class="screen home">
+          <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
+          <div class="widget"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%"><span class="chip">きょう</span></div>
+          <p class="wname">ねこのまど</p>
+          <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i><i class="a5"></i><i class="a6"></i><i class="a7"></i></div>
         </div>
-        <i class="sill"></i>
-        <img class="nowa-sill" src="images/nowa-peek.webp" alt="" width="640" height="409">
       </div>
+      <img class="nowa-peek" src="images/nowa-peek.webp" alt="" width="640" height="409">
     </div>
     <div class="hero-words">
-      <h1>毎朝、まどの向こうに、<br>うちの子。</h1>
-      <p class="ans">撮りためた猫の写真から、毎日ちがう1枚をホーム画面に。</p>
-      <a class="store" href="https://apps.apple.com/jp/app/id6801962436"><img class="b-dark" src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"><img class="b-light" src="images/app-store-badge-white.svg" alt="" width="152" height="56"></a>
-      <ul class="sure"><li>無料ではじめられる</li><li>写真はiPhoneの中で</li><li>広告なし</li></ul>
+      <h1>撮りためた猫の写真に、<br>毎日会える。</h1>
+      <p class="sub">iPhoneの中から猫の写真だけを見つけて、ホーム画面に毎日ちがう1枚。</p>
+      <a class="store" id="hero-cta" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
+      <ul class="sure"><li>無料ではじめられる</li><li>写真はiPhoneの外に出ない</li></ul>
     </div>
   </div>
 </section>
 
-<section class="feat feat-1" data-feat data-sky="#fff4e3">
+<!-- ここからは「見出し＋1〜2行＋画面1枚」のくり返し -->
+<section class="feat">
   <div class="feat-in">
-    <div class="words" data-rise><p class="kick">ホーム画面</p><h2>くもりを晴らすと、<br>きょうの1枚。</h2><p class="line">おととい、きのう、きょう。ホーム画面で、毎日ちがう子に会える。</p></div>
-    <div class="ph" aria-hidden="true">
-      <img class="nowa-peek" src="images/nowa-peek.webp" alt="" width="640" height="409">
-      <div class="phone"><div class="island"></div><div class="screen"><div class="scr scr-home">
-        <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
-        <div class="widget">
-              <div class="days">
-                <img class="d d0" src="images/photo-lap.webp" alt="">
-                <img class="d d1" src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%">
-                <img class="d d2" src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 50%">
-              </div>
-              <div class="frost"><img class="fb" src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 50%"><i class="fog"></i>
-                <svg class="paw paw-1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-                <svg class="paw paw-2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-                <span class="tag">タップで、きょうの1枚</span>
-              </div>
-              <span class="day-label"><b class="l0">おととい</b><b class="l1">きのう</b><b class="l2">きょう</b></span>
-            </div>
-            <p class="wname">ねこのまど</p>
-            <div class="apps"><span class="app a0"><i></i><small>カレンダー</small></span><span class="app a1"><i></i><small>写真</small></span><span class="app a2"><i></i><small>カメラ</small></span><span class="app a3"><i></i><small>天気</small></span><span class="app a4"><i></i><small>時計</small></span><span class="app a5"><i></i><small>地図</small></span><span class="app a6"><i></i><small>メモ</small></span><span class="app a7"><i></i><small>設定</small></span></div>
-            <div class="dock"><i class="d1"></i><i class="d2"></i><i class="d3"></i><i class="d4"></i></div>
-      </div></div></div>
+    <div class="words">
+      <h2>選ばなくていい。</h2>
+      <p>スクショもレシートも、まざらない。猫の写真だけを、iPhoneの中で見つけます。</p>
+    </div>
+    <div class="pic" aria-hidden="true">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="screen white">
+          <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
+          <p class="app-title">写真</p>
+          <p class="app-tabs"><b>すべて</b><span>お気に入り</span><span>メモ</span></p>
+          <div class="grid">
+            <img src="images/photo-grey-bed.webp" alt=""><img src="images/photo-two-cats.webp" alt=""><img src="images/photo-lap.webp" alt="">
+            <img src="images/photo-grey-chair.webp" alt=""><img src="images/photo-stretch.webp" alt=""><img src="images/photo-grey-yawn.webp" alt="">
+            <img src="images/photo-grey-ball.webp" alt=""><img src="images/photo-sofa.webp" alt=""><img src="images/photo-two-cats.webp" alt="" style="object-position: 15% 50%">
+            <img src="images/photo-stretch.webp" alt="" style="object-position: 80% 50%"><img src="images/photo-lap.webp" alt="" style="object-position: 50% 20%"><img src="images/photo-grey-chair.webp" alt="" style="object-position: 50% 70%">
+          </div>
+          <p class="count">猫の写真 2,402枚</p>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="feat feat-2" data-feat data-sky="#e8f2fd">
+<section class="feat">
   <div class="feat-in">
-    <div class="words" data-rise><p class="kick">写真</p><h2>ひらけば、ぜんぶ猫。</h2><p class="line">スクショもレシートも、まざらない。猫かどうかはiPhoneの中で見分けます。</p></div>
-    <div class="ph" aria-hidden="true">
-      <div class="phone"><div class="island"></div><div class="screen"><div class="scr scr-photos">
-        <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
-        <p class="app-title">写真</p>
-            <p class="app-tabs"><b>すべて</b><span>お気に入り</span><span>メモ</span></p>
-            <div class="grid mixed">
-              <i class="x"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
-              <img src="images/photo-grey-bed.webp" alt="">
-              <img class="x" src="images/photo-everyday-food.webp" alt="">
-              <img src="images/photo-two-cats.webp" alt="">
-              <i class="x"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path class="ln" d="M9.5 7h5M9.5 10h5M9.5 13h3"/></svg></i>
-              <img src="images/photo-lap.webp" alt="">
-              <img class="x" src="images/photo-everyday-table.webp" alt="">
-              <img src="images/photo-grey-chair.webp" alt="">
-              <i class="x"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
-              <img src="images/photo-stretch.webp" alt="">
-              <img class="x" src="images/photo-everyday-landscape.webp" alt="">
-              <img src="images/photo-grey-yawn.webp" alt="">
-            </div>
-            <div class="grid cats">
-              <img src="images/photo-grey-bed.webp" alt=""><img src="images/photo-two-cats.webp" alt=""><img src="images/photo-lap.webp" alt="">
-              <img src="images/photo-grey-chair.webp" alt=""><img src="images/photo-stretch.webp" alt=""><img src="images/photo-grey-yawn.webp" alt="">
-              <img src="images/photo-grey-ball.webp" alt=""><img src="images/photo-two-cats.webp" alt="" style="object-position: 15% 50%"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 30% 60%">
-              <img src="images/photo-stretch.webp" alt="" style="object-position: 80% 50%"><img src="images/photo-lap.webp" alt="" style="object-position: 50% 20%"><img src="images/photo-grey-chair.webp" alt="" style="object-position: 50% 70%">
-            </div>
-            <p class="count"><b>猫の写真</b> 2,402枚</p>
-      </div></div></div>
+    <div class="words">
+      <h2>くもりを晴らして、<br>きょうの1枚。</h2>
+      <p>ホーム画面のまどは、毎日くもって届きます。タップすると、晴れて会える。</p>
+    </div>
+    <div class="pic" aria-hidden="true">
+      <!-- 短い動きを1つだけ：見えているあいだ、くもり→タップ→晴れるをくり返す -->
+      <div class="clip" data-clip>
+        <img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%">
+        <div class="frost"><img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"><i class="fog"></i>
+          <svg class="paw p1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
+          <svg class="paw p2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
+          <span class="tag">タップで、きょうの1枚</span>
+        </div>
+        <i class="touch"></i>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="feat feat-3" data-feat data-sky="#fde5d5">
+<section class="feat">
   <div class="feat-in">
-    <div class="words" data-rise><p class="kick">まど</p><h2>トークだと流れる1枚を、<br>家族のホーム画面に。</h2><p class="line">招待した人だけの、小さなまど。招待された家族は無料。</p></div>
-    <div class="ph" aria-hidden="true">
-      <div class="phone"><div class="island"></div><div class="screen"><div class="scr scr-mado">
-        <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
-        <div class="chat">
-              <p class="msg me">かわいい〜！</p><p class="msg">今日の夕飯なに？</p><p class="msg me">カレーがいい</p>
-              <p class="msg">牛乳買ってきて</p><p class="msg me">了解</p><p class="msg">明日は雨だって</p>
-              <p class="msg me">傘持ってく</p><p class="msg">駅まで迎えに行こうか</p>
-            </div>
-            <div class="widget mado-w">
-              <img src="images/photo-grey-yawn.webp" alt="" style="object-position: 50% 30%">
-              <span class="from"><i>ママ</i>ママから・いま届いた1枚</span>
-              <span class="heart">♥</span>
-            </div>
-            <p class="wname">実家のまど</p>
-      </div></div></div>
+    <div class="words">
+      <h2>家族のホーム画面にも、<br>うちの子。</h2>
+      <p>トークだと流れてしまう1枚を、招待した家族のまどに届けます。招待された家族は無料。</p>
+    </div>
+    <div class="pic" aria-hidden="true">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="screen home">
+          <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
+          <div class="widget"><img src="images/photo-grey-yawn.webp" alt="" style="object-position: 50% 30%"><span class="from"><i>ママ</i>ママから・いま届いた1枚</span><span class="heart">♥</span></div>
+          <p class="wname">実家のまど</p>
+          <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i><i class="a5"></i><i class="a6"></i><i class="a7"></i></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="feat feat-4" data-feat data-sky="#ece6f7">
+<section class="feat">
   <div class="feat-in">
-    <div class="words" data-rise><p class="kick">月の作品</p><h2>毎月1日、<br>先月が1冊になって届く。</h2><p class="line">Plus・はじめの14日間は無料</p></div>
-    <div class="ph" aria-hidden="true">
-      <div class="phone"><div class="island"></div><div class="screen"><div class="scr scr-album">
-        <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
-        <p class="app-title">アルバム</p>
-            <div class="book">
-              <div class="pages">
-                <img src="images/photo-grey-bed.webp" alt=""><img src="images/photo-lap.webp" alt="">
-                <img src="images/photo-grey-ball.webp" alt=""><img src="images/photo-stretch.webp" alt="">
-              </div>
-              <div class="cover">
-                <img src="images/photo-two-cats.webp" alt="" style="object-position: 60% 50%">
-                <p><small>とどきました</small><b>10月</b>うちの子</p>
-              </div>
-            </div>
-      </div></div></div>
+    <div class="words">
+      <h2>毎月1日、<br>先月が1冊になって届く。</h2>
+      <p>その月の猫の写真から、アプリが1冊にまとめます。Plus（はじめの14日間は無料）。</p>
+    </div>
+    <div class="pic" aria-hidden="true">
+      <div class="phone">
+        <div class="island"></div>
+        <div class="screen white">
+          <div class="status"><b>9:41</b><span class="sys"><svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx=".8"/><rect x="5" y="5.5" width="3" height="6.5" rx=".8"/><rect x="10" y="3" width="3" height="9" rx=".8"/><rect x="15" y="0" width="3" height="12" rx=".8"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.5 5.6 9a3.4 3.4 0 0 1 4.8 0z"/><path d="M8 5.6a6.2 6.2 0 0 1 4.4 1.8l-1.3 1.3a4.4 4.4 0 0 0-6.2 0L3.6 7.4A6.2 6.2 0 0 1 8 5.6z"/><path d="M8 1.6a10 10 0 0 1 7.1 2.9l-1.3 1.3a8.2 8.2 0 0 0-11.6 0L.9 4.5A10 10 0 0 1 8 1.6z"/></svg><svg class="bat" viewBox="0 0 26 12"><rect x=".6" y=".6" width="22" height="10.8" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><rect x="2.2" y="2.2" width="16" height="7.6" rx="2"/><rect x="23.6" y="4" width="1.8" height="4" rx=".9" opacity=".45"/></svg></span></div>
+          <p class="app-title">アルバム</p>
+          <div class="book">
+            <img src="images/photo-two-cats.webp" alt="" style="object-position: 60% 50%">
+            <p><small>とどきました</small><b>10月</b>うちの子</p>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="more" data-sky="#eef2f9">
+<section class="more">
   <div class="in">
     <h2>もしものときの準備も、無料で。</h2>
-    <ul class="tools" data-rise>
+    <ul class="tools">
       <li><b>迷子のチラシ</b><span>写真と特徴から、すぐ作れる</span></li>
       <li><b>病院で見せるメモ</b><span>気付いたことと体重を1画面に</span></li>
       <li><b>預けるときのメモ</b><span>ごはんとお世話のお願いを渡せる</span></li>
@@ -178,10 +159,10 @@
   </div>
 </section>
 
-<section class="price" id="price" data-sky="#f7f8fc">
+<section class="price" id="price">
   <div class="in">
     <h2>まずは無料で。</h2>
-    <div class="plans" data-rise>
+    <div class="plans">
       <div class="plan">
         <h3>無料</h3>
         <p class="yen">0<small>円</small></p>
@@ -203,7 +184,7 @@
   </div>
 </section>
 
-<section class="faq" data-sky="#f7f8fc">
+<section class="faq">
   <div class="in">
     <h2>よくある質問</h2>
     <details><summary>写真が勝手に送られたりしませんか？</summary><p>送りません。猫かどうかはiPhoneの中で見分けます。まどに届くのは、自分で選んで「届ける」を押した写真だけです。</p></details>
@@ -214,16 +195,15 @@
     <details><summary>Androidで使えますか？</summary><p>いいえ。iOS 17.1以降のiPhoneで使えます。</p></details>
   </div>
 </section>
+
 <section class="end">
-  <div class="sky" aria-hidden="true"><i class="stars"></i></div>
   <div class="in">
     <img class="nowa" src="images/nowa-sit-up.webp" alt="" width="545" height="640">
     <h2>うちの子に、毎日会いに。</h2>
-    <a class="store" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-white.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
+    <a class="store" id="end-cta" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
     <p class="small">iOS 17.1以降のiPhone</p>
   </div>
 </section>
-
 </main>
 
 <footer class="foot">
@@ -234,104 +214,29 @@
   </div>
 </footer>
 
+<!-- スマホで下に固定する「入手」の帯。最初の画面と最後の入手ボタンが見えているあいだは隠す -->
+<a class="bar" href="https://apps.apple.com/jp/app/id6801962436" aria-label="ねこのまどをApp Storeで入手">
+  <img src="images/app-icon-180.png" alt="" width="40" height="40">
+  <span><b>ねこのまど</b><small>無料ではじめられる</small></span>
+  <span class="go">入手</span>
+</a>
+
 <script>
-/* スクロールは乗っ取らない。見えている位置から、各場面の進み具合を出して絵に渡す。
-   - 夜のまど：開いて少しすると夜が明ける。スクロールでも進む。
-   - 場面のスマホ：画面に入ってくるにつれて起き上がり、中身が動く（--fp と --p）。
-   - カードの並び：入ってくるにつれて1枚ずつ上がる（--r）。
-   - 背景：各区切りの data-sky の色を、見えている位置でまぜる（1日の空）。
-   動きを減らす設定では、終わりの姿だけを見せる。 */
+/* 動くのは、くもりを晴らす短い動き1つだけ。見えているあいだだけくり返す。
+   下の「入手」の帯は、最初の画面と最後の入手ボタンが見えていないときだけ出す。 */
 (function () {
-  var root = document.documentElement, body = document.body;
-  var still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var hero = document.querySelector('[data-hero]');
-  var feats = [].slice.call(document.querySelectorAll('[data-feat]'));
-  var rises = [].slice.call(document.querySelectorAll('[data-rise]'));
-  var skies = [].slice.call(document.querySelectorAll('[data-sky]'));
-  rises.forEach(function (el) { [].forEach.call(el.children, function (c, i) { c.style.setProperty('--i', i); }); });
-  var tones = skies.map(function (el) {
-    var h = el.dataset.sky.slice(1);
-    return [0, 2, 4].map(function (k) { return parseInt(h.substr(k, 2), 16); });
+  if (!('IntersectionObserver' in window)) return;
+  var clip = document.querySelector('[data-clip]');
+  new IntersectionObserver(function (es) {
+    es.forEach(function (e) { clip.classList.toggle('play', e.isIntersecting); });
+  }, { threshold: 0.6 }).observe(clip);
+  var bar = document.querySelector('.bar'), seen = {};
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+    bar.classList.toggle('on', !seen['hero-cta'] && !seen['end-cta']);
   });
-  function clamp(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
-  var dawn = still ? 1 : 0, ticking = false;
-  function setHero() {
-    var vh = innerHeight, r = hero.getBoundingClientRect();
-    var p = Math.max(dawn, clamp(-r.top / (vh * 0.4)));
-    hero.style.setProperty('--p', p.toFixed(3));
-    hero.style.setProperty('--s', clamp(-r.top / vh).toFixed(3));
-    var dark = p < 0.55;
-    hero.classList.toggle('dark', dark);
-    body.classList.toggle('is-night', dark && r.bottom > 80);
-  }
-  function update() {
-    ticking = false;
-    var vh = innerHeight;
-    setHero();
-    feats.forEach(function (f) {
-      var r = f.querySelector('.phone').getBoundingClientRect();
-      var fp = still ? 1 : clamp((vh * 0.95 - r.top) / (vh * 0.45));
-      f.style.setProperty('--fp', fp.toFixed(3));
-      if (still) return setPlay(f, 1);
-      // The phone rises with the scroll; what it shows plays by itself, at
-      // its own pace, once the whole phone is on screen. Off screen, it
-      // goes back to the start so it plays again next time.
-      var seen = Math.min(r.bottom, vh) - Math.max(r.top, 0);
-      if (!f._t0 && seen > r.height * 0.88) { f._t0 = performance.now(); play(); }
-      if (seen <= 0 && f._t0) { f._t0 = 0; setPlay(f, 0); }
-    });
-    rises.forEach(function (el) {
-      var t = el.getBoundingClientRect().top;
-      el.style.setProperty('--r', still ? 1 : clamp((vh * 0.98 - t) / (vh * 0.4)).toFixed(3));
-    });
-    var y = vh * 0.6, i = 0;
-    for (var k = 0; k < skies.length; k++) if (skies[k].getBoundingClientRect().top <= y) i = k;
-    var c = tones[i];
-    if (i + 1 < skies.length) {
-      var n = tones[i + 1];
-      var m = clamp(1 - (skies[i + 1].getBoundingClientRect().top - y) / (vh * 0.5));
-      c = c.map(function (v, j) { return Math.round(v + (n[j] - v) * m); });
-    }
-    root.style.setProperty('--sky', 'rgb(' + c.join(',') + ')');
-  }
-  // seconds each scene takes to play
-  var LENGTH = { 'feat-1': 6, 'feat-2': 2.8, 'feat-3': 3.4, 'feat-4': 3 };
-  function setPlay(f, p) {
-    f.style.setProperty('--p', p.toFixed(3));
-    if (f.classList.contains('feat-1')) f.dataset.day = p < 0.22 ? 0 : p < 0.44 ? 1 : 2;
-  }
-  var playing = false;
-  function play() {
-    if (playing) return;
-    playing = true;
-    (function frame(now) {
-      var more = false;
-      feats.forEach(function (f) {
-        if (!f._t0) return;
-        var k = clamp((now - f._t0 - 350) / (LENGTH[f.classList[1]] * 1000));
-        setPlay(f, k < 1 ? k * k * (3 - 2 * k) * 0.15 + k * 0.85 : 1);
-        if (k < 1) more = true;
-      });
-      if (more) requestAnimationFrame(frame); else playing = false;
-    })(performance.now());
-  }
-  feats.forEach(function (f) { setPlay(f, still ? 1 : 0); });
-  function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }
-  addEventListener('scroll', onScroll, { passive: true });
-  addEventListener('resize', onScroll);
-  update();
-  // 開いて少しすると、夜が明ける（スクロールしなくても）
-  if (!still) {
-    setTimeout(function () {
-      var t0 = performance.now();
-      (function step(now) {
-        var k = Math.min(1, (now - t0) / 3200);
-        dawn = k * k * (3 - 2 * k);
-        setHero();
-        if (k < 1) requestAnimationFrame(step);
-      })(t0);
-    }, 900);
-  }
+  io.observe(document.getElementById('hero-cta'));
+  io.observe(document.getElementById('end-cta'));
 })();
 </script>
 </body>
