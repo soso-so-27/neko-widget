@@ -846,17 +846,14 @@ actor PhotoLibraryScanner {
                 $0.isWidgetEligible(settings: settings)
             }.count,
             oldestCatPhotoDate: cats.compactMap(\.creationDate).min(),
+            // 11/22: only photos that could not be read at all. A "no cat"
+            // from the small preview of an iCloud original (thousands in an
+            // optimized library) and cats waiting for newer album traits are
+            // retried quietly; counting them showed 「読み込めなかった写真が
+            // 2,303枚」 that 「もう一度探す」 could never lower.
             deferredAssets: finished.filter { record in
                 record.analysisStatus == .unavailableLocally
                     || record.analysisStatus == .failed
-                    // 11/20: "no cat" from the 512px preview only is not a
-                    // real answer; the user is told it could not be read.
-                    || record.isLowFidelityNoCat
-                    || (record.isCatCandidate
-                        && (record.albumAnalysisVersion
-                                != CatAlbumTraits.currentAnalysisVersion
-                            || record.albumTraits?.analysisVersion
-                                != CatAlbumTraits.currentAnalysisVersion))
             }.count,
             recoveryDiagnostics: recoveryDiagnostics,
             postureSummary: postureSummary,
