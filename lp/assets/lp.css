@@ -61,7 +61,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .hero-in { display: grid; gap: 36px; }
 .hero h1 { font-size: clamp(32px, 9vw, 56px); }
 .hero-answer { margin-top: 14px; font-family: var(--font-head); font-weight: 700; font-size: clamp(18px, 4.8vw, 24px); line-height: 1.55; }
-.hero-answer, .sub { background: linear-gradient(transparent 62%, var(--mark) 62%); display: inline; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.mk { background: linear-gradient(transparent 62%, var(--mark) 62%); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .hero .cta { margin-top: 26px; }
 .sure { list-style: none; padding: 0; margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
 .sure li::before { content: "✓ "; color: var(--blue); font-weight: 700; }
