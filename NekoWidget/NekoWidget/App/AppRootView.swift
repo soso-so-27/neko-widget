@@ -801,8 +801,11 @@ struct AppRootView: View {
             lastScannedAt: state.lastScannedAt,
             isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade,
             hasFailed: state.phase == .failed,
-            startupLoadFailed: viewModel.startupLoadFailed
+            startupLoadFailed: viewModel.startupLoadFailed,
+            isPreparingPhotos: viewModel.isPreparingPhotoCandidates
         )
+        // 11/22: a saved 「final」 with no photos shown yet read as 0 cats.
+        guard !presentation.isPreparingPhotos else { return presentation }
 
         switch state.resultKind {
         case .none:

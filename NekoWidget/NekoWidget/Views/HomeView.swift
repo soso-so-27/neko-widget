@@ -490,6 +490,28 @@ struct PhotoCountWithScanActivity: View {
     }
 }
 
+/// 11/22: the empty area while the photos are made ready at launch. Blank
+/// at first so a quick launch shows nothing; a spinner after 0.8 s.
+struct PhotosPreparingPlaceholder: View {
+    @State private var showsSpinner = false
+
+    var body: some View {
+        ZStack {
+            if showsSpinner {
+                ProgressView().transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 320)
+        .task {
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            withAnimation(.easeIn(duration: 0.2)) { showsSpinner = true }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("写真を準備しています")
+        .accessibilityIdentifier("photo-hub-preparing")
+    }
+}
+
 /// 11/14 (family journey A6): the 写真 tab with no cat photos of one's own.
 /// Someone in a まど is shown where the family's photos are; everyone else
 /// keeps the usual empty state. People with photos never see either.
@@ -1015,6 +1037,10 @@ struct HomeView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 320)
             .accessibilityIdentifier("photo-hub-scan-failed")
+        } else if scan.isPreparingPhotos {
+            // 11/22: launch, before the photos are ready. No words; a small
+            // spinner only if it takes a while.
+            PhotosPreparingPlaceholder()
         } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
             ContentUnavailableView("表示できる写真がありません", systemImage: "photo.on.rectangle",
                 description: Text("選んでいる猫と、写真へのアクセスを確かめてください。"))

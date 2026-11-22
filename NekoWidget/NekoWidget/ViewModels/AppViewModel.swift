@@ -2904,6 +2904,16 @@ final class AppViewModel: ObservableObject {
         !hasStarted || catIdentityLoadState == .ready
     }
 
+    /// 11/22: the saved search result is in, but the photos it found are
+    /// not shown yet (records, cat identity or readable photos still
+    /// loading). The 写真 tab waits quietly instead of saying 「見つかりません
+    /// でした」 for a moment before the photos appear.
+    var isPreparingPhotoCandidates: Bool {
+        hasStarted && canReadPhotos
+            && (!hasFinishedSnapshotLoad || catIdentityLoadState == .loading
+                || !readablePhotoProjection.isResolved)
+    }
+
     private var canPresentPhotoCandidates: Bool {
         canPresentCatIdentity && canReadPhotos && readablePhotoProjection.isResolved
     }
