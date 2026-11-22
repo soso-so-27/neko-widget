@@ -16,6 +16,8 @@ MONTHLY_PRODUCT = "jp.nekowidget.plus.monthly"
 PURCHASE_HISTORY = "NSPrivacyCollectedDataTypePurchaseHistory"
 EXTRA_COLLECTIONS = {
     "NSPrivacyCollectedDataTypeEmailAddress",
+    "NSPrivacyCollectedDataTypePhoneNumber",
+    "NSPrivacyCollectedDataTypePhysicalAddress",
     PURCHASE_HISTORY,
     "NSPrivacyCollectedDataTypeOtherUserContent",
 }
@@ -107,6 +109,18 @@ def add_privacy(privacy: dict, required_collections: set[str] = EXTRA_COLLECTION
     return privacy
 
 
+def verify_collections(privacy: dict, required_collections: set[str]) -> None:
+    declarations = {entry.get("NSPrivacyCollectedDataType"): entry for entry in privacy.get("NSPrivacyCollectedDataTypes", [])}
+    if not required_collections <= declarations.keys():
+        raise ValueError("Archived preservation or billing privacy declarations are incomplete.")
+    for name in required_collections:
+        entry = declarations[name]
+        if (entry.get("NSPrivacyCollectedDataTypeLinked") is not True
+                or entry.get("NSPrivacyCollectedDataTypeTracking") is not False
+                or entry.get("NSPrivacyCollectedDataTypePurposes") != ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]):
+            raise ValueError(f"Archived privacy declaration changed: {name}")
+
+
 def verify(info: dict, expected: dict[str, str], privacy: dict, widget_info: dict | None = None) -> None:
     for build_key, info_key in INFO_KEYS.items():
         if info.get(info_key, "") != expected[build_key]:
@@ -121,13 +135,7 @@ def verify(info: dict, expected: dict[str, str], privacy: dict, widget_info: dic
     if required_collections:
         if info.get("SharingReleaseMode") != "media-staging":
             raise ValueError("Archived preservation or Sandbox billing must remain in media-staging.")
-        declarations = {entry.get("NSPrivacyCollectedDataType"): entry for entry in privacy.get("NSPrivacyCollectedDataTypes", [])}
-        if not required_collections <= declarations.keys():
-            raise ValueError("Archived internal pilot privacy declarations are incomplete.")
-        for name in required_collections:
-            entry = declarations[name]
-            if entry.get("NSPrivacyCollectedDataTypeLinked") is not True or entry.get("NSPrivacyCollectedDataTypeTracking") is not False:
-                raise ValueError("Archived preservation privacy declaration changed.")
+        verify_collections(privacy, required_collections)
 
 
 def prepare_export_options(options: dict, expected: dict[str, str]) -> dict:
@@ -148,12 +156,13 @@ def internal_only(expected: dict[str, str]) -> bool:
     return expected["MANAGED_PRESERVATION_ENABLED"] == "YES" or billing_enabled(expected)
 
 
-def validate_production(app: dict, widget: dict, expected: dict) -> None:
+def validate_production(app: dict, widget: dict, expected: dict, privacy: dict) -> None:
     from production_candidate import match_info
     match_info(app, {info: build for build, info in INFO_KEYS.items()}, expected)
     for info in (app, widget):
         match_info(info, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "MembershipAccessEnforced": "MEMBERSHIP_ACCESS_ENFORCED"}, expected)
     match_info(app, {"PersonalArchiveEnabled": "PERSONAL_ARCHIVE_ENABLED", "PersonalArchiveReadOnly": "PERSONAL_ARCHIVE_READ_ONLY"}, expected)
+    verify_collections(privacy, EXTRA_COLLECTIONS)
 
 
 def main() -> None:

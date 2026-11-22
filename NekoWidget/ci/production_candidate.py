@@ -192,7 +192,8 @@ def verify_products(app, contract, *, synthetic=False, app_store_submission=Fals
     host, share, widget = (infos[k] for k in TARGETS)
     match_info(host, {"AppStorePagePublished": "APP_STORE_PAGE_PUBLISHED"}, expected)
     module("usage_report_config").verify(host, mode="production", synthetic=synthetic)
-    module("usage_report_config").verify_privacy(plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes()))
+    host_privacy = plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())
+    module("usage_report_config").verify_privacy(host_privacy)
     require(len({i.get("CFBundleVersion") for i in infos.values()}) == 1 and host.get("CFBundleVersion"), "Target build versions differ")
     require(len({i.get("CFBundleShortVersionString") for i in infos.values()}) == 1, "Target marketing versions differ")
     require(len({i.get("AppGroupIdentifier") for i in infos.values()}) == 1 and host.get("AppGroupIdentifier"), "Target App Groups differ")
@@ -204,7 +205,7 @@ def verify_products(app, contract, *, synthetic=False, app_store_submission=Fals
     module("validate-sharing-release").validate_production(host, share, widget, expected)
     module("validate-official-window-release").validate_production(host, widget, expected, synthetic=synthetic)
     module("group-window-release").validate_production(host, share, expected)
-    module("preservation-pilot-release").validate_production(host, widget, expected)
+    module("preservation-pilot-release").validate_production(host, widget, expected, host_privacy)
     return infos
 
 

@@ -330,6 +330,21 @@ class ProductionCandidateTests(unittest.TestCase):
         path.write_bytes(plistlib.dumps(value))
         with self.assertRaises(ValueError): self.verify()
 
+    def test_preservation_contact_disclosures_are_required(self):
+        pilot = candidate.module("preservation-pilot-release")
+        privacy_path = self.app / "PrivacyInfo.xcprivacy"
+        for name in ("NSPrivacyCollectedDataTypePhoneNumber", "NSPrivacyCollectedDataTypePhysicalAddress"):
+            with self.subTest(name=name):
+                privacy = plistlib.loads(privacy_path.read_bytes())
+                entries = privacy["NSPrivacyCollectedDataTypes"]
+                entry = next(entry for entry in entries if entry["NSPrivacyCollectedDataType"] == name)
+                entries.remove(entry)
+                with self.assertRaisesRegex(ValueError, "incomplete"):
+                    pilot.verify_collections(privacy, pilot.EXTRA_COLLECTIONS)
+                entries.append({**entry, "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAnalytics"]})
+                with self.assertRaisesRegex(ValueError, name):
+                    pilot.verify_collections(privacy, pilot.EXTRA_COLLECTIONS)
+
     def test_distribution_is_explicit_and_export_is_not_internal_or_upload(self):
         distribution_profile.validate(candidate.PROFILE, "production", False)
         for profile, mode, internal in [(candidate.PROFILE, "media-staging", False), (candidate.PROFILE, "production", True),
