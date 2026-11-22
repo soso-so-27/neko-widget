@@ -115,8 +115,9 @@ body.is-night::before { background: #0c1131; }
 
 /* ---------- the scenes ----------
    Normal flow. Each phone rises and straightens as it comes up the screen
-   (--fp, 0–1); what it shows plays on --p (from --fp .3 to 1). */
-.feat { padding-block: 64px 24px; --fp: 1; --p: 1; }
+   (--fp, 0–1, from scroll); what it shows then plays by itself on --p once
+   the whole phone is in view, at a pace meant to be followed. */
+.feat { padding-block: 56px 24px; --fp: 1; --p: 0; }
 .feat-in { max-width: 1120px; margin: 0 auto; display: grid; gap: 26px; justify-items: center; }
 .words { justify-self: stretch; padding: 0 max(22px, env(safe-area-inset-right, 0px)) 0 max(22px, env(safe-area-inset-left, 0px)); }
 .words h2 { font-size: clamp(24px, 6.8vw, 40px); }
@@ -125,7 +126,7 @@ body.is-night::before { background: #0c1131; }
 .feat:nth-of-type(odd) .ph { --tilt: 5deg; }
 .nowa-peek { position: relative; z-index: 0; flex: none; width: min(26vw, 108px); height: auto; margin-bottom: -22px; translate: 0 calc((1 - clamp(0, calc(var(--fp) * 3 - 1.4), 1)) * 26px); }
 
-.phone { position: relative; z-index: 1; flex: none; height: min(70svh, 150vw, 640px); aspect-ratio: 9 / 19.3; max-width: 92vw; border-radius: 15% / 7%; background: var(--frame); padding: 2.6%; box-shadow: var(--shade), inset 0 0 0 1.5px #3a3d45; }
+.phone { position: relative; z-index: 1; flex: none; height: min(60svh, 132vw, 640px); aspect-ratio: 9 / 19.3; max-width: 92vw; border-radius: 15% / 7%; background: var(--frame); padding: 2.6%; box-shadow: var(--shade), inset 0 0 0 1.5px #3a3d45; }
 .island { position: absolute; top: 3.4%; left: 50%; width: 30%; height: 3.6%; transform: translateX(-50%); background: #000; border-radius: 999px; z-index: 3; }
 .screen { position: relative; width: 100%; height: 100%; border-radius: 13% / 6%; overflow: hidden; background: radial-gradient(120% 70% at 20% 0%, #fdf4ea, transparent 60%), radial-gradient(90% 60% at 100% 100%, #e9e3f6, transparent 60%), var(--home); container-type: size; }
 .scr { position: absolute; inset: 0; padding: 14cqh 6cqw 0; }
@@ -140,8 +141,9 @@ body.is-night::before { background: #0c1131; }
 .days, .days img, .frost, .frost .fb { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .days img { opacity: 0; transition: opacity .7s ease; }
 .feat-1[data-day="0"] .d0, .feat-1[data-day="1"] .d1, .feat-1[data-day="2"] .d2 { opacity: 1; }
-/* chapter 1, first half: paws (p 0–.1), then the wipe from the tag (p .08–.42); the days flip after */
-.frost { --q: clamp(0, calc(var(--p) * 2.2), 1); --w: clamp(0, calc((var(--p) - .08) * 2.9), 1); opacity: clamp(0, calc(1.2 - var(--w) * 1.25), 1);
+/* おととい (p 0–.22), きのう (–.44); then today comes in cloudy: paws, and the wipe from the tag (p .56–.87) shows きょう */
+.frost { --q: clamp(0, calc((var(--p) - .45) * 3), 1); --w: clamp(0, calc((var(--p) - .56) * 3.2), 1);
+  opacity: calc(clamp(0, calc((var(--p) - .44) * 30), 1) * clamp(0, calc(1.2 - var(--w) * 1.25), 1));
   -webkit-mask-image: radial-gradient(circle at 50% 88%, transparent calc(var(--w) * 125cqw), #000 calc(var(--w) * 125cqw + 18cqw));
   mask-image: radial-gradient(circle at 50% 88%, transparent calc(var(--w) * 125cqw), #000 calc(var(--w) * 125cqw + 18cqw)); }
 .frost .fb { filter: blur(3.5cqw) saturate(.9); transform: scale(1.1); }
@@ -155,7 +157,8 @@ body.is-night::before { background: #0c1131; }
 .paw-1 { left: 22%; top: 34%; rotate: -18deg; opacity: clamp(0, calc(var(--q) * 10 - .4), 1); }
 .paw-2 { left: 44%; top: 18%; rotate: -6deg; opacity: clamp(0, calc(var(--q) * 10 - 1.4), 1); }
 .tag { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); white-space: nowrap; font: 700 3.4cqw/1 var(--font-body); color: #fff; background: rgba(60,60,67,.55); border-radius: 999px; padding: .65em 1.05em; opacity: clamp(0, calc(1 - var(--w) * 4), 1); }
-.day-label { position: absolute; left: 4cqw; top: 4cqw; font-size: 3.2cqw; color: #fff; opacity: clamp(0, calc((var(--p) - .44) * 8), 1); }
+.day-label { position: absolute; left: 4cqw; top: 4cqw; font-size: 3.2cqw; color: #fff; }
+.feat-1[data-day="2"] .day-label { opacity: clamp(0, calc((var(--p) - .86) * 12), 1); }
 .day-label b { position: absolute; white-space: nowrap; background: rgba(23,25,31,.5); border-radius: 999px; padding: .4em .9em; opacity: 0; transition: opacity .5s ease; }
 .feat-1[data-day="0"] .l0, .feat-1[data-day="1"] .l1, .feat-1[data-day="2"] .l2 { opacity: 1; }
 .wname { margin-top: 1.4cqh; text-align: center; font-size: 3.2cqw; color: #8a7d70; }

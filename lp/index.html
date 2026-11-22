@@ -269,12 +269,16 @@
     var vh = innerHeight;
     setHero();
     feats.forEach(function (f) {
-      var top = f.querySelector('.phone').getBoundingClientRect().top;
-      var fp = still ? 1 : clamp((vh * 0.92 - top) / (vh * 0.75));
-      var p = clamp((fp - 0.3) / 0.7);
+      var r = f.querySelector('.phone').getBoundingClientRect();
+      var fp = still ? 1 : clamp((vh * 0.95 - r.top) / (vh * 0.45));
       f.style.setProperty('--fp', fp.toFixed(3));
-      f.style.setProperty('--p', p.toFixed(3));
-      if (f.classList.contains('feat-1')) f.dataset.day = p < 0.62 ? 0 : p < 0.8 ? 1 : 2;
+      if (still) return setPlay(f, 1);
+      // The phone rises with the scroll; what it shows plays by itself, at
+      // its own pace, once the whole phone is on screen. Off screen, it
+      // goes back to the start so it plays again next time.
+      var seen = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+      if (!f._t0 && seen > r.height * 0.88) { f._t0 = performance.now(); play(); }
+      if (seen <= 0 && f._t0) { f._t0 = 0; setPlay(f, 0); }
     });
     rises.forEach(function (el) {
       var t = el.getBoundingClientRect().top;
@@ -290,6 +294,28 @@
     }
     root.style.setProperty('--sky', 'rgb(' + c.join(',') + ')');
   }
+  // seconds each scene takes to play
+  var LENGTH = { 'feat-1': 6, 'feat-2': 2.8, 'feat-3': 3.4, 'feat-4': 3 };
+  function setPlay(f, p) {
+    f.style.setProperty('--p', p.toFixed(3));
+    if (f.classList.contains('feat-1')) f.dataset.day = p < 0.22 ? 0 : p < 0.44 ? 1 : 2;
+  }
+  var playing = false;
+  function play() {
+    if (playing) return;
+    playing = true;
+    (function frame(now) {
+      var more = false;
+      feats.forEach(function (f) {
+        if (!f._t0) return;
+        var k = clamp((now - f._t0 - 350) / (LENGTH[f.classList[1]] * 1000));
+        setPlay(f, k < 1 ? k * k * (3 - 2 * k) * 0.15 + k * 0.85 : 1);
+        if (k < 1) more = true;
+      });
+      if (more) requestAnimationFrame(frame); else playing = false;
+    })(performance.now());
+  }
+  feats.forEach(function (f) { setPlay(f, still ? 1 : 0); });
   function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(update); } }
   addEventListener('scroll', onScroll, { passive: true });
   addEventListener('resize', onScroll);
