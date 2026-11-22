@@ -398,6 +398,8 @@ def validate_enabled_release(
     if managed_preservation:
         required_collections.update({
             "NSPrivacyCollectedDataTypeEmailAddress",
+            "NSPrivacyCollectedDataTypePhoneNumber",
+            "NSPrivacyCollectedDataTypePhysicalAddress",
             "NSPrivacyCollectedDataTypeOtherUserContent",
         })
     if managed_preservation or owner_two_device_billing:

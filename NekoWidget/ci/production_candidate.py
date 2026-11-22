@@ -189,7 +189,8 @@ def verify_products(app, contract, *, synthetic=False):
         require(actual_privacy == plistlib.loads((ROOT / privacy_source).read_bytes()), "Bundled privacy manifest differs: " + target)
     host, share, widget = (infos[k] for k in TARGETS)
     module("usage_report_config").verify(host, mode="production", synthetic=synthetic)
-    module("usage_report_config").verify_privacy(plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes()))
+    host_privacy = plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())
+    module("usage_report_config").verify_privacy(host_privacy)
     require(len({i.get("CFBundleVersion") for i in infos.values()}) == 1 and host.get("CFBundleVersion"), "Target build versions differ")
     require(len({i.get("CFBundleShortVersionString") for i in infos.values()}) == 1, "Target marketing versions differ")
     require(len({i.get("AppGroupIdentifier") for i in infos.values()}) == 1 and host.get("AppGroupIdentifier"), "Target App Groups differ")
@@ -201,7 +202,7 @@ def verify_products(app, contract, *, synthetic=False):
     module("validate-sharing-release").validate_production(host, share, widget, expected)
     module("validate-official-window-release").validate_production(host, widget, expected, synthetic=synthetic)
     module("group-window-release").validate_production(host, share, expected)
-    module("preservation-pilot-release").validate_production(host, widget, expected)
+    module("preservation-pilot-release").validate_production(host, widget, expected, host_privacy)
     return infos
 
 
