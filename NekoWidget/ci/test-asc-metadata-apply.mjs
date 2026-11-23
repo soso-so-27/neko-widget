@@ -132,6 +132,9 @@ test('1123 store-copy-1123 permits only the exact previous to approved text',()=
   assert.ok([...desired.promotionalText].length<=170);
   assert.ok([...desired.keywords].length<=100);
   assert.ok(desired.keywords.split(',').includes('迷子')&&desired.keywords.split(',').includes('猫友'));
+  // 1123n: keywords merged with the words found in ASC (no ホーム画面), entered manually.
+  assert.equal(desired.keywords,'ねこ,ネコ,ペット,愛猫,アルバム,写真整理,ウィジェット,家族,共有,お世話,記録,病院,メモ,黒猫,多頭飼い,見守り,迷子,防災,避難,健康管理,体重,通院,日記,猫友');
+  assert.ok(!desired.keywords.split(',').includes('ホーム画面'));
   assert.ok(desiredReview.notes.includes('まどを作った直後の画面で、6 つの席と「猫友を招く」から招待リンクを送れます。'));
 
   assert.equal(approvedStoreCopy1123(previous,desired),true);
