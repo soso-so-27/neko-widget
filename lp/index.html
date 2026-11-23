@@ -83,11 +83,10 @@
     <!-- iPhone の枠は Apple の Product Bezels。App Store で配信が始まってから公開する（1123e） --><div class="dev cut"><div class="scr"><div class="mbox">
       <figure class="p one"><img src="images/store/IMG_7671.webp" alt=""><figcaption class="who"><b class="ma">マ</b>ママ<span>11月11日</span></figcaption></figure>
       <figure class="p peek"><img src="images/store/IMG_7855.webp" alt=""><figcaption class="who"><b class="pa">パ</b>パパ<span>11月8日</span></figcaption></figure>
-    </div>
-    
-  </div>
-  </div>
+    </div></div></div>
     <p class="note">家族が届けた猫の写真だけが並ぶから。</p>
+  </div>
+  </div>
 </section>
 
 <section class="v32 v32-4 fan-sec">
@@ -95,7 +94,7 @@
     <h2>この子との毎日は、<br>あっという間。</h2>
     <p class="after"><em>毎月1日、先月がアルバムになる。</em></p>
   </div>
-  <div class="book" role="group" aria-label="10月の作品（タップでめくれます）"><div class="pg cover" style="z-index:5"><img src="images/store/months/m10.webp" alt="" style="object-position:36% 50%"><div class="ct"><b>10月</b><small>むぎとあめ　2026</small></div></div><div class="pg" style="z-index:4"><p class="pt">10月の作品</p><img src="images/store/wall/w17.webp" alt="" loading="lazy" style="object-position:50% 55%"><p class="pd">10月14日</p></div><div class="pg" style="z-index:3"><p class="pt">10月の作品</p><img src="images/store/IMG_7855.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月3日</p></div><div class="pg" style="z-index:2"><p class="pt">10月の作品</p><img src="images/store/months/p2.webp" alt="" loading="lazy" style="object-position:50% 60%"><p class="pd">10月21日</p></div><div class="pg" style="z-index:1"><p class="pt">10月の作品</p><img src="images/store/IMG_9423.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月30日</p></div><button class="bk prev" aria-label="前のページ"></button><button class="bk next" aria-label="次のページ"></button></div><div class="book-ctl"><button class="bc prev" aria-label="前のページ"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><span class="bn" aria-live="polite">1 / 5</span><button class="bc next" aria-label="次のページ"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></div>
+  <div class="book" role="group" aria-label="10月の作品（タップでめくれます）"><div class="pg cover" style="z-index:5"><img src="images/store/months/m10.webp" alt="" style="object-position:55% 50%"><div class="ct"><b>10月</b><small>むぎとあめ　2026</small></div></div><div class="pg" style="z-index:4"><p class="pt">10月の作品</p><img src="images/store/wall/w17.webp" alt="" loading="lazy" style="object-position:50% 55%"><p class="pd">10月14日</p></div><div class="pg" style="z-index:3"><p class="pt">10月の作品</p><img src="images/store/IMG_7855.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月3日</p></div><div class="pg" style="z-index:2"><p class="pt">10月の作品</p><img src="images/store/months/p2.webp" alt="" loading="lazy" style="object-position:50% 60%"><p class="pd">10月21日</p></div><div class="pg" style="z-index:1"><p class="pt">10月の作品</p><img src="images/store/IMG_9423.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月30日</p></div><button class="bk prev" tabindex="-1" aria-hidden="true"></button><button class="bk next" tabindex="-1" aria-hidden="true"></button></div><div class="book-ctl"><button class="bc prev" aria-label="前のページ"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><span class="bn" aria-live="polite">1 / 5</span><button class="bc next" aria-label="次のページ"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></div>
 </section>
 
 <div class="pair">
@@ -134,7 +133,7 @@
         <ul class="feat"><li>月の作品と1年の作品</li><li>家族に写真を届ける</li><li>家族で書く手帳</li><li>機種変更しても戻せる保存</li></ul>
         <a class="trial" href="https://apps.apple.com/jp/app/id6801962436">14日間、無料で試す</a>
       </div>
-    </div></div></div>
+    </div>
     <ul class="trust">
       <li>広告もトラッキングもありません</li>
     </ul>
@@ -179,13 +178,7 @@
 </a>
 
 <script>
-/* 下の帯は、最初と最後の入手ボタンが見えていないときだけ出す。
-   写真の面の幅は、スクロールバーを除いた画面の幅（--vw）。 */
-(function () {
-  var root = document.documentElement;
-  function vw() { if (root.clientWidth > 0) root.style.setProperty('--vw', root.clientWidth / 100 + 'px'); }
-  vw(); window.addEventListener('resize', vw);
-})();
+/* 下の帯は、最初と最後の入手ボタンが見えていないときだけ出す。 */
 (function () {
   if (!('IntersectionObserver' in window)) return;
   var bar = document.querySelector('.getbar'), seen = {};
@@ -205,7 +198,12 @@
   var bp = ctl.querySelector('.prev'), bn = ctl.querySelector('.next');
   function show() {
     num.textContent = (at + 1) + ' / ' + n;
+    // 押したボタンが端で使えなくなるときは、反対側のボタンへ移す（フォーカスを失わない）
+    var f = document.activeElement;
     bp.disabled = at === 0; bn.disabled = at === n - 1;
+    if (f === bn && bn.disabled) bp.focus(); else if (f === bp && bp.disabled) bn.focus();
+    // めくり終えたページは読み上げない
+    pages.forEach(function (p, i) { if (i < at) p.setAttribute('aria-hidden', 'true'); else p.removeAttribute('aria-hidden'); });
     book.classList.toggle('at-start', at === 0); book.classList.toggle('at-end', at === n - 1);
     book.style.setProperty('--left', n - 1 - at);
   }
@@ -227,7 +225,7 @@
   var tiles = document.querySelectorAll('.wall-grid img'); tiles.forEach(function (t, i) { t.style.setProperty('--d', (i % 10) * 35 + 'ms'); });
   var els = document.querySelectorAll('.v32-3 .wall, .s2x .talk, .s2x .mado, .book, .book-ctl, .konoko, .v32-5 .v32-fig, .plans, .wall-nowa');
   if ('IntersectionObserver' in window) {
-    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }); }, { rootMargin: '0px 0px 10% 0px' });
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('shown'); io.unobserve(e.target); } }); }, { rootMargin: '0px 0px 10% 0px' });
     els.forEach(function (el) { el.classList.add('rv'); io.observe(el); });
   }
   // いちばん上：札・写真・のわが、電話と少しちがう速さで動いて奥行きを出す
