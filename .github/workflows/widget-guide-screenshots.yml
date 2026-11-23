@@ -12,6 +12,7 @@ on:
           - guide
           - official
           - day-words
+          - lp-home
 
 permissions:
   contents: read
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   capture-widget-guide:
+    if: inputs.scenario != 'lp-home'
     name: Capture Japanese iOS 26 Widget placement flow
     runs-on: macos-15
     timeout-minutes: 45
@@ -281,3 +283,119 @@ jobs:
           path: ${{ runner.temp }}/neko-widget-guide-screenshots
           if-no-files-found: warn
           retention-days: 14
+
+  capture-lp-home:
+    if: inputs.scenario == 'lp-home' && github.ref_name == 'diagnostic/1123c-lp-home-405'
+    name: Capture the single large Widget on SpringBoard
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PRIVATE_ROOT: ${{ runner.temp }}/neko-lp-home
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Prepare the public stock image and iPhone 16 Pro Max
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$PRIVATE_ROOT/media"
+          curl --fail --silent --show-error --location --max-time 30 \
+            'https://images.unsplash.com/photo-1621238281284-d186cb6813fb?fit=crop&w=1400&h=1400&crop=entropy&fm=jpg&q=88' \
+            --output "$PRIVATE_ROOT/media/IMG_8536.JPG"
+          (cd "$PRIVATE_ROOT/media"; echo '956c3754ed70dd84fd95f13b4080370cf9a30437b546cadfa28da3039f89bc30  IMG_8536.JPG' | shasum -a 256 -c)
+          cp "$PRIVATE_ROOT/media/IMG_8536.JPG" "$PRIVATE_ROOT/media/IMG_8862.JPG"
+          udid=$(xcrun simctl create NekoLPHome com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          printf '%s\n' "$udid" > "$PRIVATE_ROOT/simulator-id"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl ui "$udid" appearance light
+          xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
+      - name: Build the offline 405 screenshot configuration
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          if ! xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$udid" \
+            -derivedDataPath "$PRIVATE_ROOT/DerivedData" COMPILER_INDEX_STORE_ENABLE=NO ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE \
+            SHARING_RELEASE_MODE=production GROUP_WINDOWS_ENABLED=YES \
+            OFFICIAL_WINDOW_FEED_URL= MANAGED_PRESERVATION_ORIGIN= MANAGED_PRESERVATION_ENABLED=NO \
+            PLUS_BILLING_API_BASE_URL= PLUS_BILLING_CLIENT_ENABLED=NO PLUS_STOREFRONT_ENABLED=NO \
+            PERSONAL_ARCHIVE_ENABLED=NO SHARING_FEATURE_ENABLED=NO SHARING_MEDIA_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO SHARING_SHARE_EXTENSION_SEND_ENABLED=NO \
+            SHARING_REVIEW_PREVIEW_ENABLED=NO SHARING_API_BASE_URL= SHARING_MODERATION_KEY_ID= \
+            SHARING_MODERATION_PUBLIC_KEY= SHARING_PRIVACY_URL= SHARING_SUPPORT_URL= \
+            SHARING_COMMUNITY_STANDARDS_URL= APP_PRIVACY_URL= APP_SUPPORT_URL= \
+            SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist \
+            build-for-testing > "$PRIVATE_ROOT/build.log" 2>&1; then
+              grep -m 5 -E 'error:|BUILD FAILED' "$PRIVATE_ROOT/build.log" || true
+              exit 1
+          fi
+          lipo "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/NekoWidget" -verify_arch "$(uname -m)"
+          python3 - "$PRIVATE_ROOT/DerivedData/Build/Products/Debug-iphonesimulator/NekoWidget.app/Info.plist" <<'PY'
+          import plistlib, sys
+          info = plistlib.loads(open(sys.argv[1], 'rb').read())
+          for key, value in {'SharingReleaseMode':'production','GroupWindowsEnabled':'YES','SharingFeatureEnabled':'NO','SharingMediaEnabled':'NO'}.items():
+              assert info.get(key) == value, key
+          for key in ('SharingAPIBaseURL','PlusBillingAPIBaseURL','OfficialWindowFeedURL','ManagedPreservationOrigin','SharingModerationPublicKey'):
+              assert not info.get(key), key
+          PY
+      - name: Place and photograph the Widget
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          udid=$(cat "$PRIVATE_ROOT/simulator-id")
+          test_run=$(find "$PRIVATE_ROOT/DerivedData/Build/Products" -maxdepth 1 -name '*.xctestrun')
+          python3 - "$test_run" "$PRIVATE_ROOT/media" <<'PY2'
+          import pathlib, plistlib, sys
+          path = pathlib.Path(sys.argv[1])
+          data = plistlib.loads(path.read_bytes())
+          targets = [entry for config in data['TestConfigurations'] for entry in config['TestTargets']
+                     if entry.get('BlueprintName') == 'NekoWidgetUITests']
+          assert len(targets) == 1
+          targets[0].setdefault('EnvironmentVariables', {})['NEKO_PRIVATE_CAPTURE_ROOT'] = sys.argv[2]
+          path.write_bytes(plistlib.dumps(data))
+          PY2
+          if ! xcodebuild test-without-building -xctestrun "$test_run" \
+            -destination "platform=iOS Simulator,id=$udid" -resultBundlePath "$PRIVATE_ROOT/LP.xcresult" \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureLPLargeHomeWidget \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP > "$PRIVATE_ROOT/test.log" 2>&1; then
+            tail -n 90 "$PRIVATE_ROOT/test.log"
+            exit 1
+          fi
+          xcrun xcresulttool export attachments --path "$PRIVATE_ROOT/LP.xcresult" --output-path "$PRIVATE_ROOT/exports"
+          python3 - "$PRIVATE_ROOT" <<'PY2'
+          import json, pathlib, shutil, struct, sys
+          root = pathlib.Path(sys.argv[1])
+          def attachments(obj):
+              if isinstance(obj, list):
+                  for part in obj:
+                      yield from attachments(part)
+              elif isinstance(obj, dict):
+                  if 'exportedFileName' in obj:
+                      yield obj
+                  else:
+                      for part in obj.values():
+                          yield from attachments(part)
+          manifest = root / 'exports' / 'manifest.json'
+          entries = list(attachments(json.loads(manifest.read_text())))
+          found = [a for a in entries if any(isinstance(v, str) and '21_home_widget_lp' in v for v in a.values())]
+          assert len(found) == 1, [a.get('suggestedHumanReadableName') for a in entries]
+          source = manifest.parent / found[0]['exportedFileName']
+          header = source.read_bytes()[:24]
+          assert header.startswith(b'\x89PNG\r\n\x1a\n') and struct.unpack('>II', header[16:24]) == (1320, 2868)
+          shutil.copyfile(source, root / '21_home_widget_lp.png')
+          PY2
+      - name: Return only the stock-photo Simulator PNG
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: lp-home-405-${{ github.run_id }}
+          path: ${{ runner.temp }}/neko-lp-home/21_home_widget_lp.png
+          if-no-files-found: error
+          retention-days: 1

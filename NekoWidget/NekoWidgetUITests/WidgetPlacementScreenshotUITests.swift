@@ -132,6 +132,28 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureLPLargeHomeWidget() throws {
+        continueAfterFailure = false
+        let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
+        let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+            "--app-store-screenshot-fixture", "--owner-store-capture", "--review-public-presentation"]
+        app.launchEnvironment["NEKO_PRIVATE_CAPTURE_ROOT"] = root
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        sleep(3)
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(try addWidgetFromGallery(page: 3, in: springboard))
+        if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
+            elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
+        else { XCUIDevice.shared.press(.home) }
+        sleep(12)
+        captureScreenshot(named: "21_home_widget_lp", screenshot: XCUIScreen.main.screenshot())
+    }
+
+    @MainActor
     func testCaptureOwnerStoreHomeWidgets() throws {
         let root = try XCTUnwrap(ProcessInfo.processInfo.environment["NEKO_PRIVATE_CAPTURE_ROOT"])
         executionTimeAllowance = 420
