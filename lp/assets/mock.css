@@ -581,3 +581,25 @@
 .book.at-end::before { box-shadow: 0 24px 50px -26px rgba(40,30,20,.45); }
 .book { width: calc(100% - 80px); }
 .book .pg::before { width: 56px; height: 56px; background: linear-gradient(135deg, transparent 50%, #e6e0d4 50%, #fffdf8 80%); box-shadow: -3px -3px 8px rgba(0,0,0,.18); }
+
+/* ---------- Y. 区切り2：1画面で「うもれる／うもれない」 ----------
+   同じ1枚が、トークでは上へ押し出され、まどでは一番上に大きく残る。次も猫の写真だけ。 */
+.s2x .talk { margin-top: 4cqw; }
+.s2x .chat { height: 210px; }
+.s2x .turn { margin-top: 7cqw; font-size: 6.2cqw; }
+.s2x .mado { margin-top: 3cqw; }
+.s2x .mbox { margin-top: 10px; background: #f2f2f7; border-radius: 24px; padding: 10px 10px 0; height: 300px; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+.s2x .mbox .p { flex: none; border-radius: 18px; }
+.s2x .mbox .one { height: 220px; }
+.s2x .mbox .peek { height: 150px; }
+.s2x .mbox .who { font-size: 14px; }
+.s2x .mado .note { margin-top: 12px; }
+.s2x .send { display: none; }
+@media (min-width: 960px) {
+  .s2x .chat { height: 380px; }
+  .s2x .mbox { height: 380px; }
+  .s2x .mbox .one { height: 280px; }
+  .s2x .turn { font-size: 28px; }
+}
+/* トークの写真は、まどと同じ1枚だと分かるよう、もう少し見せる */
+.s2x .chat .gone { margin-top: -34px; }
