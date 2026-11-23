@@ -862,13 +862,11 @@ struct HomeView: View {
             // cat row above the pages, so the first photo comes one row sooner.
             if tabRowMonthJump == nil {
             HStack(alignment: .center, spacing: 10) {
+                // 11/23: no 「猫写真」 heading; the title 「写真」 and 「すべて」
+                // above already say it. 「○枚」 and 「日付」 stay on this row.
                 if let headerAccessory {
                     // The cat switch is the heading: 「ミケの写真 ▾」.
                     headerAccessory
-                } else {
-                    Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
-                        .font(.title3.bold())
-                        .accessibilityAddTraits(.isHeader)
                 }
                 PhotoCountWithScanActivity(count: catPhotos.count)
                 Spacer()

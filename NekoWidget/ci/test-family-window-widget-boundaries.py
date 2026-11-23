@@ -1760,7 +1760,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn('Text("自動アルバム")', home)
         self.assertNotIn("HomeAlbumHighlightCard(", home)
         self.assertNotIn("AlbumRoute.album(album.id)", home)
-        self.assertIn('Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")', home)
+        # 11/23: the 写真 tab's title and 「すべて」 already name the grid.
+        self.assertNotIn('Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")', home)
         self.assertNotIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
 
     def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
@@ -5270,6 +5271,24 @@ class CatCareUsabilityTests(unittest.TestCase):
         self.assertIn('.accessibilityHint("押すと直せます。削除もここからできます")', view)
         self.assertIn('"cat-care-delete-entry"', view)
         self.assertNotIn("deleteButton(entry.id)", view)
+        # 11/23: the sheet asks before it closes; cancelling keeps the edit.
+        self.assertIn('Button("この記録を削除", role: .destructive) { confirmsDelete = true }', view)
+        sheet_confirm = section(view, 'isPresented: $confirmsDelete', "message:")
+        self.assertLess(sheet_confirm.index("close()"), sheet_confirm.index("deleteRequested"))
+
+    def test_showcase_backup_leaves_out_photos_deleted_in_photos(self) -> None:
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        showcase = section(persistence, '} else if tool == "ShowcasePhotos" {', "var brokenPhotos")
+        # Only full access proves a missing photo was deleted; restored copies stay.
+        self.assertIn("PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized", showcase)
+        self.assertIn('entry["isRestoredCopy"] as? Bool != true', showcase)
+        self.assertLess(showcase.index("entries.removeAll"), showcase.index('entries[i]["isRestoredCopy"] = true'))
+
+    def test_settings_photo_row_shows_only_changed_values(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        summary = section(settings, "private var photoSettingsSummary: String {", "\n    }\n")
+        self.assertNotIn('"すべての写真"', summary)
+        self.assertIn("if settings.range != .all", summary)
 
 
 class ToolFlowTests(unittest.TestCase):
@@ -7132,9 +7151,15 @@ class OnePlaceSettingsTests(unittest.TestCase):
 
     def test_empty_window_list_has_one_create_button(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        listing = section(window, "struct GroupWindowListSection: View {", "if let invitation = invitationInbox.pending")
+        listing = section(window, "struct GroupWindowListSection: View {", "GroupWidgetCache.markGroupWindowsOn()")
         self.assertIn("let hidesHeaderCreate = model.windows.isEmpty && known.isEmpty && model.message == nil", listing)
-        self.assertLess(listing.index("if !hidesHeaderCreate {"), listing.index('.accessibilityIdentifier("group-window-create")'))
+        # 11/23: the title 「まど」 is not followed by a 「みんなのまど」 heading;
+        # the 「＋」 sits on the title row.
+        compact = section(listing, ".toolbar {", ".task {")
+        self.assertLess(compact.index("if compactHeader && !hidesHeaderCreate {"), compact.index('.accessibilityIdentifier("group-window-create")'))
+        self.assertIn("ToolbarItem(placement: .topBarTrailing)", compact)
+        self.assertEqual(section(listing, "VStack(alignment: .leading, spacing: 10) {", ".toolbar {").count('Text("みんなのまど")'), 1)
+        self.assertIn('if !compactHeader {\n                Text("みんなのまど")', listing)
         self.assertIn('"group-window-empty-create"', window)
 
     def test_auto_save_is_offered_after_buying_plus_anywhere(self) -> None:

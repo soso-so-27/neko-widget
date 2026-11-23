@@ -591,10 +591,14 @@ struct SettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
     }
 
+    /// 11/23: only what differs from the start (all photos, every period);
+    /// nothing for someone who changed nothing.
     private var photoSettingsSummary: String {
         guard hasPhotoAccess else { return "許可していません" }
-        let access = isLimitedAccess ? "選んだ写真だけ" : "すべての写真"
-        return "\(access)・\(settings.range.rawValue)"
+        var changed: [String] = []
+        if isLimitedAccess { changed.append("選んだ写真だけ") }
+        if settings.range != .all { changed.append(settings.range.rawValue) }
+        return changed.joined(separator: "・")
     }
 
     // 11/11: 使い方・利用規約・通知, kept out of `body` (type-check time).

@@ -1945,7 +1945,8 @@ struct CatCareListView: View {
         .navigationTitle(CatCareFormat.title(kind))
         .navigationBarTitleDisplayMode(.inline)
         .onReceive(NotificationCenter.default.publisher(for: CatCareListEntrySheet.deleteRequested)) { note in
-            if let id = note.object as? UUID { pendingDelete = id }
+            guard let id = note.object as? UUID else { return }
+            if note.userInfo?[CatCareListEntrySheet.confirmedKey] as? Bool == true { delete(id) } else { pendingDelete = id }
         }
         .confirmationDialog("この記録を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
@@ -2036,6 +2037,8 @@ struct CatCareFamilyProofRestoreFixture: View {
 struct CatCareListEntrySheet: View {
     /// Asks the list to confirm deleting the record this sheet was showing.
     static let deleteRequested = Notification.Name("catCare.listEntry.deleteRequested")
+    /// The sheet already asked; the list deletes without asking again.
+    static let confirmedKey = "confirmed"
 
     let editor: CatCareListEditor
     let catID: UUID?
@@ -2077,6 +2080,7 @@ struct CatCareListEntrySheet: View {
     /// 11/21: what the sheet opened with, so closing with changes asks first.
     @State private var opened: [String]?
     @State private var confirmsDiscard = false
+    @State private var confirmsDelete = false
     /// 11/21: photos picked on this sheet; any not kept leave with it.
     @State private var pickedHere: [CatCarePhotoRef] = []
     /// 11/21: a picked photo still being read; 追加 waits for it.
@@ -2158,13 +2162,11 @@ struct CatCareListEntrySheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(editor.entryID == nil ? "追加" : "保存") { save() }.disabled(saved || loadingProof)
                 }
-                if let entryID = editor.entryID {
+                if editor.entryID != nil {
                     ToolbarItem(placement: .bottomBar) {
-                        Button("この記録を削除", role: .destructive) {
-                            close()
-                            NotificationCenter.default.post(name: Self.deleteRequested, object: entryID)
-                        }
-                        .accessibilityIdentifier("cat-care-delete-entry")
+                        // 11/23: asks here first; キャンセル keeps the sheet and what was typed.
+                        Button("この記録を削除", role: .destructive) { confirmsDelete = true }
+                            .accessibilityIdentifier("cat-care-delete-entry")
                     }
                 }
             }
@@ -2179,6 +2181,16 @@ struct CatCareListEntrySheet: View {
                 Button("破棄する", role: .destructive) { close() }
                 Button("入力を続ける", role: .cancel) {}
             }
+            .confirmationDialog("この記録を削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
+                Button("削除", role: .destructive) {
+                    guard let entryID = editor.entryID else { return }
+                    close()
+                    NotificationCenter.default.post(name: Self.deleteRequested, object: entryID,
+                                                    userInfo: [Self.confirmedKey: true])
+                }
+                .accessibilityIdentifier("cat-care-confirm-delete")
+                Button("キャンセル", role: .cancel) {}
+            } message: { Text("削除した記録は、ほかのツールにも載らなくなります。元に戻せません。") }
             .fullScreenCover(isPresented: $showsCamera) {
                 CatCareCameraView { image in
                     showsCamera = false
