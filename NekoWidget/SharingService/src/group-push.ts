@@ -12,12 +12,6 @@ function enabled(env:Env):boolean {
   return env.GROUP_APNS_RUNTIME_ENABLED==='YES' && env.GROUP_RUNTIME_ENABLED==='YES'
     && env.APNS_RUNTIME_ENABLED==='YES' && env.MOMENT_RUNTIME_ENABLED==='YES';
 }
-export async function cleanupExpiredGroupPush(env:Env,now:number):Promise<void> {
-  // Preserve the generation tombstone, but not expired physical tokens.
-  await env.DB.prepare(`UPDATE group_push_subscriptions SET token_ciphertext='',token_nonce='',token_digest=''
-    WHERE rowid IN (SELECT rowid FROM group_push_subscriptions WHERE expires_at<=? AND token_ciphertext<>'' LIMIT 100)`)
-    .bind(now).run();
-}
 function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
   const id=crypto.randomUUID();return [env.DB.prepare('INSERT INTO group_push_checks VALUES (?,?)').bind(id,generation),
     env.DB.prepare('DELETE FROM group_push_checks WHERE id=?').bind(id)];
@@ -33,7 +27,7 @@ async function changeGroupPush(env:Env,actor:GroupActor,windowId:string,body:Jso
   const operationId=uuidField(body,'operationId');
   await requireGroupMember(env,actor,windowId);
   // Unregister remains available while push is OFF. It cannot send a push or
-  // restore an expired subscription; keep the generation tombstone on removal.
+  // restore a revoked subscription; keep the generation tombstone on removal.
   const gate=await loadRuntimeGate(env);
   if(!remove && (!enabled(env) || !apnsGateOpen(gate)))throw new ApiError(503,'group_push_disabled','Group notifications are unavailable.');
   const previous=await storedGroupMutation(env,actor,operationId,{windowId});if(previous)return jsonResponse(previous);
@@ -59,10 +53,11 @@ async function changeGroupPush(env:Env,actor:GroupActor,windowId:string,body:Jso
       env.DB.prepare(`INSERT INTO group_push_subscriptions VALUES (?,?,?,?,?,?,?,1,?)
         ON CONFLICT(space_id,device_id) DO UPDATE SET token_ciphertext=excluded.token_ciphertext,token_nonce=excluded.token_nonce,
           token_digest=excluded.token_digest,encryption_key_id=excluded.encryption_key_id,environment=excluded.environment,
-          generation=CASE WHEN group_push_subscriptions.expires_at>? AND group_push_subscriptions.token_digest=excluded.token_digest
+          generation=CASE WHEN group_push_subscriptions.expires_at>0 AND group_push_subscriptions.token_ciphertext<>''
+            AND group_push_subscriptions.token_digest=excluded.token_digest
             AND group_push_subscriptions.environment=excluded.environment THEN group_push_subscriptions.generation ELSE group_push_subscriptions.generation+1 END,
           expires_at=excluded.expires_at`)
-        .bind(windowId,actor.deviceId,sealed.ciphertext,sealed.nonce,sealed.digest,sealed.keyID,credential.environment,actor.now+APNS_SUBSCRIPTION_TTL_SECONDS,actor.now));
+        .bind(windowId,actor.deviceId,sealed.ciphertext,sealed.nonce,sealed.digest,sealed.keyID,credential.environment,actor.now+APNS_SUBSCRIPTION_TTL_SECONDS));
   }
   statements.push(groupMutationStatement(env,actor,operationId,receipt));
   await env.DB.batch(statements);return jsonResponse(receipt);
@@ -90,7 +85,7 @@ async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skippe
     .bind(state,now+Math.min(3600,30*2**Math.min(row.attempts,7)),row.event_id,row.device_id,row.token_digest,row.subscription_generation,leaseId).run();
 }
 async function current(env:Env,row:Queued,leaseId:string,generation:number):Promise<Current|null> {
-  return env.DB.prepare(`SELECT v.*,q.attempts FROM group_live_push_deliveries v
+  return env.DB.prepare(`SELECT v.*,q.attempts FROM group_current_push_deliveries v
     JOIN group_notification_deliveries q ON q.event_id=v.event_id AND q.device_id=v.device_id
     JOIN group_notification_events moderation_event ON moderation_event.id=v.event_id
     JOIN group_members moderation_actor ON moderation_actor.space_id=v.space_id AND moderation_actor.participant_id=moderation_event.actor_participant_id
@@ -169,7 +164,7 @@ export async function drainGroupNotifications(env:Env,now=Math.floor(Date.now()/
       if(part.value && part.value.length<=1024)reason=(JSON.parse(new TextDecoder().decode(part.value)) as {reason?:string}).reason??'';
     }} catch { /* Unknown response stays retryable. */ }
     if(response.status===410 || (response.status===400 && ['BadDeviceToken','DeviceTokenNotForTopic'].includes(reason))) {
-      await env.DB.prepare(`UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce=''
+      await env.DB.prepare(`UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest=''
         WHERE space_id=? AND device_id=? AND token_digest=? AND generation=?`)
         .bind(live.space_id,row.device_id,row.token_digest,row.subscription_generation).run();
       await finish(env,row,leaseId,'invalid',now);summary.invalidated++;

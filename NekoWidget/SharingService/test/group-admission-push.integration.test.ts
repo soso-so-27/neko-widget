@@ -33,6 +33,8 @@ describe('group invitation admission notifications',()=>{
   });
   it('delivers one generic request to the owner and approval to the correct entrant, including late registration',async()=>{
     const {owner,guest,w,join,settings,register}=await setup();ok(await register(owner,'push-subscription'));
+    await db.prepare('UPDATE group_push_subscriptions SET expires_at=unixepoch()-86400 WHERE space_id=? AND device_id=?')
+      .bind(w.windowId,owner.deviceId).run();
     const sent:any[]=[];const transport:typeof fetch=async(_url,init)=>{sent.push(JSON.parse(init!.body as string));return new Response(null,{status:200});};
     expect((await drainGroupAdmissionNotifications(settings,undefined,transport)).accepted).toBe(1);
     expect(sent[0].neko).toEqual({v:3,kind:'join_requested',windowId:w.windowId,requestId:join.id});

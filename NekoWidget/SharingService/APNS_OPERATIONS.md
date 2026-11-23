@@ -6,7 +6,7 @@
 
 - APNs device tokenは`APNS_TOKEN_KEYRING_JSON`のcurrent AES-256-GCM鍵でapplication-level暗号化してD1へ保存する。
 - D1には暗号文、12-byte nonce、鍵version、重複／失効CAS用SHA-256 digestだけを置く。平文tokenをresponseやlogへ出さない。
-- Subscriptionは現在の認証済み`moment_devices.id`へserver側で結び、最終更新から35日で削除する。アプリは起動ごとにPUTして更新する。
+- まどの登録は認証済み端末に結び付け、APNsで無効と判定されたときや、通知解除・退出・データ削除で失効させます。家族の手帳とまどの参加申請中の登録は従来の35日です。アプリは起動時に登録を更新します。
 - Notification eventは24時間で削除する。最初のtoken登録で古いeventをbackfillしない。Moment ACK、revoke、expiry、block、device/participant/space失効では関連eventまたはsubscriptionを即時削除する。
 - APNsの表示本文は一般文だけとし、`aps.alert`と`content-available=1`を使う。sound、badge、写真、まど名、人物名、撮影日時、reaction/device ID、URL、鍵を含めない。
 - 旧`v2` subscriptionの`neko`は`{"v":1,"kind":"new_moment|heart"}`のexact 2-key envelopeを維持する。新しい加算型`v3` subscriptionには、旧clientがfail closedで拒否する`{"v":2,"kind":"new_moment|heart"}`と、別top-levelの`nekoTarget`にある`{"v":1,"spaceId":"<opaque>","momentId":"<opaque>"}`を送る。新clientだけが通知タップを正しいまど・写真へ結ぶ。
@@ -87,7 +87,7 @@ DELETEの成功responseは、呼び出したrouteと同じprotocol versionを返
 {"current":"2026-01","keys":{"2026-01":"<base64url 32 random bytes>"}}
 ```
 
-鍵rotationは新しい鍵を`current`へし、旧鍵を`keys`に残したままdeployします。35日のsubscription TTLを越えて全端末が更新または失効したことを件数だけ確認してから旧鍵を外します。旧鍵を先に外すと未更新tokenを復号できず、配送は`configuration_error:TokenDecryptFailed`としてexpiryまで保留されます。
+鍵を更新するときは新しい鍵を`current`にし、旧鍵を`keys`に残したまま配備します。旧鍵で暗号化された有効な登録が全台帳で0件になったことを集計で確認してから旧鍵を外します。旧鍵を先に外すと未更新のtokenを復号できず、通知は配信できません。
 
 ## Staging gate
 

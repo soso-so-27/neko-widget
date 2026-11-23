@@ -3,7 +3,8 @@ import { plusOwner,pauseOwner } from './group-billing-fixture';
 import { base64urlDecode,randomBase64url,sha256Base64url } from '../src/encoding';
 import { groupFields } from '../src/group-protocol';
 import { groupHeartTranscript } from '../src/group-hearts';
-import { cleanupExpiredGroupPush,drainGroupNotifications } from '../src/group-push';
+import { runGroupRelayCleanup } from '../src/group-cleanup';
+import { drainGroupNotifications } from '../src/group-push';
 import { apply,call,create,db,invitation,ok,person,member,packet,send,sign,signed,testEnv,transition,type Person } from './group-fixture';
 import type { Env } from '../src/env';
 
@@ -83,6 +84,8 @@ describe('group-only push registration and just-before-send eligibility',()=>{
     const {owner,bob,w,settings}=await setup(),r=await register(bob,w,settings);ok(r.result);
     const stored=await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();
     expect(JSON.stringify(stored)).not.toContain(r.token);
+    await db.prepare('UPDATE group_push_subscriptions SET expires_at=unixepoch()-86400 WHERE space_id=? AND device_id=?')
+      .bind(w.windowId,bob.deviceId).run(); // Registered at least 36 days ago.
     const id=await photo(owner,w,settings);await pauseOwner(owner);
     let sent=0;const transport:typeof fetch=async(url,init)=>{
       sent++;expect(String(url)).toMatch(/^https:\/\/api.push.apple.com\/3\/device\/[0-9a-f]{64}$/);
@@ -94,7 +97,7 @@ describe('group-only push registration and just-before-send eligibility',()=>{
     expect((await drainGroupNotifications(settings,undefined,transport)).accepted).toBe(1);expect(sent).toBe(1);
     expect((await drainGroupNotifications(settings,undefined,noNetwork)).leased).toBe(0);
   });
-  it('retains subscription generations across removal, rejects old queues and clears expired tokens',async()=>{
+  it('retains subscription generations across removal and clears a 36-day-old token only after APNs rejects it',async()=>{
     const {owner,bob,w,settings}=await setup(),r=await register(bob,w,settings);ok(r.result);
     await photo(owner,w,settings);ok((await register(bob,w,settings,r.token)).result);
     const generation=async()=> (await db.prepare('SELECT generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first<{generation:number}>())!.generation;
@@ -108,9 +111,16 @@ describe('group-only push registration and just-before-send eligibility',()=>{
       .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0});
     ok((await register(bob,w,settings,r.token)).result);expect(await generation()).toBe(3);
     expect((await drainGroupNotifications(settings,undefined,noNetwork)).skipped).toBe(1);
-    await cleanupExpiredGroupPush(settings,Math.floor(Date.now()/1000)+36*86400);
+    await db.prepare('UPDATE group_push_subscriptions SET expires_at=unixepoch()-86400 WHERE space_id=? AND device_id=?')
+      .bind(w.windowId,bob.deviceId).run();
+    await runGroupRelayCleanup(settings);
+    await photo(owner,w,settings);
+    const rejected:typeof fetch=async()=>new Response('{"reason":"Unregistered"}',{status:410});
+    expect((await drainGroupNotifications(settings,undefined,rejected)).invalidated).toBe(1);
     const row=await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();
-    expect(row).toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',generation:3});
+    expect(row).toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',generation:4});
+    await photo(owner,w,settings);
+    expect((await drainGroupNotifications(settings,undefined,noNetwork)).leased).toBe(0);
   });
   it.each(['leave','remove'] as const)('purges departing member tokens on %s while retaining other recipients',async(kind)=>{
     const fixture=await setup(),{owner,bob,settings}=fixture;let w=fixture.w;
