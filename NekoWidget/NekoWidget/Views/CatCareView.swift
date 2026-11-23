@@ -689,10 +689,10 @@ struct CatCareDetailView: View {
                     .font(.footnote).foregroundStyle(.red)
             }
         } header: {
-            // On the header only, as the parts' headers (`partHeader`): on the
-            // Section it replaced the photos' own identifiers
-            // (cat-care-photo-face, cat-care-photo-actions-…).
             Text("見分ける写真")
+                // On the header only, as the parts' headers (`partHeader`): on
+                // the Section it replaced the photos' own identifiers
+                // (cat-care-photo-face, cat-care-photo-actions-…).
                 .accessibilityIdentifier("cat-care-identifying-photos")
         }
     }
