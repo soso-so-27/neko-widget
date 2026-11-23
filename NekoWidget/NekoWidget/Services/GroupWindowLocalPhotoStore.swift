@@ -468,6 +468,24 @@ enum GroupInvitationMemory {
     }
 }
 
+/// 11/23 (猫友のまど): the first photo chosen while the creator has not
+/// approved yet. Only its Photos identifier is kept, on this iPhone, per
+/// まど. Nothing is sent by itself: once the まど opens as a member, the
+/// usual 「まどに届ける」 confirmation shows it.
+enum GroupFirstPhotoMemory {
+    private static func key(_ windowID: String) -> String { "groupWindow.firstPhoto.v1." + windowID }
+
+    static func chosen(windowID: String) -> String? { UserDefaults.standard.string(forKey: key(windowID)) }
+
+    static func choose(_ localIdentifier: String, windowID: String) {
+        UserDefaults.standard.set(localIdentifier, forKey: key(windowID))
+    }
+
+    static func forget(windowID: String) {
+        UserDefaults.standard.removeObject(forKey: key(windowID))
+    }
+}
+
 /// The name this person last gave a window, offered again next time. Written
 /// only after creating or asking to join, never while typing. 11/20: also kept
 /// in this iPhone's Keychain, so deleting the app keeps it (GroupRememberedName).

@@ -392,7 +392,17 @@ struct SettingsView: View {
                 }
                 // Telling a friend, from where people look for the app's own
                 // things (11/6). Hidden until the App Store page exists.
-                if let url = AppStoreListing.pageURL {
+                // 11/23: with a まど this iPhone made that has an open seat,
+                // the row invites to that まど instead.
+                if let client = GroupWindowClientProvider.ui,
+                   let seatWindow = GroupWindowPresentation.windowWithOpenSeats(GroupWindowListNavigation.shared.lastListed) {
+                    GroupSeatsInviteButton(client: client, windowID: seatWindow.id, windowName: seatWindow.name,
+                                           identifier: "settings-invite-friends") { preparing in
+                        Label { Text(preparing ? "用意しています…" : "猫友を招く").foregroundStyle(Color.primary) } icon: {
+                            Image(systemName: "person.badge.plus")
+                        }
+                    }
+                } else if let url = AppStoreListing.pageURL {
                     ShareLink(item: url, message: Text(AppStoreListing.recommendMessage)) {
                         Label { Text("ねこのまどを紹介する").foregroundStyle(Color.primary) } icon: {
                             Image(systemName: "square.and.arrow.up")
