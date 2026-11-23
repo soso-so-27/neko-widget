@@ -145,12 +145,36 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 15))
+        XCUIDevice.shared.press(.home)
+        let edit = try prepareLPHomeEditing(in: springboard)
+        XCTAssertTrue(edit.isHittable)
         XCTAssertTrue(try addWidgetFromGallery(page: 3, in: springboard))
         if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
             elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
         else { XCUIDevice.shared.press(.home) }
         sleep(12)
         captureScreenshot(named: "21_home_widget_lp", screenshot: XCUIScreen.main.screenshot())
+    }
+
+    @MainActor
+    private func prepareLPHomeEditing(in springboard: XCUIApplication) throws -> XCUIElement {
+        // Use a known system icon because a fresh Home Screen can fill the
+        // usual wallpaper coordinates with icons or default widgets.
+        let safari = springboard.icons.matching(NSPredicate(format: "label == %@", "Safari")).firstMatch
+        if safari.waitForExistence(timeout: 8), safari.isHittable {
+            safari.press(forDuration: 1.2)
+            if let editHome = waitForElement(in: springboard,
+                labels: ["ホーム画面を編集", "Edit Home Screen"],
+                elementTypes: [.button, .staticText, .menuItem], timeout: 5, requireHittable: true) {
+                editHome.tap()
+                if let edit = waitForElement(in: springboard, labels: ["編集", "Edit"],
+                    elementTypes: [.button], timeout: 6, requireHittable: true) { return edit }
+            }
+            XCUIDevice.shared.press(.home)
+        }
+        let edit = enterHomeScreenEditing(in: springboard)
+        if edit == nil { print("LP Home editing state:\n\(springboard.debugDescription)") }
+        return try XCTUnwrap(edit)
     }
 
     @MainActor

@@ -311,6 +311,11 @@ jobs:
           printf '%s\n' "$udid" > "$PRIVATE_ROOT/simulator-id"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLanguages -array ja-JP
+          xcrun simctl spawn "$udid" defaults write NSGlobalDomain AppleLocale ja_JP
+          xcrun simctl shutdown "$udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
           xcrun simctl ui "$udid" appearance light
           xcrun simctl status_bar "$udid" override --time 09:41 --batteryLevel 100 --batteryState charged --wifiBars 3 --cellularBars 4
       - name: Build the offline 405 screenshot configuration
