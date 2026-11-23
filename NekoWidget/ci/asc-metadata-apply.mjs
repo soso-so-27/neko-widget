@@ -154,7 +154,8 @@ export function permissionFailure(text){
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const selection=process.env.ASC_METADATA_SCOPE||'approved-groups';
-  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123','review-notes-1123v'].includes(selection))throw Error('STOP_SCOPE');
+  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123','review-notes-1123v','age-rating'].includes(selection))throw Error('STOP_SCOPE');
+  if(selection==='age-rating'&&mode==='--apply')throw Error('STOP_SCOPE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
   const sensitive=[env.APP_STORE_CONNECT_KEY_ID,env.APP_STORE_CONNECT_ISSUER_ID,env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64];
   function call(args,allowFindings=false){
@@ -230,6 +231,10 @@ function main(){
       if(checkPlan(call([...args,'--dry-run']),allowed).length)throw Error('STOP_READBACK');
       console.log(JSON.stringify({applied:true,scope,probe,readbackMatches:true}));
     }
+  }
+  if(selection==='age-rating'){
+    runScope('age-rating',scopes['age-rating']);
+    return;
   }
   if(selection==='store-copy-1123'){
     // Both groups are checked before either writes.

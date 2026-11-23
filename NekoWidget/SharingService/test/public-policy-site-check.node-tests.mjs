@@ -114,10 +114,10 @@ test("requires the published media-staging privacy revision only on the approved
   await assert.rejects(check(githubPages), /privacy is missing required policy content/u);
   await assert.rejects(check(githubPages, new Map([["privacy", pageHtml(githubPages, mediaPage)]])),
     /privacy is missing required policy content/u);
-  assert.equal((await check(githubPages, new Map([["privacy", updated]]))).pages.length, 5);
+  assert.equal((await check(githubPages, new Map([["privacy", updated]]))).pages.length, 6);
 
   const publicDomain = { ...publicOne, siteBase: "https://nekonomado.com/" };
-  assert.equal((await check(publicDomain)).pages.length, 5);
+  assert.equal((await check(publicDomain)).pages.length, 6);
   await assert.rejects(check(publicDomain, new Map([["privacy", pageHtml(publicDomain, stalePage)]])),
     /privacy is missing the visible policy revision/u);
 });
@@ -645,15 +645,22 @@ test("fails closed when a page request exceeds its timeout", async () => {
 
 // Synthetic pages: guide publication and the four existing navigation updates
 // are separately approved. No live request is made by these tests.
-test("public 1.0 requires five mutually linked pages including the guide", async () => {
+test("public 1.0 requires the legal page and a link to it from support", async () => {
   const result = await check(publicOne);
-  assert.deepEqual(result.pages.map(page => page.name), ["overview", "privacy", "community", "support", "guide"]);
+  const core = ["overview", "privacy", "community", "support", "guide"];
+  const legal = "tokushoho";
+  assert.deepEqual(result.pages.map(page => page.name), [...core, legal]);
   const relative = new Map(publicOne.definition.pages.map(page => [page.name, pageHtml(publicOne, page, {
-    links: publicOne.definition.pages.map(target => `${page.path ? "../" : "./"}${target.path}`),
+    links: publicOne.definition.pages
+      .filter(target => target.name !== legal || page.name === "support")
+      .map(target => `${page.path ? "../" : "./"}${target.path}`),
   })]));
-  assert.equal((await check(publicOne, relative)).pages.length, 5);
+  assert.equal((await check(publicOne, relative)).pages.length, 6);
+  await assert.rejects(check(publicOne, new Map([[legal, new Response("missing", { status: 404 })]])),
+    /tokushoho returned HTTP 404/u);
+  const legalUrl = new URL("tokushoho/", publicOne.siteBase).href;
   for (const page of publicOne.definition.pages) {
-    for (const missing of profileUrls(publicOne)) {
+    for (const missing of profileUrls(publicOne).filter(url => url !== legalUrl || page.name === "support")) {
       await assert.rejects(check(publicOne, new Map([[page.name, pageHtml(publicOne, page, {
         links: profileUrls(publicOne).filter(url => url !== missing),
       })]])), /does not link to every page/u);
@@ -692,5 +699,6 @@ test("public support requires its exact content date while the policy revision s
     await assert.rejects(check(publicOne, new Map([["support", html]])), /visible policy revision/);
   }
   const result = await check(publicOne);
-  assert.ok(result.pages.every(page => page.revision === revision));
+  assert.ok(result.pages.filter(page => page.name !== "tokushoho").every(page => page.revision === revision));
+  assert.equal(result.pages.find(page => page.name === "tokushoho").revision, null);
 });
