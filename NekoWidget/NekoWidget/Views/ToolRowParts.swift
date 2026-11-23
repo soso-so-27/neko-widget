@@ -44,11 +44,7 @@ struct ToolValueRow: View {
                 Image(systemName: systemImage).foregroundStyle(Color.accentColor)
             }
         }
-        // The shown value, or for an empty row the word it no longer shows.
-        // Always set, never added or dropped with the row's state: a row that
-        // turned empty in place (another cat chosen in the bar) kept no value
-        // at all, so VoiceOver did not hear 「なし」 (run 45173194020).
-        .accessibilityValue(side ?? value)
+        .modifier(ToolEmptyValueSpoken(word: side == nil ? value : nil))
     }
 }
 
