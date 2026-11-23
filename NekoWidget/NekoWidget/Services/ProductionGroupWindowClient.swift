@@ -94,7 +94,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             switch endpoint.host {
             case "api.nekonomado.com": environment = "production"
 #if DEBUG || INTERNAL_PRESENTATION
-            case "neko-window-sharing-staging.nakanishisoya.workers.dev": environment = "staging"
+            case "api-staging.nekonomado.com", "neko-window-sharing-staging.nakanishisoya.workers.dev": environment = "staging"
 #endif
             default: return
             }
@@ -197,7 +197,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         case "api.nekonomado.com": return "production"
 #if DEBUG || INTERNAL_PRESENTATION
         // 11/19: never in the App Store build (it talks only to production).
-        case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": return "staging"
+        case "api-staging.nekonomado.com", "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": return "staging"
 #endif
         default: return nil
         }

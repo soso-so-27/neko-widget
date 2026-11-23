@@ -73,15 +73,19 @@ class DistributionProfileTests(unittest.TestCase):
         expected = {"SharingInternalEncryptedReportEnabled": False, "SharingInternalEncryptedReportScope": "", profile.OFF_KEY: True}
         with tempfile.TemporaryDirectory() as directory:
             ipa = Path(directory) / "test.ipa"
-            def write(changed=None, key=None, value=None):
+            def write(changed=None, key=None, value=None, origin=profile.ORIGIN):
                 with zipfile.ZipFile(ipa, "w") as archive:
                     for relative in profile.PLISTS:
                         info = app_info(relative != "Info.plist")
+                        if relative == "Info.plist":
+                            info["SharingAPIBaseURL"] = origin
                         if relative == changed:
                             if value is None: info.pop(key, None)
                             else: info[key] = value
                         archive.writestr("Payload/NekoWidget.app/" + relative, plistlib.dumps(info))
             write(); profile.verify_ipa(ipa); verify_ipa(ipa, expected)
+            write(origin="https://api-staging.nekonomado.com")
+            profile.verify_ipa(ipa)
             for relative in profile.PLISTS:
                 for key, value in ((profile.OFF_KEY, None), (profile.OFF_KEY, "NO"),
                                    ("SharingInternalEncryptedReportEnabled", True),

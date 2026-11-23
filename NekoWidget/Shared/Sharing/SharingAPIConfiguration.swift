@@ -310,7 +310,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             && info["FamilyNotebookProductionEnabled"] as? String == "YES"
             && info["GroupWindowsEnabled"] as? String == "YES"
             && configuration.releaseMode == "media-staging"
-            && configuration.baseURL?.absoluteString == "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+            && ["https://api-staging.nekonomado.com", "https://neko-window-sharing-staging.nakanishisoya.workers.dev"]
+                .contains(configuration.baseURL?.absoluteString ?? "")
             && configuration.isGroupRuntimeAvailable
             && configuration.hasOperationalSafetyConfiguration
             && configuration.isOwnerInternalReportsDisabled

@@ -283,7 +283,7 @@ actor FamilyNotebookKeyCoordinator {
             let environment: String
             switch URL(string: endpoint)?.host {
             case "api.nekonomado.com": environment = "production"
-            case "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": environment = "staging"
+            case "api-staging.nekonomado.com", "neko-window-sharing-staging.nakanishisoya.workers.dev", "recovery.invalid": environment = "staging"
             default: throw FamilyNotebookCryptoError.untrusted
             }
             let next = try previous.map { try FamilyNotebookRosterCrypto.advance(signed, previous: $0) }

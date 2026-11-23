@@ -126,11 +126,13 @@ class GroupWindowReleaseTests(unittest.TestCase):
 
     def test_processed_info_cannot_enable_unrequested_or_wrong_endpoint(self):
         release.verify_info(info(), "YES")
+        release.verify_info({**info(), "SharingAPIBaseURL": "https://api-staging.nekonomado.com"}, "YES")
         release.verify_info(info("NO"), "NO")
         for changed in ({"GroupWindowsEnabled": "YES"}, {"GroupWindowsEnabled": True}, {"GroupWindowsEnabled": "$(GROUP_WINDOWS_ENABLED)"}):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 release.verify_info({**info("NO"), **changed}, "NO")
-        for changed in ({"SharingReleaseMode": "disabled"}, {"SharingAPIBaseURL": "https://production.invalid"},
+        for changed in ({"SharingReleaseMode": "disabled"}, {"SharingAPIBaseURL": "https://api.nekonomado.com"},
+                        {"SharingAPIBaseURL": "https://api-staging.nekonomado.com/"},
                         {"SharingMediaEnabled": "NO"}, {"GroupWindowsEnabled": "yes"}):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 release.verify_info({**info(), **changed}, "YES")

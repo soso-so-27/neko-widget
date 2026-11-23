@@ -10,7 +10,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+from distribution_profile import ORIGIN, STAGING_ORIGINS
+
 KEY = "GroupWindowsEnabled"
 TWO_DEVICE_KEY = "OwnerStagingTwoDeviceEnabled"
 TRIAL_KEY = "OwnerTwoDeviceTrial"
@@ -96,7 +97,7 @@ def verify_info(info: dict, expected: str, family_expected: str | None = None,
         if family_expected == "YES" and expected != "YES":
             raise ValueError("Real family notebooks require the approved group identity path.")
     if expected == "YES":
-        if info.get("SharingReleaseMode") != "media-staging" or info.get("SharingAPIBaseURL") != ORIGIN:
+        if info.get("SharingReleaseMode") != "media-staging" or info.get("SharingAPIBaseURL") not in STAGING_ORIGINS:
             raise ValueError("Group build must use the reviewed staging endpoint.")
         for key in ("SharingFeatureEnabled", "SharingMediaEnabled"):
             value = info.get(key)
