@@ -551,3 +551,33 @@
   .s2x .mado .note { text-align: left; }
   .s2x .send { margin-left: 0; }
 }
+
+/* ---------- X. 月の作品：めくれることが見て分かる形 ----------
+   ・右の小口に、残りのページの厚み（めくるほど薄くなる）
+   ・右下の角が少しめくれている
+   ・下に「‹ 1 / 5 ›」の操作。ページそのものをタップ・スワイプしてもめくれる */
+.book { --left: 4; margin-bottom: 0; }
+.book::after { content: ""; position: absolute; z-index: 0; top: 6px; bottom: 6px; right: calc(-1px * var(--left) * 2.2);
+  width: calc(1px * var(--left) * 2.2 + 8px); border-radius: 0 10px 10px 0;
+  background: repeating-linear-gradient(90deg, #fbfaf7 0 1.4px, #ddd6ca 1.4px 2.2px); box-shadow: 0 14px 26px -16px rgba(40,30,20,.45);
+  transition: width .5s, right .5s; }
+.book .pg { z-index: auto; }
+.book .pg::before { width: 44px; height: 44px; }
+.book .bk { cursor: pointer; }
+.book-ctl { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 18px auto 9cqw; }
+.book-ctl .bn { min-width: 3.6em; text-align: center; font: 700 15px/1 "Hiragino Sans", sans-serif; color: #4e4e56; font-variant-numeric: tabular-nums; }
+.book-ctl .bc { width: 48px; height: 48px; border-radius: 50%; border: 0; background: #1c1c1e; display: grid; place-items: center; cursor: pointer; padding: 0;
+  box-shadow: 0 8px 18px -8px rgba(0,0,0,.45); transition: opacity .2s, transform .15s; }
+.book-ctl .bc svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.book-ctl .bc:active { transform: scale(.94); }
+.book-ctl .bc:disabled { opacity: .18; cursor: default; box-shadow: none; }
+.book-ctl .bc:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+@media (min-width: 960px) { .book-ctl { margin-bottom: 40px; } }
+/* 残りのページを、紙が重なった縁としてはっきり見せる（最後のページでは消える） */
+.book::after { display: none; }
+.book::before { content: ""; position: absolute; inset: 0; z-index: 0; border-radius: 6px 14px 14px 6px; background: #fbfaf7;
+  box-shadow: 5px 5px 0 -1px #f7f4ee, 5px 5px 0 0 #d8d1c4, 10px 10px 0 -1px #f7f4ee, 10px 10px 0 0 #d8d1c4, 15px 15px 0 -1px #f7f4ee, 15px 15px 0 0 #d8d1c4, 18px 22px 30px -14px rgba(40,30,20,.45);
+  transition: box-shadow .5s; }
+.book.at-end::before { box-shadow: 0 24px 50px -26px rgba(40,30,20,.45); }
+.book { width: calc(100% - 80px); }
+.book .pg::before { width: 56px; height: 56px; background: linear-gradient(135deg, transparent 50%, #e6e0d4 50%, #fffdf8 80%); box-shadow: -3px -3px 8px rgba(0,0,0,.18); }

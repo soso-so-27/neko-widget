@@ -99,7 +99,7 @@
     <h2>この子との毎日は、<br>あっという間。</h2>
     <p class="after"><em>毎月1日、先月がアルバムになる。</em></p>
   </div>
-  <div class="book" role="group" aria-label="10月の作品（タップでめくれます）"><div class="pg cover" style="z-index:5"><img src="images/store/months/m10.webp" alt="" style="object-position:36% 50%"><div class="ct"><b>10月</b><small>むぎとあめ　2026</small></div></div><div class="pg" style="z-index:4"><p class="pt">10月の作品</p><img src="images/store/wall/w17.webp" alt="" loading="lazy" style="object-position:50% 55%"><p class="pd">10月14日</p><p class="pn">2 / 5</p></div><div class="pg" style="z-index:3"><p class="pt">10月の作品</p><img src="images/store/IMG_7855.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月3日</p><p class="pn">3 / 5</p></div><div class="pg" style="z-index:2"><p class="pt">10月の作品</p><img src="images/store/months/p2.webp" alt="" loading="lazy" style="object-position:50% 60%"><p class="pd">10月21日</p><p class="pn">4 / 5</p></div><div class="pg" style="z-index:1"><p class="pt">10月の作品</p><img src="images/store/IMG_9423.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月30日</p><p class="pn">5 / 5</p></div><button class="bk prev" aria-label="前のページ"></button><button class="bk next" aria-label="次のページ"></button></div>
+  <div class="book" role="group" aria-label="10月の作品（タップでめくれます）"><div class="pg cover" style="z-index:5"><img src="images/store/months/m10.webp" alt="" style="object-position:36% 50%"><div class="ct"><b>10月</b><small>むぎとあめ　2026</small></div></div><div class="pg" style="z-index:4"><p class="pt">10月の作品</p><img src="images/store/wall/w17.webp" alt="" loading="lazy" style="object-position:50% 55%"><p class="pd">10月14日</p></div><div class="pg" style="z-index:3"><p class="pt">10月の作品</p><img src="images/store/IMG_7855.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月3日</p></div><div class="pg" style="z-index:2"><p class="pt">10月の作品</p><img src="images/store/months/p2.webp" alt="" loading="lazy" style="object-position:50% 60%"><p class="pd">10月21日</p></div><div class="pg" style="z-index:1"><p class="pt">10月の作品</p><img src="images/store/IMG_9423.webp" alt="" loading="lazy" style="object-position:50% 40%"><p class="pd">10月30日</p></div><button class="bk prev" aria-label="前のページ"></button><button class="bk next" aria-label="次のページ"></button></div><div class="book-ctl"><button class="bc prev" aria-label="前のページ"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><span class="bn" aria-live="polite">1 / 5</span><button class="bc next" aria-label="次のページ"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></div>
 </section>
 
 <div class="pair">
@@ -204,18 +204,26 @@
   io.observe(document.getElementById('end-cta'));
 })();
 
-/* 月の作品：タップ（左右のスワイプ）でページをめくる。勝手には動かない */
+/* 月の作品：タップ・スワイプ・下の矢印でページをめくる。勝手には動かない */
 (function () {
   var book = document.querySelector('.book'); if (!book) return;
-  var pages = book.querySelectorAll('.pg'), at = 0, x0 = null;
-  function go(d) { var n = at + d; if (n < 0 || n > pages.length - 1) return;
-    if (d > 0) pages[at].classList.add('turned'); else pages[n].classList.remove('turned'); at = n;
-    book.classList.toggle('at-end', at === pages.length - 1); book.classList.toggle('at-start', at === 0); }
-  book.querySelector('.next').addEventListener('click', function () { go(1); });
-  book.querySelector('.prev').addEventListener('click', function () { go(-1); });
+  var pages = book.querySelectorAll('.pg'), at = 0, x0 = null, n = pages.length;
+  var ctl = book.nextElementSibling, num = ctl.querySelector('.bn');
+  var bp = ctl.querySelector('.prev'), bn = ctl.querySelector('.next');
+  function show() {
+    num.textContent = (at + 1) + ' / ' + n;
+    bp.disabled = at === 0; bn.disabled = at === n - 1;
+    book.classList.toggle('at-start', at === 0); book.classList.toggle('at-end', at === n - 1);
+    book.style.setProperty('--left', n - 1 - at);
+  }
+  function go(d) { var t = at + d; if (t < 0 || t > n - 1) return;
+    if (d > 0) pages[at].classList.add('turned'); else pages[t].classList.remove('turned'); at = t; show(); }
+  book.querySelector('.bk.next').addEventListener('click', function () { go(1); });
+  book.querySelector('.bk.prev').addEventListener('click', function () { go(-1); });
+  bn.addEventListener('click', function () { go(1); }); bp.addEventListener('click', function () { go(-1); });
   book.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
   book.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); x0 = null; });
-  book.classList.add('at-start');
+  show();
 })();
 </script>
 </body>
