@@ -690,8 +690,11 @@ struct CatCareDetailView: View {
             }
         } header: {
             Text("見分ける写真")
+                // On the header only, as the parts' headers (`partHeader`): on
+                // the Section it replaced the photos' own identifiers
+                // (cat-care-photo-face, cat-care-photo-actions-…).
+                .accessibilityIdentifier("cat-care-identifying-photos")
         }
-        .accessibilityIdentifier("cat-care-identifying-photos")
     }
 
     private func crop(_ role: CatCarePhotoRole, file: URL) {

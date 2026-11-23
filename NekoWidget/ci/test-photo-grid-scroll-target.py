@@ -21,7 +21,8 @@ class PhotoGridScrollTargetTests(unittest.TestCase):
         self.assertIn('for number in [25, 49]', case)
         self.assertIn('Returning preserves the opened row', case)
         self.assertIn('target.isHittable', case)
-        self.assertIn('number) / 50', case)
+        # 11/22: the viewer shows no 「N / 50」; the opened photo is named by its date.
+        self.assertIn('predicate: NSPredicate(format: "value == %@", takenOn[number]!), object: date)', case)
 
 if __name__ == "__main__":
     unittest.main()

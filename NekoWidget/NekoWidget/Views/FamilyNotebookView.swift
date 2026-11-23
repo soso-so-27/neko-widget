@@ -18,6 +18,15 @@ final class FamilyNotebookPrototype: ObservableObject {
     private static let undoKey = "debug.familyNotebook.tryoutUndo.v1"
     private static let removedKey = "debug.familyNotebook.removedMembers.v1"
     private static let joinedKey = "debug.familyNotebook.joined.v1"
+#if DEBUG
+    /// `--isolated-app-records`: the test notebook also starts empty, is kept
+    /// with this launch's isolated records and is never remembered, whatever
+    /// earlier UI tests on the same Simulator made (a family seeded by one
+    /// harness used to show its cats as pages of the この子 tab in the next).
+    private static let isolated = CommandLine.arguments.contains("--isolated-app-records")
+#else
+    private static let isolated = false
+#endif
 
     @Published private(set) var snapshot: FamilyNotebookSnapshot?
     @Published var message: String?
@@ -487,7 +496,8 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     private init() {
-        if !isReal, let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
+        if !isReal, !Self.isolated,
+           let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
         if isReal { openRealBinding() }
         CatCareStore.shared.willSave = { [weak self] before, after in
             guard let self, self.isReal, !self.applyingRemote else { return }
@@ -561,7 +571,10 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     private static var root: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+#if DEBUG
+        if isolated { return AppRecordDataset.support.appendingPathComponent("FamilyNotebookPrototype", isDirectory: true) }
+#endif
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("FamilyNotebookPrototype", isDirectory: true)
     }
 
@@ -606,10 +619,12 @@ final class FamilyNotebookPrototype: ObservableObject {
         }
         do {
             try await copyTools()
-            for key in [Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
-                UserDefaults.standard.removeObject(forKey: key)
+            if !Self.isolated {
+                for key in [Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+                UserDefaults.standard.set(familyID.uuidString, forKey: Self.familyKey)
             }
-            UserDefaults.standard.set(familyID.uuidString, forKey: Self.familyKey)
             markSeen()
         } catch {
             discard(familyID)
