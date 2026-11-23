@@ -54,7 +54,7 @@ jobs:
           ASC_METADATA_SCOPE: ${{ inputs.scope }}
         run: node NekoWidget/ci/asc-metadata-apply.mjs "--$ASC_MODE"
       - name: Read remaining readiness findings
-        if: always()
+        if: always() && inputs.scope != 'age-rating'
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
