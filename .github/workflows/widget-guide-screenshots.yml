@@ -291,7 +291,6 @@ jobs:
     timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      PRIVATE_ROOT: ${{ runner.temp }}/neko-lp-home
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -300,6 +299,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          PRIVATE_ROOT="$RUNNER_TEMP/neko-lp-home"
+          printf 'PRIVATE_ROOT=%s\n' "$PRIVATE_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$PRIVATE_ROOT/media"
           curl --fail --silent --show-error --location --max-time 30 \
             'https://images.unsplash.com/photo-1621238281284-d186cb6813fb?fit=crop&w=1400&h=1400&crop=entropy&fm=jpg&q=88' \
