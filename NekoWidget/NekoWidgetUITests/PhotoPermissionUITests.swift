@@ -2486,6 +2486,12 @@ final class SoloMemoriesUITests: XCTestCase {
         // The menu stays in the bar; the other むぎ opens in place.
         chooseVetCat(sameNameOtherCat, app: app)
         XCTAssertTrue(recordsStep.waitForExistence(timeout: 5))
+        // The page is redrawn for the other むぎ in place; read the row once
+        // it has settled (run 45146319025 read it mid-redraw, with no value).
+        let otherCatRecords = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            recordsValue().contains("なし") || recordsValue().contains("件")
+        }, object: nil)
+        _ = XCTWaiter.wait(for: [otherCatRecords], timeout: 5)
         XCTAssertTrue(recordsValue().contains("なし"), "Same name must not carry the other cat's records: " + recordsValue())
         openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch.exists)
@@ -4592,8 +4598,12 @@ final class SoloMemoriesUITests: XCTestCase {
         // 11/7: the cat's one page; the name is changed at its top (11/12:
         // the parts are always open, nothing to unfold first).
         XCTAssertFalse(app.buttons["cat-profile-page-photos"].exists, "The cat's page has no 写真 tab")
-        XCTAssertTrue(app.buttons["名前を変更"].waitForExistence(timeout: 5),
-                      "The tools must open the profile, without a photo-grid intermediary")
+        // 11/12 (round 2): the name itself is the rename button (read as
+        // 「ミケ、名前を変更」), on top of this cat's own page.
+        let rename = app.buttons["cat-profile-rename"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 5),
+                      "The tools must open the profile, without a photo-grid intermediary: " + app.debugDescription)
+        XCTAssertEqual(rename.label, "\(catName)、名前を変更")
         XCTAssertFalse(app.navigationBars["\(catName)の写真"].exists)
         capture("cat-settings-direct")
         // The tab bar is hidden on the cat's page; going back brings it again.
