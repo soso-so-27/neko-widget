@@ -403,3 +403,10 @@
 }
 .hand-fig .v32-pic { margin-top: -15cqw; }
 .hand-cap { position: relative; z-index: 1; }
+
+/* ---------- S. 区切り2は App Store の2枚目（確定）と同じ意図に戻す ----------
+   家族（ママ）が送った1枚が、トークでは夕飯や買い物の話に埋もれる。ねこのまどなら、自分のホーム画面に届く。 */
+.hand-fig .v32-pic { margin-top: 2cqw; }
+.hand-fig .cv .from small { display: block; font-size: 2.6cqw; color: #6e6e76; font-weight: 700; margin-top: .3cqw; }
+@media (min-width: 960px) { .hand-sec .hand-fig { width: 520px; margin: 0 auto; } }
+.hand-fig .v32-pic { margin-top: -6cqw; } @media (min-width: 960px) { .hand-fig .v32-pic { margin-top: -40px; } }
