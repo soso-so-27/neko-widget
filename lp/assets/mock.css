@@ -603,3 +603,27 @@
 }
 /* トークの写真は、まどと同じ1枚だと分かるよう、もう少し見せる */
 .s2x .chat .gone { margin-top: -34px; }
+
+/* ---------- Z. 区切りの切れ目を分かるように ----------
+   白と生成りを交互に、帯は画面の端まで。PC で横に並ぶ「この子」「もしも」は同じ帯にまとめる */
+.v32.v32-3, .v32.fan-sec, .v32.v32-5, .faq { --band: #f5f1ea; }
+.v32.v32-1, .v32.s2x, .v32.konoko-sec, .price, .end { --band: #fff; }
+.faq { background: var(--band); border-top: 0; }
+.v32 { padding-bottom: 12cqw; }
+.v32.v32-1 { padding-bottom: 0; }
+.v32.v32-3 { padding-bottom: 0; }
+.s2x .mbox { background: #eeeef3; }
+.book-ctl { margin-bottom: 0; }
+@media (min-width: 960px) {
+  .v32 { padding-bottom: 96px; }
+  .v32.v32-1, .v32.v32-3 { padding-bottom: 0; }
+  .pair { background: #fff; box-shadow: 0 0 0 100vmax #fff; clip-path: inset(0 -100vmax); }
+  .pair .v32.v32-5, .pair .v32.konoko-sec { --band: transparent; background: none; padding-bottom: 0; }
+  .pair { padding-bottom: 96px; }
+  .price { --band: #f5f1ea; }
+  .faq { --band: #fff; }
+  .end { --band: #f5f1ea; }
+}
+section.faq.faq { --band: #f5f1ea; }
+section.price.price, section.end.end { --band: #fff; }
+@media (min-width: 960px) { section.price.price, section.end.end { --band: #f5f1ea; } section.faq.faq { --band: #fff; } }
