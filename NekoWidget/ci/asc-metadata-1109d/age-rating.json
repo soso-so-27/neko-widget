@@ -1,11 +1,13 @@
 {
   "advertising": false,
   "ageAssurance": false,
+  "datingAndRelationships": false,
   "gambling": false,
   "healthOrWellnessTopics": false,
   "lootBox": false,
   "messagingAndChat": true,
   "parentalControls": false,
+  "sharedLocation": false,
   "socialMedia": false,
   "socialMediaAgeRestricted": false,
   "unrestrictedWebAccess": false,
@@ -22,5 +24,6 @@
   "sexualContentOrNudity": "NONE",
   "violenceCartoonOrFantasy": "NONE",
   "violenceRealistic": "NONE",
-  "violenceRealisticProlongedGraphicOrSadistic": "NONE"
+  "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+  "ageRatingOverrideV2": "THIRTEEN_PLUS"
 }
