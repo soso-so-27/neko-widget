@@ -538,3 +538,7 @@ summary::after { color:#2f7cf6; }
   .pair .v32-5 .v32-fig { width: 540px; margin: auto; }
 }
 .s2x .up { color: #5f6473; }
+
+/* 言葉の直し（11/23）：まどの説明と、Plus の印 */
+.s2x .mado .note small { display: block; margin-top: 4px; font-size: 13px; font-weight: 700; color: #5f6473; }
+.plus-chip { display: inline-block; margin-left: 8px; padding: 2px 9px 3px; border-radius: 99px; background: #2f7cf6; color: #fff; font: 800 12px/1.3 "Hiragino Sans", sans-serif; vertical-align: 2px; letter-spacing: .04em; }
