@@ -4381,8 +4381,20 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(app.buttons["membership-offer-refresh"].exists)
             XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
             let restore = app.buttons["membership-offer-restore"]
-            for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
-            XCTAssertTrue(restore.isHittable, state + ": " + app.debugDescription)
+            // 「購入を復元」 is among the links at the end of the page, under the
+            // pinned purchase bar until the page scrolls. Drag the page itself,
+            // between the title and that bar (run 45166616353: five swipes
+            // from the window's middle left the page at 0%).
+            let page = app.scrollViews["membership-offer"]
+            let bar = app.buttons["membership-offer-purchase"]
+            for _ in 0..<6 where !(restore.isHittable && restore.frame.maxY <= bar.frame.minY) {
+                let origin = page.coordinate(withNormalizedOffset: .zero)
+                let low = max(page.frame.minY + 80, bar.frame.minY - 60) - page.frame.minY
+                let lower = origin.withOffset(CGVector(dx: page.frame.width / 2, dy: low))
+                let upper = origin.withOffset(CGVector(dx: page.frame.width / 2, dy: 40))
+                lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.1)
+            }
+            XCTAssertTrue(restore.isHittable && restore.frame.maxY <= bar.frame.minY, state + ": " + app.debugDescription)
             XCTAssertTrue(restore.isEnabled)
             if state == "unknown" {
                 let attachment = XCTAttachment(screenshot: app.screenshot())
