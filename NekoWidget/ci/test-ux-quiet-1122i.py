@@ -81,7 +81,7 @@ class EmptyRows(unittest.TestCase):
         row = section(PARTS, "struct ToolValueRow: View {", "/// The word an empty row no longer shows")
         self.assertIn("ToolEmptyValue.isEmptyMarker(value, filled: filled, problem: problem) ? nil : value", row)
         self.assertIn("if let side {", row)
-        self.assertIn(".modifier(ToolEmptyValueSpoken(word: side == nil ? value : nil))", row)
+        self.assertIn(".accessibilityValue(side ?? value)", row)
         words = section(PARTS, "enum ToolEmptyValue {", "\n}\n")
         self.assertIn("!filled && !problem && (value == unwritten || value == none)", words)
         spoken = section(PARTS, "struct ToolEmptyValueSpoken: ViewModifier {", "\n}\n")
