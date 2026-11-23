@@ -72,6 +72,16 @@ export function approvedStoreCopy1123(current,desired){
   return fields.every(field=>typeof desired[field]==='string'&&sha256(desired[field])===storeCopy1123Approved[field]
     &&(current[field]===storeCopy1123Previous[field]||current[field]===desired[field]));
 }
+// 1123v: PR #1235 renamed the button 「猫友を招く」 to 「招待する」. Only the review
+// notes move, from exactly the store-copy-1123 approved notes to exactly this text.
+export const reviewNotes1123vPrevious=storeCopy1123Approved.notes;
+export const reviewNotes1123vApproved='8a44b2a67ff2bd4fe6db182564b167ca9dcf9dd38ff9ef8cad8ac344fd5c1123';
+export function approvedReviewNotes1123v(current,desired){
+  if(!current||!desired||typeof current!=='object'||typeof desired!=='object')return false;
+  if(Object.keys(desired).join()!=='notes'||Object.keys(current).some(field=>field!=='notes'))return false;
+  if(typeof desired.notes!=='string'||sha256(desired.notes)!==reviewNotes1123vApproved)return false;
+  return typeof current.notes==='string'&&(sha256(current.notes)===reviewNotes1123vPrevious||current.notes===desired.notes);
+}
 const freePhotoHeading='■ ホーム画面で、ふと目が合う\n';
 const plusHeading='■ ねこのまど Plus\n';
 const paidDailyLine='・毎日、新しい 1 枚がホーム画面に\n';
@@ -144,7 +154,7 @@ export function permissionFailure(text){
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const selection=process.env.ASC_METADATA_SCOPE||'approved-groups';
-  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123'].includes(selection))throw Error('STOP_SCOPE');
+  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123','review-notes-1123v'].includes(selection))throw Error('STOP_SCOPE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
   const sensitive=[env.APP_STORE_CONNECT_KEY_ID,env.APP_STORE_CONNECT_ISSUER_ID,env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64];
   function call(args,allowFindings=false){
@@ -231,6 +241,13 @@ function main(){
     });
     for(const [scope,file,fields,desired] of groups)
       runScope(scope,[file],false,fields,before=>approvedStoreCopy1123(pickFields(before[file],fields),desired));
+    return;
+  }
+  if(selection==='review-notes-1123v'){
+    const file='review-information.json',fields=['notes'];
+    const desired=pickFields(JSON.parse(readFileSync(join(root,file),'utf8')),fields);
+    if(!approvedReviewNotes1123v(pickFields(snapshot('review-information')[file],fields),desired))throw Error('STOP_SCOPE');
+    runScope('review-information',[file],false,fields,before=>approvedReviewNotes1123v(pickFields(before[file],fields),desired));
     return;
   }
   if(selection==='seasonal-movie-app-metadata'){
