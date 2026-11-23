@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous,approvedReviewNotes1123v} from './asc-metadata-apply.mjs';
+import {readFileSync} from 'node:fs';
+import {ageRatingPlan,checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous,approvedReviewNotes1123v} from './asc-metadata-apply.mjs';
+
+test('age rating dry-run compares the complete questionnaire, including new Apple fields',()=>{
+  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/age-rating.json',import.meta.url),'utf8'));
+  const expected={dryRun:true,scope:'age-rating',changes:[],unavailableFields:[]};
+  assert.deepEqual(ageRatingPlan({...desired,ageRatingOverride:null},desired),expected);
+  const {datingAndRelationships,...current}=desired;
+  assert.deepEqual(ageRatingPlan({...current,sharedLocation:true},desired),{
+    ...expected,
+    changes:[{field:'sharedLocation',from:true,to:false}],
+    unavailableFields:['datingAndRelationships'],
+  });
+});
 
 test('1111d permits only the daily-photo copy changes in the Japanese descriptions',()=>{
   // 1123: the home paragraph now ends with a later sentence; check the 1111d step on the text it had then.
@@ -17,7 +30,6 @@ test('1111d permits only the daily-photo copy changes in the Japanese descriptio
   assert.equal(dailyPlusDescriptionChange('月の作品、まど、家族の手帳、メモ、保存'),null);
   assert.throws(()=>dailyPlusDescriptionChange('別の説明'),/STOP_SCOPE/u);
 });
-import {readFileSync} from 'node:fs';
 test('1121f removes exactly two movie mentions and the movie keyword',()=>{
   const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
   const before=desired.description

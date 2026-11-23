@@ -10,6 +10,15 @@ import {safeText,validationSummary} from './asc-readonly.mjs';
 
 const root=resolve('NekoWidget/ci/asc-metadata-1109d');
 const scopes={localizations:['app-info/ja.json','version/1.0/ja.json'],categories:['categories.json'],'age-rating':['age-rating.json'],'review-information':['review-information.json']};
+export function ageRatingPlan(current,desired){
+  const changes=[];
+  const unavailableFields=[];
+  for(const [field,value] of Object.entries(desired)){
+    if(!Object.hasOwn(current,field))unavailableFields.push(field);
+    else if(!isDeepStrictEqual(current[field],value))changes.push({field,from:current[field],to:value});
+  }
+  return {dryRun:true,scope:'age-rating',changes,unavailableFields};
+}
 function expected(files,fields,directory){
   return files.flatMap(file=>Object.entries(JSON.parse(readFileSync(join(directory,file),'utf8'))).filter(([field])=>!fields||fields.includes(field)).map(([field,value])=>({
     scope:file.startsWith('app-info/')?'app-info':file.startsWith('version/')?'version':file.replace('.json',''),
@@ -233,7 +242,20 @@ function main(){
     }
   }
   if(selection==='age-rating'){
-    runScope('age-rating',scopes['age-rating']);
+    // The pinned asc metadata schema may lag new Apple questionnaire fields.
+    const appInfos=call(['api','GET',`/v1/apps/${app}/appInfos`,'--paginate']).data;
+    const drafts=appInfos?.filter(info=>info.type==='appInfos'&&
+      (info.attributes?.state??info.attributes?.appStoreState)==='PREPARE_FOR_SUBMISSION');
+    if(drafts?.length!==1||!(/^[a-z\d-]+$/iu.test(drafts[0].id??'')))throw Error('STOP_IDENTITY');
+    const infoId=drafts[0].id;
+    sensitive.push(infoId);
+    const file=scopes['age-rating'][0];
+    const desired=JSON.parse(readFileSync(join(root,file),'utf8'));
+    const declaration=call(['api','GET',`/v1/appInfos/${infoId}/ageRatingDeclaration`]).data;
+    if(declaration?.type!=='ageRatingDeclarations'||!declaration.attributes)throw Error('STOP_READBACK');
+    const plan=ageRatingPlan(declaration.attributes,desired);
+    console.log(JSON.stringify(plan));
+    if(plan.unavailableFields.length)throw Error('STOP_READBACK');
     return;
   }
   if(selection==='store-copy-1123'){
