@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous} from './asc-metadata-apply.mjs';
 
 test('1111d permits only the daily-photo copy changes in the Japanese descriptions',()=>{
-  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description;
+  // 1123: the home paragraph now ends with a later sentence; check the 1111d step on the text it had then.
+  const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')).description
+    .replace('1年前のきょうや誕生日には、札の付いた1枚が届きます。','');
   const before=desired.replace('毎日ちがう 1 枚に入れ替わります。','')
     .replace('■ ねこのまど Plus\n','■ ねこのまど Plus\n・毎日、新しい 1 枚がホーム画面に\n');
   assert.notEqual(before,desired);
@@ -116,4 +118,39 @@ test("1115c permits exactly approved #1007 description changes",()=>{
  assert.equal(approvedDescriptionUpdate(before,desired),true);
  assert.equal(approvedDescriptionUpdate(before,desired.replace("980 円","990 円")),false);
  assert.equal(approvedDescriptionUpdate(before+"別の文",desired),false);
+});
+test('1123 store-copy-1123 permits only the exact previous to approved text',()=>{
+  const desiredVersion=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
+  const desiredReview=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/review-information.json',import.meta.url),'utf8'));
+  const fields=['description','keywords','promotionalText'];
+  const desired=pickFields(desiredVersion,fields),previous=pickFields(storeCopy1123Previous,fields);
+  for(const field of fields)assert.notEqual(previous[field],desired[field]);
+  // The approved copy itself.
+  assert.ok(!desired.description.includes(String.fromCharCode(92)));
+  assert.match(desired.description,/■ この子のこと（無料）\n誕生日・ワクチン・病院・体重を記録して/u);
+  assert.match(desired.description,/■ ねこのまど Plus\n・まどを作って、家族や猫友を招く\n/u);
+  assert.ok([...desired.promotionalText].length<=170);
+  assert.ok([...desired.keywords].length<=100);
+  assert.ok(desired.keywords.split(',').includes('迷子')&&desired.keywords.split(',').includes('猫友'));
+  assert.ok(desiredReview.notes.includes('まどを作った直後の画面で、6 つの席と「猫友を招く」から招待リンクを送れます。'));
+
+  assert.equal(approvedStoreCopy1123(previous,desired),true);
+  assert.equal(approvedStoreCopy1123(desired,desired),true);
+  assert.equal(approvedStoreCopy1123({...previous,keywords:desired.keywords},desired),true);
+  const notes={notes:desiredReview.notes};
+  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},notes),true);
+  // Any other current value stops.
+  for(const field of fields){
+    assert.equal(approvedStoreCopy1123({...previous,[field]:previous[field]+'別の文'},desired),false);
+    assert.equal(approvedStoreCopy1123({...previous,[field]:undefined},desired),false);
+  }
+  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes+'。'},notes),false);
+  // Any desired text other than the approved one stops.
+  assert.equal(approvedStoreCopy1123(previous,{...desired,description:desired.description.replace('980 円','990 円')}),false);
+  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},{notes:desiredReview.notes+'追記'}),false);
+  // Extra fields stop.
+  assert.equal(approvedStoreCopy1123({...previous,supportUrl:desiredVersion.supportUrl},{...desired,supportUrl:desiredVersion.supportUrl}),false);
+  assert.equal(approvedStoreCopy1123({...previous,whatsNew:'x'},desired),false);
+  assert.equal(approvedStoreCopy1123({},{}),false);
+  assert.equal(approvedStoreCopy1123(undefined,desired),false);
 });
