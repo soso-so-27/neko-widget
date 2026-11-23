@@ -195,8 +195,8 @@ const LOCAL_ONLY_PAGES = Object.freeze([
 const PUBLIC_1_0_PAGES = Object.freeze([
   { name: "overview", path: "", h1: "撮りためた猫の写真に、毎日会える", visibleRevision: false,
     requiredPhrases: ["アルバムとホーム画面のウィジェットに出すアプリ", "公開フィード、検索、フォロー、匿名の出会いはありません", "広告もありません"] },
-  { name: "privacy", path: "privacy/", h1: "プライバシーポリシー", visibleRevision: true, visibleRevisionDate: "2026-11-21",
-    requiredPhrases: ["1つのまどは6人まで", "エンドツーエンド暗号化してから送ります", "中身を読む鍵を持ちません", "確認用の画像は7日で消えます", "暗号化して最大35日保持", "購読の終わりから12か月", "知らせが届いてから少なくとも30日は待ちます", "参加する前に家族の手帳へ書かれた記録を読めます", "家族と共有している家族の手帳の内容は、自動保存の控えに含まれません", "出所が判別できない項目は、個人の記録として残します"] },
+  { name: "privacy", path: "privacy/", h1: "プライバシーポリシー", visibleRevision: true, visibleRevisionDate: "2026-11-23",
+    requiredPhrases: ["1つのまどは6人まで", "エンドツーエンド暗号化してから送ります", "中身を読む鍵を持ちません", "確認用の画像は7日で消えます", "Appleが無効と返したときに削除対象", "購読の終わりから12か月", "知らせが届いてから少なくとも30日は待ちます", "参加する前に家族の手帳へ書かれた記録を読めます", "家族と共有している家族の手帳の内容は、自動保存の控えに含まれません", "出所が判別できない項目は、個人の記録として残します"] },
   { name: "community", path: "community/", h1: "コミュニティ基準", visibleRevision: true,
     requiredPhrases: ["1つのまどは6人まで", "入れるのは招待された人だけ", "運営者だけが開ける鍵で暗号化して送ります", "受付番号が出る", "その相手からの新しい写真を止められます", "確認用の画像は7日で消し"] },
   { name: "support", path: "support/", h1: "サポート", visibleRevision: true, visibleRevisionDate: "2026-11-22",
@@ -210,7 +210,7 @@ const MEDIA_STAGING_POLICY_BASE = "https://soso-so-27.github.io/neko-widget/";
 const MEDIA_STAGING_PUBLIC_PAGES = PUBLIC_1_0_PAGES.map(page => page.name === "privacy"
   ? {
       ...page,
-      visibleRevisionDate: "2026-11-21",
+      visibleRevisionDate: "2026-11-23",
       requiredPhrases: [...page.requiredPhrases, "家族の手帳を作った人の猫ごとの代表写真"],
     }
   : page);

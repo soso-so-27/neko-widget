@@ -174,7 +174,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         visible_revision = f"最終更新日：{year}年{month}月{day}日"
         for page in PAGES[1:]:
             # 11/19: the privacy page describes the family notebook's representative photo.
-            pinned = {"privacy": "最終更新日：2026年11月21日", "support": "最終更新日：2026年11月22日", "guide": "最終更新日：2026年11月22日"}
+            pinned = {"privacy": "最終更新日：2026年11月23日", "support": "最終更新日：2026年11月22日", "guide": "最終更新日：2026年11月22日"}
             expected = pinned.get(page.parent.name, visible_revision)
             self.assertIn(expected, "".join(self.parsed(page).text), page)
 
@@ -198,7 +198,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 '中身を読む鍵を持ちません',
                 '確認用の画像は7日で消えます',
                 '問題なし・解除と決めたものは決定から1年で消します',
-                '暗号化して最大35日保持',
+                'Appleが無効と返したときに削除対象',
                 '購読の終わりから12か月',
                 '知らせが届いてから少なくとも30日は待ちます',
             ),
@@ -312,7 +312,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             "あなたが通報したときの確認用の画像、あなたが「写真を書き出す」で共有先に渡したもの",
             "まだ受け取っていない人がいる間は最長30日",
             "通知用デバイストークン",
-            "暗号化して最大35日保持",
+            "Appleが無効と返したときに削除対象",
             "Apple Push Notification service（APNs）",
             "まどと写真の不透明な識別子",
             "写真そのもの、まど名、相手名、撮影日時、取得URL、暗号鍵を含めません",

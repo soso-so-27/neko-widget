@@ -105,7 +105,7 @@ test("requires the published media-staging privacy revision only on the approved
   const githubPages = { ...publicOne, siteBase: "https://soso-so-27.github.io/neko-widget/" };
   const privacy = publicOne.definition.pages.find(page => page.name === "privacy");
   const disclosure = "家族の手帳を作った人の猫ごとの代表写真";
-  const mediaPage = { ...privacy, visibleRevisionDate: "2026-11-21" };
+  const mediaPage = { ...privacy, visibleRevisionDate: "2026-11-23" };
   const updated = pageHtml(githubPages, mediaPage, { phrases: [...privacy.requiredPhrases, disclosure] });
 
   const stalePage = { ...privacy, visibleRevisionDate: "2026-11-19" };
