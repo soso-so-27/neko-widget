@@ -69,15 +69,16 @@ class FirstInviteTests(unittest.TestCase):
     def test_the_first_screen_has_one_primary_and_a_quiet_later(self):
         first = section(WINDOW, "struct GroupWindowFirstInviteScreen: View {", "// MARK: - People blocked")
         self.assertEqual(first.count(".buttonStyle(.borderedProminent)"), 1)
-        # 11/23 (猫友のまど): the one primary is 「猫友を招く」.
-        self.assertIn('Text("猫友を招く")', first)
+        # 11/23 (猫友のまど): the one primary is 「招待する」 (family or friends, 11/23).
+        self.assertIn('Text("招待する")', first)
+        self.assertNotIn('猫友を招く', first)
         self.assertNotIn('Label("招待リンクを送る"', first)
         self.assertIn('Button("あとで") { onDone() }', first)
         self.assertLess(first.index('"group-window-first-invite-send"'), first.index('"group-window-first-invite-later"'))
         self.assertIn("WindowCardEmptyCover()", first)
         # The existing invitation steps and sheet, no new server call.
         self.assertIn("GroupWindowMembersModel(client: client, windowID: windowID)", first)
-        # 11/23: the same steps, now shared with the other 「猫友を招く」 places.
+        # 11/23: the same steps, now shared with the other 「招待する」 places.
         self.assertIn("await model.invitationToShare()", first)
         steps = section(SETUP, "    func invitationToShare() async -> GroupInvitation? {", "    func revokeInvitation() async {")
         self.assertLess(steps.index("await revokeInvitation()"), steps.index("await createInvitation()"))

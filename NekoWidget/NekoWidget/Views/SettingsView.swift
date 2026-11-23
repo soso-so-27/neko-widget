@@ -398,7 +398,7 @@ struct SettingsView: View {
                    let seatWindow = GroupWindowPresentation.windowWithOpenSeats(GroupWindowListNavigation.shared.lastListed) {
                     GroupSeatsInviteButton(client: client, windowID: seatWindow.id, windowName: seatWindow.name,
                                            identifier: "settings-invite-friends") { preparing in
-                        Label { Text(preparing ? "用意しています…" : "猫友を招く").foregroundStyle(Color.primary) } icon: {
+                        Label { Text(preparing ? "用意しています…" : "まどに招待する").foregroundStyle(Color.primary) } icon: {
                             Image(systemName: "person.badge.plus")
                         }
                     }
