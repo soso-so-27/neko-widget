@@ -542,3 +542,7 @@ summary::after { color:#2f7cf6; }
 /* 言葉の直し（11/23）：まどの説明と、Plus の印 */
 .s2x .mado .note small { display: block; margin-top: 4px; font-size: 13px; font-weight: 700; color: #5f6473; }
 .plus-chip { display: inline-block; margin-left: 8px; padding: 2px 9px 3px; border-radius: 99px; background: #2f7cf6; color: #fff; font: 800 12px/1.3 "Hiragino Sans", sans-serif; vertical-align: 2px; letter-spacing: .04em; }
+/* Plus の主役は「家族のまど」 */
+.plan .pitch { margin-top: 2px; font: 800 15px/1.5 "Zen Maru Gothic", sans-serif; color: #1c1c1e; }
+.feat li b { font-weight: 800; color: #1c1c1e; }
+.s2x .turn .plus-chip { font-size: 12px; }
