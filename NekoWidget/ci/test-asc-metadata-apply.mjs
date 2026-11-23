@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous} from './asc-metadata-apply.mjs';
+import {checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous,approvedReviewNotes1123v} from './asc-metadata-apply.mjs';
 
 test('1111d permits only the daily-photo copy changes in the Japanese descriptions',()=>{
   // 1123: the home paragraph now ends with a later sentence; check the 1111d step on the text it had then.
@@ -135,13 +135,16 @@ test('1123 store-copy-1123 permits only the exact previous to approved text',()=
   // 1123n: keywords merged with the words found in ASC (no ホーム画面), entered manually.
   assert.equal(desired.keywords,'ねこ,ネコ,ペット,愛猫,アルバム,写真整理,ウィジェット,家族,共有,お世話,記録,病院,メモ,黒猫,多頭飼い,見守り,迷子,防災,避難,健康管理,体重,通院,日記,猫友');
   assert.ok(!desired.keywords.split(',').includes('ホーム画面'));
-  assert.ok(desiredReview.notes.includes('まどを作った直後の画面で、6 つの席と「猫友を招く」から招待リンクを送れます。'));
+  assert.ok(desiredReview.notes.includes('まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。'));
 
   assert.equal(approvedStoreCopy1123(previous,desired),true);
   assert.equal(approvedStoreCopy1123(desired,desired),true);
   assert.equal(approvedStoreCopy1123({...previous,keywords:desired.keywords},desired),true);
-  const notes={notes:desiredReview.notes};
+  // 1123v: the notes in the repo moved on to 「招待する」, so store-copy-1123 now
+  // refuses them; its own approved notes (「猫友を招く」) still pass.
+  const notes={notes:desiredReview.notes.replace('「招待する」','「猫友を招く」')};
   assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},notes),true);
+  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},{notes:desiredReview.notes}),false);
   // Any other current value stops.
   for(const field of fields){
     assert.equal(approvedStoreCopy1123({...previous,[field]:previous[field]+'別の文'},desired),false);
@@ -150,10 +153,35 @@ test('1123 store-copy-1123 permits only the exact previous to approved text',()=
   assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes+'。'},notes),false);
   // Any desired text other than the approved one stops.
   assert.equal(approvedStoreCopy1123(previous,{...desired,description:desired.description.replace('980 円','990 円')}),false);
-  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},{notes:desiredReview.notes+'追記'}),false);
+  assert.equal(approvedStoreCopy1123({notes:storeCopy1123Previous.notes},{notes:notes.notes+'追記'}),false);
   // Extra fields stop.
   assert.equal(approvedStoreCopy1123({...previous,supportUrl:desiredVersion.supportUrl},{...desired,supportUrl:desiredVersion.supportUrl}),false);
   assert.equal(approvedStoreCopy1123({...previous,whatsNew:'x'},desired),false);
   assert.equal(approvedStoreCopy1123({},{}),false);
   assert.equal(approvedStoreCopy1123(undefined,desired),false);
+});
+test('1123v review-notes-1123v permits only the review notes from the store-copy-1123 text to 「招待する」',()=>{
+  const desiredNotes=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/review-information.json',import.meta.url),'utf8')).notes;
+  const sentence='まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。';
+  assert.ok(desiredNotes.includes(sentence));
+  assert.ok(!desiredNotes.includes('猫友を招く'));
+  const previousNotes=desiredNotes.replace('「招待する」','「猫友を招く」');
+  const desired={notes:desiredNotes};
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},desired),true);
+  assert.equal(approvedReviewNotes1123v(desired,desired),true);
+  // Any other current notes stop, including the older store-copy-1123 previous.
+  assert.equal(approvedReviewNotes1123v({notes:storeCopy1123Previous.notes},desired),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes+'。'},desired),false);
+  assert.equal(approvedReviewNotes1123v({notes:undefined},desired),false);
+  assert.equal(approvedReviewNotes1123v({},desired),false);
+  // Any other desired notes stop.
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},{notes:desiredNotes+'追記'}),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},{notes:previousNotes}),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},{notes:desiredNotes.replace('「招待する」','「招く」')}),false);
+  // Only the notes field.
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes,demoAccountRequired:false},{...desired,demoAccountRequired:false}),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes,demoAccountRequired:false},desired),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},{description:desiredNotes}),false);
+  assert.equal(approvedReviewNotes1123v(undefined,desired),false);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes},undefined),false);
 });

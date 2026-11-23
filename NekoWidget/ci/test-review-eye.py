@@ -91,9 +91,10 @@ class ReviewEyeTests(unittest.TestCase):
             "動画",
             "運営に知らせる",
             "連絡先：support@nekonomado.com",
-            "まどを作った直後の画面で、6 つの席と「猫友を招く」から招待リンクを送れます。",
+            "まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。",
         ):
             self.assertIn(phrase, notes)
+        self.assertNotIn("猫友を招く", notes)
         self.assertNotIn("まどと家族の手帳のID", notes)
         self.assertNotIn("まどと家族の手帳から抜ける", notes)
         self.assertLessEqual(len(notes), 4000)
