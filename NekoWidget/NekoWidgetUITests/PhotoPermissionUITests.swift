@@ -4387,14 +4387,15 @@ final class SoloMemoriesUITests: XCTestCase {
             // from the window's middle left the page at 0%).
             let page = app.scrollViews["membership-offer"]
             let bar = app.buttons["membership-offer-purchase"]
-            for _ in 0..<6 where !(restore.isHittable && restore.frame.maxY <= bar.frame.minY) {
+            // (In the states that ask for it, it is in the pinned bar itself.)
+            for _ in 0..<6 where !restore.isHittable {
                 let origin = page.coordinate(withNormalizedOffset: .zero)
                 let low = max(page.frame.minY + 80, bar.frame.minY - 60) - page.frame.minY
                 let lower = origin.withOffset(CGVector(dx: page.frame.width / 2, dy: low))
                 let upper = origin.withOffset(CGVector(dx: page.frame.width / 2, dy: 40))
                 lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.1)
             }
-            XCTAssertTrue(restore.isHittable && restore.frame.maxY <= bar.frame.minY, state + ": " + app.debugDescription)
+            XCTAssertTrue(restore.isHittable, state + ": " + app.debugDescription)
             XCTAssertTrue(restore.isEnabled)
             if state == "unknown" {
                 let attachment = XCTAttachment(screenshot: app.screenshot())
