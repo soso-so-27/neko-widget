@@ -125,7 +125,7 @@ window／moment／reporter／reason／moderation keyへの結び付けをクラ�
 - `POST /v3/group-windows/{windowId}/push-subscription/remove`: v3署名、JSON `{operationId}`。
   push受付OFFでも解除できます。世代番号を残すので、再登録で古い通知を復活させません。
 
-トークンは既存のAES-GCM keyringで暗号化し、35日後の期限切れや解除時に暗号文を消します。
+トークンは既存のAES-GCM keyringで暗号化し、Appleがトークンを無効と返したときや通知を解除したときに暗号文を消します。
 同じ物理tokenを別のdevice identityが登録すると、前のidentityのグループ登録を失効させます。
 既存の2人用token registryは変更しません。
 写真・ハートの通知直前に、現在のメンバー／端末、退出・除外・閉鎖、相互ブロック、
@@ -181,7 +181,7 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じです�
 | `POST` | `/v2/moments/{id}/ack` | 復号・端末内保存後の受領を記録する |
 | `POST` | `/v2/participants/{id}/block` | 双方向deliveryを止め、対象の通常accessを失効する |
 | `POST/PUT/POST` | `/v2/reports/...` | 通報copyを予約・upload・commitする |
-| `PUT` | `/v2/push-subscriptions/current` | 現在の署名済みdeviceへAPNs tokenを35日間登録・更新する |
+| `PUT` | `/v2/push-subscriptions/current` | 現在の署名済みdeviceへAPNs tokenを登録・更新する |
 | `DELETE` | `/v2/push-subscriptions/current` | runtime OFF中でも現在deviceのAPNs登録を削除する |
 | `PUT` | `/v3/push-subscriptions/current` | 同じ物理tokenの他のtargeted bindingを残し、現在の署名済みまどを通知対象へ加算する |
 | `DELETE` | `/v3/push-subscriptions/current` | runtime OFF中でも現在の署名済みまどのtargeted bindingだけを削除する |
@@ -279,7 +279,7 @@ Consumed challenge rowはpending pairing中だけ残ります。Completion、pen
 
 ## Retention cleanup
 
-`* * * * *`のAPNs handlerは期限切れsubscription/eventを先に削除し、leased outboxを最大50件ずつ配送します。Subscriptionは最終登録から最大35日、通知eventは24時間です。Appは起動ごとに、通知対象にする各まどを`v3`で加算更新します。初回登録時に過去eventをbackfillしないため、通知を新たに許可した直後に古い写真やハートをまとめて通知しません。Foreground同期でmomentがACKされた場合は未送信・retry中の通知eventを削除します。旧clientの`v2`登録は同じ物理tokenを選択中1まどへ戻し、targeted bindingを安全に置き換えます。
+`* * * * *`のAPNs handlerは期限切れeventを削除し、leased outboxを最大50件ずつ配送します。まどの登録に経過日数による期限はなく、通知eventは24時間です。Appは起動ごとに、通知対象にする各まどを`v3`で加算更新します。初回登録時に過去eventをbackfillしないため、通知を新たに許可した直後に古い写真やハートをまとめて通知しません。Foreground同期でmomentがACKされた場合は未送信・retry中の通知eventを削除します。旧clientの`v2`登録は同じ物理tokenを選択中1まどへ戻し、targeted bindingを安全に置き換えます。
 
 APNsのsecret、runtime switch、retry、失効token処理、staging smoke gateは[`APNS_OPERATIONS.md`](APNS_OPERATIONS.md)を正本にします。
 

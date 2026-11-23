@@ -153,8 +153,9 @@ export async function commitGroupPhoto(env:Env,actor:GroupActor,windowId:string,
     ...groupNotificationStatements(env,actor,row,'new_moment',momentId),
     env.DB.prepare(`INSERT INTO group_notification_deliveries SELECT ?,d.device_id,s.token_digest,s.generation,'pending',0,?,NULL,NULL
       FROM group_moment_deliveries d JOIN group_push_subscriptions s ON s.space_id=? AND s.device_id=d.device_id
-      WHERE d.moment_id=? AND d.device_id<>? AND s.expires_at>? ON CONFLICT(event_id,device_id) DO NOTHING`)
-      .bind(momentId,actor.now,windowId,momentId,actor.deviceId,actor.now),
+      WHERE d.moment_id=? AND d.device_id<>? AND s.expires_at>0 AND s.token_ciphertext<>''
+      ON CONFLICT(event_id,device_id) DO NOTHING`)
+      .bind(momentId,actor.now,windowId,momentId,actor.deviceId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);
 }

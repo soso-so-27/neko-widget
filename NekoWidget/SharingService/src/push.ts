@@ -21,6 +21,8 @@ import { exactKeys, stringField, type JsonRecord } from "./validation";
 export const APNS_PROTOCOL_VERSION = 2 as const;
 export const APNS_ADDITIVE_PROTOCOL_VERSION = 3 as const;
 export const APNS_DRAIN_CRON = "* * * * *";
+// The family notebook still uses a 35-day lifetime. Window registrations
+// store the same value for compatibility with older Workers and D1 checks.
 export const APNS_SUBSCRIPTION_TTL_SECONDS = 35 * 86_400;
 export const APNS_EVENT_TTL_SECONDS = 24 * 60 * 60;
 export const APNS_DRAIN_LIMIT = 50;
@@ -856,10 +858,7 @@ export async function drainNotificationOutbox(
     skipped: 0,
     configurationUnavailable: false,
   };
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM apns_subscriptions WHERE expires_at <= ?").bind(now),
-    env.DB.prepare("DELETE FROM notification_events WHERE expires_at <= ?").bind(now),
-  ]);
+  await env.DB.prepare("DELETE FROM notification_events WHERE expires_at <= ?").bind(now).run();
   const runtimeGate = await loadRuntimeGate(env);
   if (!apnsRuntimeEnabled(env) || runtimeGate === null || !apnsGateOpen(runtimeGate)) {
     return summary;
@@ -896,7 +895,6 @@ export async function drainNotificationOutbox(
          ON subscription.device_id = delivery.device_id
         AND subscription.token_digest = delivery.token_digest
       WHERE event.expires_at > ?
-        AND subscription.expires_at > ?
         AND subscription.environment = ?
         AND (
           (delivery.state = 'pending' AND delivery.next_attempt_at <= ?)
@@ -906,7 +904,6 @@ export async function drainNotificationOutbox(
                delivery.event_id ASC, delivery.device_id ASC
       LIMIT ?`,
   ).bind(
-    now,
     now,
     credential.environment,
     now,
@@ -977,7 +974,6 @@ export async function drainNotificationOutbox(
           AND delivery.token_digest = ?
           AND delivery.state = 'leased' AND delivery.lease_id = ?
           AND event.expires_at > ?
-          AND subscription.expires_at > ?
           AND subscription.environment = ?
           AND subscription.route_schema_version = ?
           AND runtime_gate.generation = ?
@@ -988,7 +984,6 @@ export async function drainNotificationOutbox(
       row.device_id,
       row.token_digest,
       leaseID,
-      now,
       now,
       credential.environment,
       row.route_schema_version,

@@ -386,6 +386,10 @@ describe("APNs durable notification delivery", () => {
       .toBe(APNS_SUBSCRIPTION_TTL_SECONDS);
 
     const now = Math.floor(Date.now() / 1_000);
+    const registeredAt = now - 36 * 86_400;
+    await databaseEnv.DB.prepare(
+      "UPDATE apns_subscriptions SET created_at = ?, updated_at = ?, expires_at = ? WHERE device_id = ?",
+    ).bind(registeredAt, registeredAt, registeredAt + APNS_SUBSCRIPTION_TTL_SECONDS, fixture.inviteeID).run();
     const momentID = await seedCommittedMoment(fixture, now);
     await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
 
@@ -1227,7 +1231,7 @@ describe("APNs durable notification delivery", () => {
     expect(requests).toBe(1);
   });
 
-  it("expires stale registrations even while APNs dispatch is disabled", async () => {
+  it("keeps old registrations while APNs dispatch is disabled", async () => {
     const fixture = await seedFixture();
     const now = Math.floor(Date.now() / 1_000);
     await databaseEnv.DB.prepare(
@@ -1249,7 +1253,7 @@ describe("APNs durable notification delivery", () => {
     await drainNotificationOutbox({ ...databaseEnv, APNS_RUNTIME_ENABLED: "NO" }, now + 2);
     expect(await databaseEnv.DB.prepare(
       "SELECT 1 AS present FROM apns_subscriptions WHERE device_id = ?",
-    ).bind(fixture.inviteeID).first()).toBeNull();
+    ).bind(fixture.inviteeID).first()).toEqual({ present: 1 });
   });
 
   it("wires the exact every-minute cron to independent APNs and report-mail drains", async () => {
@@ -1260,7 +1264,7 @@ describe("APNs durable notification delivery", () => {
       APNS_RUNTIME_ENABLED: "NO",
       DB: {
         prepare() {
-          return { bind() { return {}; } };
+          return { bind() { return { async run() { return {}; } }; } };
         },
         async batch() { return []; },
       },

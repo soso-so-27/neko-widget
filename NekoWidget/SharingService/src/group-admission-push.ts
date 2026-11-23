@@ -13,7 +13,7 @@ function enabled(env:Env):boolean {
     && env.APNS_RUNTIME_ENABLED==='YES' && env.MOMENT_RUNTIME_ENABLED==='YES';
 }
 export async function cleanupExpiredGroupAdmissionPush(env:Env,now:number):Promise<void> {
-  // Preserve the generation tombstone, but not expired physical tokens.
+  // Before admission there is no continuing window membership to notify.
   await env.DB.prepare(`UPDATE group_join_push_subscriptions SET token_ciphertext='',token_nonce='',token_digest=''
     WHERE rowid IN (SELECT rowid FROM group_join_push_subscriptions WHERE expires_at<=? AND token_ciphertext<>'' LIMIT 100)`)
     .bind(now).run();
@@ -89,8 +89,9 @@ async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skippe
     .bind(state,now+Math.min(3600,30*2**Math.min(row.attempts,7)),row.event_id,row.device_id,row.token_digest,row.subscription_generation,leaseId).run();
 }
 async function current(env:Env,row:Queued,leaseId:string,generation:number):Promise<Current|null> {
-  return env.DB.prepare(`SELECT v.*,q.attempts FROM group_live_admission_deliveries v
+  return env.DB.prepare(`SELECT v.*,q.attempts FROM group_current_admission_recipients v
     JOIN group_admission_deliveries q ON q.event_id=v.event_id AND q.device_id=v.device_id
+      AND q.token_digest=v.token_digest AND q.subscription_generation=v.subscription_generation
     JOIN group_person_devices recipient ON recipient.id=v.device_id
     JOIN personal_staging_runtime_gate g ON g.singleton=1
     WHERE q.event_id=? AND q.device_id=? AND q.token_digest=? AND q.subscription_generation=?
@@ -109,10 +110,10 @@ export async function drainGroupAdmissionNotifications(env:Env,now=Math.floor(Da
   catch { summary.configurationUnavailable=true;return summary; }
   await env.DB.prepare(`INSERT OR IGNORE INTO group_admission_deliveries
     (event_id,device_id,token_digest,subscription_generation,state,available_at)
-    SELECT event_id,device_id,token_digest,subscription_generation,'pending',? FROM group_admission_recipients v WHERE NOT EXISTS (SELECT 1 FROM group_admission_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id) LIMIT 500`).bind(now).run();
+    SELECT event_id,device_id,token_digest,subscription_generation,'pending',? FROM group_current_admission_recipients v WHERE NOT EXISTS (SELECT 1 FROM group_admission_deliveries q WHERE q.event_id=v.event_id AND q.device_id=v.device_id) LIMIT 500`).bind(now).run();
   // A rotated token can retry an unsent event. Accepted events remain deduplicated.
   await env.DB.prepare(`UPDATE group_admission_deliveries SET token_digest=v.token_digest,subscription_generation=v.subscription_generation,
-    state='pending',available_at=?,lease_id=NULL,lease_expires_at=NULL FROM group_admission_recipients v
+    state='pending',available_at=?,lease_id=NULL,lease_expires_at=NULL FROM group_current_admission_recipients v
     WHERE group_admission_deliveries.event_id=v.event_id AND group_admission_deliveries.device_id=v.device_id
       AND group_admission_deliveries.state<>'accepted'
       AND (group_admission_deliveries.token_digest<>v.token_digest OR group_admission_deliveries.subscription_generation<>v.subscription_generation)`).bind(now).run();
@@ -159,7 +160,7 @@ export async function drainGroupAdmissionNotifications(env:Env,now=Math.floor(Da
       if(part.value && part.value.length<=1024)reason=(JSON.parse(new TextDecoder().decode(part.value)) as {reason?:string}).reason??'';
     }} catch { /* Unknown response stays retryable. */ }
     if(response.status===410 || (response.status===400 && ['BadDeviceToken','DeviceTokenNotForTopic'].includes(reason))) {
-      await env.DB.prepare(`UPDATE ${live.kind==='join_requested'?'group_push_subscriptions':'group_join_push_subscriptions'} SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce=''
+      await env.DB.prepare(`UPDATE ${live.kind==='join_requested'?'group_push_subscriptions':'group_join_push_subscriptions'} SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest=''
         WHERE space_id=? AND device_id=? AND token_digest=? AND generation=?`)
         .bind(live.space_id,row.device_id,row.token_digest,row.subscription_generation).run();
       await finish(env,row,leaseId,'invalid',now);summary.invalidated++;
