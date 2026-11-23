@@ -410,3 +410,19 @@
 .hand-fig .cv .from small { display: block; font-size: 2.6cqw; color: #6e6e76; font-weight: 700; margin-top: .3cqw; }
 @media (min-width: 960px) { .hand-sec .hand-fig { width: 520px; margin: 0 auto; } }
 .hand-fig .v32-pic { margin-top: -6cqw; } @media (min-width: 960px) { .hand-fig .v32-pic { margin-top: -40px; } }
+
+/* ---------- T. 区切り2：トークは流れて終わる／まどは、たまってさかのぼれる ----------
+   画面はアプリの「まど」と同じ作り（1枚ずつ大きく、届けた人・日付・ハート、新しい順）。 */
+.hand-fig .cv .home { background: #f2f2f7 !important; }
+.feed { position: absolute; left: 0; right: 0; top: 8.5cqw; padding: 0 3cqw; display: flex; flex-direction: column; gap: 2.6cqw; }
+.feed .fh { text-align: center; font: 800 3.2cqw/1 "Hiragino Sans", sans-serif; color: #1c1c1e; padding: 1.4cqw 0 1.2cqw; }
+.feed .fc { background: #fff; border-radius: 3.2cqw; overflow: hidden; }
+.feed .fc img { display: block; width: 100%; height: 36cqw; object-fit: cover; }
+.feed .fm { display: flex; align-items: center; gap: 1.4cqw; padding: 1.8cqw 2.4cqw; font: 700 2.7cqw/1 "Hiragino Sans", sans-serif; color: #1c1c1e; }
+.feed .fm i { font-style: normal; width: 4.6cqw; height: 4.6cqw; border-radius: 50%; color: #fff; display: grid; place-items: center; font-size: 2.2cqw; }
+.feed .fm span { color: #8a8a8e; font-weight: 600; }
+.feed .fm u { text-decoration: none; margin-left: auto; color: #8a8a8e; font-size: 3.2cqw; }
+.hand-fig .cv .chat { z-index: 8; }
+.feed .fc img { height: 27cqw; }
+.cv .phone { height: 174.242cqw; }
+.hand-fig .cv .phone { height: 200cqw; }
