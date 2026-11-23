@@ -153,7 +153,7 @@ enum GroupWindowPresentation {
     static func inviteMessage(windowName: String, catName: String?) -> String {
         let window = windowName.isEmpty ? "まど" : "「\(windowName)」"
         let cat = catName.map { "うちの\($0)" } ?? "うちの子"
-        return "\(window)に席をとったよ。\(cat)と、そっちの子の写真を届け合おう。無料で入れるよ"
+        return "\(window)に席をとったよ。\(cat)の写真を届け合おう。無料で入れるよ"
     }
 
     @MainActor static func inviteMessage(windowName: String) -> String {
@@ -181,7 +181,7 @@ enum GroupWindowPresentation {
             && window.memberCount < youngMemberLimit && photoCount < youngPhotoLimit
     }
 
-    /// 11/23: 設定's 「猫友を招く」: the first まど this iPhone made that has
+    /// 11/23: 設定's 「まどに招待する」: the first まど this iPhone made that has
     /// an open seat, from the まど list read in this run.
     static func windowWithOpenSeats(_ windows: [GroupWindow]) -> GroupWindow? {
         windows.first { isMyWindow($0) && $0.canManage && $0.state == .active && !isPaused($0) && openSeats($0) > 0 }

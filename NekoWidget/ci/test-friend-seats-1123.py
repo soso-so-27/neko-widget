@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """11/23 猫友のまど「席をとっておく」: the seats screen after 「作る」, the
 on-device invite message, a young まど's one row, the first photo chosen
-while waiting, 設定's 「猫友を招く」 and the join page. Source pins."""
+while waiting, 設定's 「まどに招待する」 and the join page. Source pins."""
 import pathlib
 import re
 import unittest
@@ -37,6 +37,9 @@ class SeatsScreenTests(unittest.TestCase):
         self.assertIn("dash: [5, 4]", first)
         # An empty seat invites, the same as the button.
         self.assertEqual(first.count("Button(action: sendInvitation)"), 2)
+        # 11/23: the button and the empty seat fit a family まど too.
+        self.assertIn('.accessibilityLabel("招待する")', first)
+        self.assertNotIn("猫友を招く", first)
         self.assertIn('"group-window-seats-open-line"', first)
         self.assertIn("static let memberLimit = 6", PRESENTATION)
         self.assertIn('"あと\\(count)人、無料で入れます"', PRESENTATION)
@@ -47,7 +50,9 @@ class InviteMessageTests(unittest.TestCase):
     def test_message_is_made_here_with_the_cat_and_falls_back(self):
         message = section(PRESENTATION, "static func inviteMessage(windowName: String, catName: String?) -> String {",
                           "@MainActor static func inviteMessage(windowName: String) -> String {")
-        self.assertIn('に席をとったよ。\\(cat)と、そっちの子の写真を届け合おう。無料で入れるよ', message)
+        self.assertIn('に席をとったよ。\\(cat)の写真を届け合おう。無料で入れるよ', message)
+        # 11/23: fits a family まど too; it does not assume the invitee has a cat.
+        self.assertNotIn('そっちの子', message)
         self.assertIn('catName.map { "うちの\\($0)" } ?? "うちの子"', message)
         self.assertIn('windowName.isEmpty ? "まど"', message)
         cat = section(PRESENTATION, "@MainActor static var ownCatName: String? {", "static func openSeats(")
@@ -103,7 +108,8 @@ class SettingsInviteTests(unittest.TestCase):
     def test_settings_invites_to_a_made_window_with_open_seats_else_recommends(self):
         self.assertLess(SETTINGS.index('identifier: "settings-invite-friends"'),
                         SETTINGS.index("} else if let url = AppStoreListing.pageURL {"))
-        self.assertIn('"猫友を招く"', SETTINGS)
+        self.assertIn('Text(preparing ? "用意しています…" : "まどに招待する")', SETTINGS)
+        self.assertNotIn('猫友を招く', SETTINGS)
         self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', SETTINGS)
         rule = section(PRESENTATION, "static func windowWithOpenSeats(", "\n    }\n")
         self.assertIn("isMyWindow($0)", rule)
@@ -112,7 +118,9 @@ class SettingsInviteTests(unittest.TestCase):
 
 class JoinPageTests(unittest.TestCase):
     def test_one_picture_one_heading_two_buttons(self):
-        self.assertIn("<h1>猫友のまどに、<br>席がとってあります</h1>", JOIN_PAGE)
+        self.assertIn("<h1>まどに、<br>席がとってあります</h1>", JOIN_PAGE)
+        # 11/23: a まど is for family or cat friends alike.
+        self.assertNotIn("猫友", JOIN_PAGE)
         self.assertIn("<p>参加は無料です。</p>", JOIN_PAGE)
         self.assertEqual(JOIN_PAGE.count("<svg"), 1)
         self.assertLess(JOIN_PAGE.index("App Store で入れる"), JOIN_PAGE.index(">アプリで開く<"))

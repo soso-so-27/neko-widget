@@ -3500,7 +3500,7 @@ private struct KnownWindowCard: View {
     }
 }
 
-/// 11/23 (猫友のまど): 「猫友を招く」 away from the seats screen (a young
+/// 11/23 (猫友のまど): 「招待する」 away from the seats screen (a young
 /// まど's row, 設定). The same link steps and share sheet; the members
 /// model reads the まど only when pressed.
 struct GroupSeatsInviteButton<Content: View>: View {
@@ -3554,7 +3554,7 @@ struct GroupSeatsInviteButton<Content: View>: View {
 }
 
 /// 11/23 (猫友のまど): right after 「作る」, the seats of the new まど: who
-/// is in it, the open seats, and one 「猫友を招く」. The link made with the
+/// is in it, the open seats, and one 「招待する」. The link made with the
 /// まど is sent from here (or made first, when that failed), with the
 /// members screen's model and share sheet. Once it is sent, or with
 /// 「あとで」, the new まど itself opens. Members, the home screen and the
@@ -3628,9 +3628,9 @@ struct GroupWindowFirstInviteScreen: View {
                 Button(action: sendInvitation) {
                     Group {
                         if preparing {
-                            WorkingLabel(title: "猫友を招く", workingTitle: "用意しています…", working: true)
+                            WorkingLabel(title: "招待する", workingTitle: "用意しています…", working: true)
                         } else {
-                            Text("猫友を招く")
+                            Text("招待する")
                         }
                     }
                     .font(.headline)
@@ -3663,7 +3663,7 @@ struct GroupWindowFirstInviteScreen: View {
     }
 
     /// The まど's seats (its cap): people in it, then empty seats that
-    /// invite, as 「猫友を招く」 does.
+    /// invite, as 「招待する」 does.
     private var seats: some View {
         let people = seated
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 14) {
@@ -3691,7 +3691,7 @@ struct GroupWindowFirstInviteScreen: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(preparing || model.isWorking || !canSend)
-                    .accessibilityLabel("猫友を招く")
+                    .accessibilityLabel("招待する")
                     .accessibilityIdentifier("group-window-seat-\(index)")
                 }
             }
