@@ -1,0 +1,405 @@
+/* 止まった見本（11/23）：区切り3を猫の写真の面に、のわの小さな遊びを3か所。動きなし。 */
+
+/* ---------- A. 区切り3：ひらけば、ぜんぶ猫。 ---------- */
+/* 面は帯の幅いっぱい。下端は帯の端でまっすぐ切る */
+.wall { position: relative; width: calc(var(--vw, 1vw) * 100); margin: 14cqw 0 0 calc(50% - var(--vw, 1vw) * 50); container-type: inline-size; }
+.wall-grid { --cols: 4; --rows: 7; --g: 3px;
+  display: grid; gap: var(--g); grid-auto-flow: row dense;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  grid-template-rows: repeat(var(--rows), calc((100cqw - (var(--cols) - 1) * var(--g)) / var(--cols))); }
+.wall-grid img { width: 100%; height: 100%; object-fit: cover; display: block; background: #eef0f3; }
+/* スマホ：4列×7段、大きいマス2つ、22枚 */
+.wall-grid img:nth-child(1) { grid-area: 1 / 1 / 3 / 3; }
+.wall-grid img:nth-child(6) { grid-area: 4 / 3 / 6 / 5; }
+.wall-grid img:nth-child(n+23) { display: none; }
+/* のわは面の上の縁で香箱座り */
+.wall-nowa { position: absolute; z-index: 1; right: 7%; bottom: calc(100% - 3px); width: 19cqw; height: auto; }
+
+@media (min-width: 640px) {
+  /* 6列×5段、大きいマス2つ、24枚 */
+  .wall-grid { --cols: 6; --rows: 5; }
+  .wall-grid img:nth-child(6) { grid-area: 3 / 5 / 5 / 7; }
+  .wall-grid img:nth-child(n+23) { display: block; }
+  .wall-grid img:nth-child(n+25) { display: none; }
+  .wall-nowa { width: 120px; }
+}
+@media (min-width: 960px) {
+  /* 2列にしない。見出しは面の上で中央 */
+  .v32.v32-3 { display: block; }
+  .v32-3 .v32-head { text-align: center; }
+  .wall { margin-top: 0; }
+  /* 10列×4段、大きいマス4つ、28枚 */
+  .wall-grid { --cols: 10; --rows: 4; }
+  .wall-grid img:nth-child(1)  { grid-area: 1 / 1 / 3 / 3; }
+  .wall-grid img:nth-child(23) { grid-area: 3 / 3 / 5 / 5; }
+  .wall-grid img:nth-child(6)  { grid-area: 1 / 5 / 3 / 7; }
+  .wall-grid img:nth-child(17) { grid-area: 2 / 8 / 4 / 10; }
+  .wall-grid img:nth-child(n+25) { display: block; }
+  .wall-nowa { width: 150px; right: 9%; }
+}
+
+/* ---------- B. のわの小さな遊び ---------- */
+/* 料金：Plus のカードの上の縁から、うしろにいるのわがのぞく */
+.plans { position: relative; z-index: 0; }
+.plan.plus { position: relative; }
+.plus-nowa { position: absolute; z-index: -1; right: 26px; bottom: calc(100% - 6px); width: 84px; height: auto; }
+@media (max-width: 759px) { .plans { gap: 58px; } }
+
+/* 最後：見出しの終わりに、のわが座って見上げる（幅を取らず、行の折り返しを変えない） */
+.end h2::after { content: ""; display: inline-block; width: 1.08em; height: 1.27em; margin: 0 -1.18em -.06em .1em;
+  background: url("../images/store/nowa_sit_up.webp") no-repeat center bottom / contain; vertical-align: baseline; }
+
+
+/* ---------- C. 区切り2：トークでは小さく流れる／ホーム画面では大きく残る ---------- */
+/* 同じ写真を、切手ほどの大きさと帯いっぱいの大きさで。大きさの差だけで伝える */
+.hand { position: relative; width: calc(var(--vw, 1vw) * 100); margin: 30cqw 0 0 calc(50% - var(--vw, 1vw) * 50); }
+.hand-photo { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; }
+.hand-photo img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 56%; display: block; }
+/* 届いた札：写真の左下に1つだけ */
+.hand .from { position: absolute; left: max(16px, 4.5%); bottom: 5%; display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,.94); color: #1c1c1e; border-radius: 99px; padding: 8px 18px 8px 8px; font: 900 16px/1.1 "Zen Maru Gothic", sans-serif;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.hand .from i { font-style: normal; width: 34px; height: 34px; border-radius: 50%; background: #3f6fc2; color: #fff; font-size: 12px; display: grid; place-items: center; }
+.hand .from small { display: block; font-size: 12px; font-weight: 700; color: #6e6e76; margin-top: 2px; }
+/* トークのかけら：写真は切手くらいに小さく、くすんで、ほかの話に挟まれる */
+.hand .chip { position: absolute; z-index: 2; left: max(16px, 5%); top: -24cqw; width: 34%; max-width: 190px; padding: 10px; border-radius: 14px;
+  background: #a9b7cf; filter: saturate(.25); display: flex; flex-direction: column; gap: 7px; box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+.hand .chip span { height: 14px; width: 62%; border-radius: 7px; background: #fff; }
+.hand .chip span.r { align-self: flex-end; background: #bfe8a8; width: 44%; }
+.hand .chip img { width: 46%; aspect-ratio: 1; object-fit: cover; object-position: 50% 46%; border-radius: 8px; display: block; }
+.hand .chip em { font: 900 13px/1 "Zen Maru Gothic", sans-serif; font-style: normal; color: #4f5a6e; margin: 2px 0 1px 2px; }
+.hand-nowa { position: absolute; z-index: 2; right: 8%; bottom: calc(100% - 4px); width: 96px; height: auto; }
+
+@media (min-width: 960px) {
+  .v32.hand-sec { display: block; }
+  .hand-sec .v32-head { text-align: center; padding-bottom: 0; }
+  .hand { margin-top: 150px; }
+  .hand-photo { aspect-ratio: 16 / 7; }
+  .hand-photo img { object-position: 50% 50%; }
+  .hand .from { left: calc(50% - 560px); bottom: 36px; font-size: 20px; padding: 10px 24px 10px 10px; }
+  .hand .from i { width: 42px; height: 42px; font-size: 14px; }
+  .hand .from small { font-size: 14px; }
+  .hand .chip { left: calc(50% - 560px); top: -112px; width: 150px; }
+    .hand-nowa { right: calc(50% - 520px); width: 120px; }
+}
+
+/* ---------- D. 区切り4：1年ぶんの月の作品を、扇に重ねる ---------- */
+/* 表紙はアプリの月の作品と同じ作り。いちばん手前が先月で大きい */
+.fan { position: relative; width: 100%; aspect-ratio: 100 / 84; margin: 4cqw auto 0; container-type: inline-size; }
+.fan .cvr { --w: 27cqw; position: absolute; left: 50%; bottom: 14cqw; width: var(--w); margin-left: calc(var(--w) / -2);
+  padding: calc(var(--w) * .07) calc(var(--w) * .08) calc(var(--w) * .1); color: #fff;
+  background: linear-gradient(160deg, #6f604f, #54483c); border-radius: calc(var(--w) * .02) calc(var(--w) * .045) calc(var(--w) * .045) calc(var(--w) * .02);
+  box-shadow: 0 calc(var(--w) * .03) calc(var(--w) * .09) rgba(0,0,0,.28), inset calc(var(--w) * .03) 0 0 rgba(0,0,0,.14);
+  transform-origin: 50% 270%; transform: rotate(var(--r)); }
+.fan .cvr img { width: 100%; aspect-ratio: .8; object-fit: cover; display: block; }
+.fan .cvr b { display: block; margin-top: calc(var(--w) * .07); font: 700 calc(var(--w) * .16)/1 "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif JP", serif; }
+.fan .cvr small { display: block; margin-top: calc(var(--w) * .04); font: 600 calc(var(--w) * .055)/1.2 "Hiragino Sans", "Yu Gothic", sans-serif; letter-spacing: .2em; opacity: .9; white-space: nowrap; }
+.fan .cvr.now { --w: 42cqw; bottom: 3cqw; z-index: 20; transform: none; box-shadow: 0 2.4cqw 6cqw rgba(0,0,0,.34), inset 1.2cqw 0 0 rgba(0,0,0,.14); }
+.fan-nowa { position: absolute; z-index: 21; left: 50%; bottom: calc(3cqw + 42cqw * 1.413 - 1cqw); width: 24cqw; margin-left: -2cqw; height: auto; }
+
+@media (min-width: 960px) {
+  .v32.fan-sec { display: block; }
+  .fan-sec .v32-head { text-align: center; }
+  .fan { width: min(1100px, 100%); aspect-ratio: 100 / 42; margin-top: 10px; }
+  .fan .cvr { --w: 18cqw; bottom: 5cqw; }
+  .fan .cvr.now { --w: 24cqw; bottom: 1cqw; }
+  .fan-nowa { bottom: calc(1cqw + 24cqw * 1.413 - .6cqw); width: 13cqw; margin-left: -1cqw; }
+}
+
+/* ---------- E. 点検の直し（11/23） ---------- */
+/* 色を引くのは最初の一言だけ。ほかの区切りの一言は地の文字で */
+.v32:not(.v32-1) .v32-head .after em { background: none; padding: 0; color: #4e4e56; }
+/* 14日間のお試しは押せるボタンに */
+.plan a.trial { display: inline-block; text-decoration: none; }
+.plan a.trial:hover { background: #1f66d6; }
+/* 小さな文字は背景との差 4.5:1 以上に。料金の数字は本文と同じ濃さ */
+:root { --ink-3: #6b645e; }
+.v32-head .free { color: #6b645e; }
+.plan .yen { color: #1c1c1e; }
+.plan .trial { background: #1f66d6; }
+.plan a.trial:hover { background: #1855b5; }
+
+/* ---------- F. 区切り「この子」：アプリの「この子」の画面そのものを、帯の幅いっぱいに ---------- */
+/* 写真と行は実際の画面（405）を2つに切ったもの。つなげると画面と同じ */
+.konoko { width: calc(var(--vw, 1vw) * 100); margin: 6cqw 0 0 calc(50% - var(--vw, 1vw) * 50); background: #f2f2f7; }
+.konoko img { display: block; width: 100%; height: auto; }
+@media (min-width: 640px) {
+  /* 広い画面では、画面の幅のまま真ん中に置く（引きのばさない） */
+  .konoko { width: 440px; margin: 8px auto 0; border-radius: 36px; overflow: hidden; box-shadow: 0 30px 70px -30px rgba(0,0,0,.35); }
+}
+@media (min-width: 960px) {
+  .v32.konoko-sec { display: block; padding-bottom: 72px; }
+  .konoko-sec .v32-head { text-align: center; }
+}
+
+/* ---------- G. 全体をそろえる（11/23） ----------
+   決まり：絵は「本物の猫の写真」「アプリの本物の画面」「のわ」の3つだけ。飾りの肉球・面は使わない。
+   影は2段だけ（物の影・小さな札の影）。カードと質問は影ではなく細い線。
+   PC も見出しは真ん中、絵はその下（いちばん上だけ左右）。区切りの上の余白と見出しの大きさを1つに。 */
+:root { --sh-obj: 0 24px 60px -28px rgba(20,30,60,.38); --sh-tag: 0 6px 18px -8px rgba(20,30,60,.3); --rule: #dfe5ef; }
+
+/* 見出しの大きさと区切りの上の余白を1つに */
+@media (min-width: 960px) {
+  .v32:not(.v32-1) { display: block; padding-top: 112px; }
+  .v32:not(.v32-1) .v32-head { text-align: center; padding-bottom: 40px; }
+  .v32-head h1, .v32-head h2, .price h2, .faq h2, .end h2 { font-size: clamp(40px, 3.4vw, 50px); }
+  .price, .faq, .end { padding-block: 112px; }
+  .end { padding-bottom: 120px; }
+  .hand { margin-top: 110px; }
+  /* もしも：PC でも真ん中に。図は画面1つぶんの幅 */
+  .v32-5 .v32-fig { width: min(460px, 100%); margin: 0 auto; }
+}
+
+/* 影をそろえる */
+.cv .phone { box-shadow: var(--sh-obj); }
+.cv .day, .cv .note, .hand .from, .hand .chip { box-shadow: var(--sh-tag); }
+.cv .paper { box-shadow: var(--sh-obj); }
+.konoko { box-shadow: none; }
+@media (min-width: 640px) { .konoko { box-shadow: var(--sh-obj); } }
+
+/* いちばん上の電話：ホーム画面のアプリは、まどの写真より目立たないように淡く */
+.cv .home .app { opacity: .38; }
+
+/* 料金：影をやめて線に。Plus は青い線だけで目立たせる */
+.plan { box-shadow: none; border: 1px solid var(--rule); }
+.plan.plus { border: 2px solid #2f7cf6; box-shadow: none; }
+.trust li { background: none; box-shadow: none; padding: 0; font-size: 14px; }
+.fine { max-width: 34em; margin-inline: auto; line-height: 1.7; }
+
+/* 質問：影の箱をやめて、線で区切る一覧に */
+.faq details { background: none; box-shadow: none; border-radius: 0; margin: 0; padding: 0 4px; border-bottom: 1px solid var(--rule); }
+.faq details:first-of-type { border-top: 1px solid var(--rule); }
+.faq summary { padding: 20px 0; }
+.faq .in { max-width: 640px; }
+
+/* 月の作品：扇の下の端が帯で切れないように、少し持ち上げる */
+.fan { aspect-ratio: 100 / 92; }
+.fan .cvr { bottom: 22cqw; }
+.fan .cvr.now { bottom: 9cqw; }
+.fan-nowa { bottom: calc(9cqw + 42cqw * 1.413 - 1cqw); }
+@media (min-width: 960px) {
+  .fan { aspect-ratio: 100 / 46; }
+  .fan .cvr { bottom: 8cqw; }
+  .fan .cvr.now { bottom: 3cqw; }
+}
+
+/* ---------- H. いちばん上を、ページでいちばん強く ---------- */
+@media (min-width: 960px) {
+  .v32.v32-1 { grid-template-columns: minmax(0, 1fr) minmax(0, 540px); padding-top: 24px; }
+  .v32-1 .v32-head h1 { font-size: clamp(52px, 4.6vw, 68px); }
+  .v32-1 .v32-head .after { font-size: clamp(20px, 1.7vw, 24px); margin-top: 22px; }
+}
+/* トークの札：灰色の作り物をやめ、白い紙に淡い吹き出し。写真は小さいまま */
+.hand .chip { background: #fff; filter: none; border: 1px solid var(--rule); }
+.hand .chip span { background: #eceff4; }
+.hand .chip span.r { background: #dfe6f1; }
+.hand .chip em { color: #6b645e; }
+@media (min-width: 960px) {
+  .v32.v32-1 { grid-template-columns: minmax(0, 1fr) minmax(0, 500px); column-gap: clamp(40px, 5vw, 80px); }
+  .v32-1 .v32-head h1 { font-size: clamp(44px, 3.8vw, 56px); white-space: nowrap; }
+}
+
+/* ---------- I. 区切り2：大きな写真を「ホーム画面のまど」に見せる ----------
+   帯はいちばん上の電話と同じ壁紙。写真は角の丸いウィジェットで、下に小さく「ねこのまど」。 */
+.hand { margin-top: 26cqw; padding: 13cqw 0 7cqw; background: linear-gradient(170deg, #fffaf2, #fbeede 60%, #f6e2cc); }
+.hand-photo { width: calc(100% - 2 * max(18px, 5.5vw)); margin: 0 auto; border-radius: max(28px, 8vw); box-shadow: var(--sh-obj); }
+.hand-wn { margin-top: 10px; text-align: center; font: 600 12px/1 "Hiragino Sans", sans-serif; color: #8a7f74; letter-spacing: .04em; }
+.hand .chip { top: -13cqw; }
+.hand .from { left: max(14px, 5%); bottom: 5%; }
+@media (min-width: 960px) {
+  .hand { margin-top: 120px; padding: 96px 0 44px; }
+  .hand-photo { width: min(1040px, 100% - 96px); aspect-ratio: 16 / 8; border-radius: 48px; }
+  .hand-wn { margin-top: 14px; font-size: 14px; }
+  .hand .chip { top: -72px; left: calc(50% - 520px); }
+  .hand .from { left: 36px; bottom: 32px; }
+}
+
+/* ---------- J. 最後：まどの形の向こうで、2匹が待っている ---------- */
+.end-mado { width: min(72vw, 340px); aspect-ratio: 4 / 5; border-radius: 999px 999px 28px 28px; overflow: hidden; box-shadow: var(--sh-obj); margin-bottom: 18px; }
+.end-mado img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 60%; }
+@media (min-width: 960px) {
+  .end-mado { width: 380px; margin-bottom: 26px; }
+  .hand { margin-top: 96px; }
+  .hand .chip { top: -60px; }
+}
+
+/* ---------- K. 採点の直し（1回目） ---------- */
+/* 帯の色分けをやめて白1色。色は中身（ホーム画面の壁紙・この子の画面）だけが持つ */
+.v32:nth-of-type(even), .price:nth-of-type(even), .faq:nth-of-type(even), .end:nth-of-type(even) { --band: #fff; }
+.faq { border-top: 1px solid var(--line); }
+/* 色を引いた一言をやめる。一言は細く小さく、見出しとの差を3倍に */
+.v32-head .after em { background: none; padding: 0; }
+.v32-head .after { font-size: 3.7cqw; font-weight: 700; color: #4e4e56; }
+.v32-1 .v32-head .after { color: #1c1c1e; }
+/* スマホのいちばん上：猫を早く。上の余白を詰め、ヘッダーのボタンは下の帯に任せる */
+.v32-1 .v32-head { padding-top: 4cqw; }
+@media (max-width: 899px) { .top-cta { display: none; } }
+/* 電話の画面：アプリの四角を外したので、まどの下は壁紙のまま。写真2枚は少し上へ */
+/* 月の作品：5冊。月の字が全部読める重なりに */
+.fan .cvr { --w: 30cqw; transform-origin: 50% 230%; }
+.fan .cvr.now { --w: 44cqw; }
+.fan-nowa { bottom: calc(9cqw + 44cqw * 1.413 - 1cqw); }
+/* この子：スマホでも画面だと分かるように、左右に余白と角 */
+.konoko { width: calc(100% - 48px); margin: 6cqw auto 0; border-radius: 30px; overflow: hidden; box-shadow: var(--sh-obj); }
+/* チラシ：電話番号の行は見せない（紙の下端で切る） */
+.v32-5 .cv .paper { height: 93cqw !important; }
+.v32-5 .v32-pic { height: 128cqw !important; }
+
+@media (min-width: 960px) {
+  .v32-head .after { font-size: clamp(17px, 1.35vw, 19px); }
+  .v32-1 .v32-head .after { font-size: clamp(19px, 1.6vw, 22px); }
+  /* 置き方を交互に：この子は画面を左・見出しを右、もしもは見出しを左・チラシを右 */
+  .v32.konoko-sec, .v32.v32-5 { display: grid; width: min(1000px, 100% - 96px); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 80px; align-items: center; padding-block: 120px; }
+  .konoko-sec .v32-head, .v32-5 .v32-head { text-align: left; padding: 0; }
+  .konoko-sec .v32-head { order: 2; }
+  .konoko-sec .konoko { order: 1; width: 440px; margin: 0; justify-self: end; }
+  .v32-5 .v32-fig { width: 100%; }
+  .fan { aspect-ratio: 100 / 50; }
+  .fan .cvr { --w: 19cqw; transform-origin: 50% 240%; }
+  .fan .cvr.now { --w: 26cqw; }
+}
+/* いちばん上：電話は写真2枚の下で切る（まどの下の空いた壁紙を見せすぎない） */
+.v32-1 .v32-pic { height: 136cqw !important; }
+/* 扇：右側の2冊は月の字を右下に */
+.fan .cvr:nth-child(3) b, .fan .cvr:nth-child(4) b { text-align: right; }
+/* もしも：見出しとチラシの間を詰める */
+.v32-5 .cv { top: -56cqw !important; }
+.v32-5 .v32-pic { height: 114cqw !important; }
+/* 扇：内側の2冊は月の字を出さない（半分隠れて欠けて見えるため） */
+.fan .cvr:nth-child(2) b, .fan .cvr:nth-child(3) b { visibility: hidden; }
+@media (min-width: 960px) {
+  .v32.konoko-sec .v32-head, .v32.v32-5 .v32-head { text-align: left; }
+  .v32-5 .v32-head { justify-self: end; }
+  .fan { aspect-ratio: 100 / 58; }
+  .hand { margin-top: 40px; padding-top: 64px; }
+}
+/* トークの札を外したので、スマホも見出しと帯の間を詰める */
+.hand { margin-top: 10cqw; padding-top: 9cqw; }
+@media (min-width: 960px) { .hand { margin-top: 40px; padding-top: 64px; } }
+@media (min-width: 960px) { .fan { margin-top: -48px; } }
+
+/* ---------- L. 採点の直し（2回目） ---------- */
+/* いちばん上：電話は「ねこのまど」の札のすぐ下で切る。写真2枚は電話の縁から外へはみ出す */
+.v32-1 .v32-pic { height: 104cqw !important; }
+/* チラシ：白地に沈まないよう、紙を生成りにして細い縁 */
+.v32-5 .cv .paper { background: #faf7f0; outline: 1px solid #e6dfd2; }
+/* 家族：帯をやめ、白地にウィジェットだけ */
+.hand { background: none; padding: 0; margin-top: 8cqw; }
+.hand-wn { margin-bottom: 4cqw; }
+/* 料金：カードの間を詰める。質問の前の線は外す */
+.plans { gap: 16px !important; }
+.faq { border-top: 0; }
+/* 月の作品：スマホは扇を閉じぎみにして端で切らない */
+@media (max-width: 639px) { .fan .cvr:not(.now) { transform: rotate(calc(var(--r) * .72)); } }
+/* 最後：のわは行の外に置き、見出しを真ん中に */
+.end h2 { position: relative; }
+.end h2::after { position: absolute; margin: 0; right: -1.15em; bottom: .05em; }
+.end-mado { width: min(64vw, 280px); }
+@media (min-width: 960px) {
+  .hand { margin-top: 28px; padding: 0; }
+  .hand-wn { margin-bottom: 0; }
+  .end-mado { width: 300px; }
+  /* この子ともしもを1段に並べる。見出しはそれぞれの上に小さく */
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; width: min(1000px, 100% - 96px); margin: 0 auto; padding-block: 120px 40px; align-items: start; }
+  .pair .v32.konoko-sec, .pair .v32.v32-5 { display: block; width: auto; padding: 0; }
+  .pair .v32-head { text-align: center !important; padding: 0 0 28px !important; justify-self: auto; }
+  .pair .v32-head h2 { font-size: clamp(28px, 2.4vw, 34px); }
+  .pair .konoko { width: 420px; margin: 0 auto; }
+  .pair .v32-5 .v32-fig { width: 440px; margin: 0 auto; }
+}
+/* 並べた2つは、帯の白い影がとなりを塗りつぶさないように */
+.pair .v32 { box-shadow: none; clip-path: none; }
+.end h2 { width: fit-content; }
+@media (min-width: 640px) { br.sp { display: none; } }
+
+/* ---------- M. 採点の直し（3回目） ---------- */
+/* 一言を1段小さく（見出しとの比を3に） */
+.v32-head .after { font-size: 3.2cqw; }
+/* この子の画面：下の角も丸く。次の区切りまでの間をほかとそろえる */
+.konoko { clip-path: inset(0 round 30px); margin-bottom: 8cqw; }
+@media (min-width: 960px) {
+  .v32-head .after { font-size: clamp(15px, 1.15vw, 17px); }
+  .v32-1 .v32-head .after { font-size: clamp(18px, 1.45vw, 20px); }
+  /* いちばん上：電話を大きく（ウィジェットが420px以上） */
+  .v32.v32-1 { width: min(1200px, 100% - 96px); grid-template-columns: minmax(0, 1fr) minmax(0, 660px); column-gap: 48px; }
+  /* この子とチラシの高さをそろえる */
+  .pair .konoko { width: 360px; margin-bottom: 0; }
+  .pair .v32-5 .v32-fig { width: 500px; max-width: 100%; }
+  /* 最後：上の余白を詰め、まどを少し大きく */
+  .end { padding-top: 72px; }
+  .end-mado { width: 340px; }
+}
+
+/* ---------- N. 採点の直し（4回目） ---------- */
+/* 最後：ページのどこにも出ていない1枚。横長の写真なので、まどは横に広いアーチ */
+.end-mado { width: min(84vw, 380px); aspect-ratio: 4 / 3; border-radius: 999px 999px 24px 24px / 70% 70% 24px 24px; }
+.end-mado img { object-position: 50% 70%; }
+/* 料金：ここだけ型どおりだったので、丸と青をやめて行だけに。違いは数字の大きさで */
+.feat li { padding-left: 0; }
+.feat li::before { display: none; }
+.feat { gap: 2px; color: #4e4e56; }
+.plan.plus { border: 1px solid var(--rule); }
+.plan.plus .yen { font-size: 52px; }
+.plan a.trial { background: none !important; color: #1f66d6; padding: 0; font-size: 15px; border-radius: 0; text-decoration: underline; text-underline-offset: 4px; }
+.plan a.trial::after { content: " →"; }
+.trust li::before { color: inherit; }
+/* この子ともしもは、スマホでも見出しを1段小さく（脇役として読む） */
+.pair .v32-head h2 { font-size: 6.2cqw; }
+@media (min-width: 960px) {
+  .pair .v32-head h2 { font-size: clamp(28px, 2.4vw, 34px); }
+  .price, .faq, .end { padding-block: 80px; }
+  .end { padding-bottom: 96px; }
+  .end-mado { width: 420px; }
+}
+/* 最後は、こちらを見て待つ2匹に戻す（写真の面からは外した）。甘さが出ない大きさに */
+.end-mado { width: min(64vw, 280px); aspect-ratio: 4 / 5; border-radius: 999px 999px 24px 24px; }
+.end-mado img { object-position: 50% 60%; }
+@media (min-width: 960px) { .end-mado { width: 300px; } }
+
+/* ---------- O. 採点の直し（5回目） ---------- */
+/* 見出しは2段：前半3つと最後が大、この子・もしも・料金・質問が小 */
+.price h2, .faq h2 { font-size: min(6.2vw, 34px); }
+@media (min-width: 960px) { .price h2, .faq h2 { font-size: clamp(28px, 2.4vw, 34px); } }
+/* 扇は3冊。内側の字を隠す決まりは不要に */
+.fan .cvr:nth-child(2) b { visibility: visible; text-align: right; }
+.fan .cvr:nth-child(1) { --r: -16deg !important; }
+.fan .cvr:nth-child(2) { --r: 16deg !important; }
+/* スマホの写真の面：3列×6段、大きいマス2つ、12枚。1枚ずつを大きく */
+@media (max-width: 639px) {
+  .wall-grid { --cols: 3; --rows: 6; }
+  .wall-grid img:nth-child(1) { grid-area: 1 / 1 / 3 / 3; }
+  .wall-grid img:nth-child(6) { grid-area: 4 / 2 / 6 / 4; }
+  .wall-grid img:nth-child(n+13) { display: none; }
+}
+.fan .cvr.now b { visibility: visible; text-align: left; }
+
+/* ---------- P. 採点の直し（6回目） ---------- */
+@media (max-width: 639px) {
+  /* 扇：3冊なので開いて、6月と9月の字を全部見せる */
+  .fan .cvr:not(.now) { transform: rotate(calc(var(--r) * 1.35)); }
+  /* 写真の面：大きいマスは鮮明な灰色の猫1つだけ。顔のアップは小さいマスへ */
+  .wall-grid img:nth-child(1) { grid-area: auto; }
+  .wall-grid img:nth-child(6) { grid-area: 1 / 1 / 3 / 3; }
+  .wall-grid img:nth-child(n+13) { display: block; }
+  .wall-grid img:nth-child(n+16) { display: none; }
+}
+
+/* ---------- Q. 月の作品は、アプリの本物の「アルバム」画面で ---------- */
+.shot { width: calc(100% - 48px); margin: 6cqw auto 8cqw; border-radius: 30px; overflow: hidden; clip-path: inset(0 round 30px); background: #f2f2f7; box-shadow: var(--sh-obj); }
+.shot img { display: block; width: 100%; height: auto; }
+@media (min-width: 960px) {
+  .shot { width: 400px; margin: 0 auto; }
+  .v32.fan-sec { padding-bottom: 40px; }
+}
+
+/* ---------- R. 区切り2の答えを直す（11/23） ----------
+   課題は「トークだと流れる」。答えは「家族のホーム画面に残る」。
+   絵は、届いた側（実家の母）の電話のホーム画面。送ったのは自分（ゆいから）。 */
+.hand-cap { margin: 7cqw 0 2cqw; text-align: center; font: 700 13px/1 "Hiragino Sans", sans-serif; color: #6b645e; letter-spacing: .06em; }
+.hand-fig .cv .from { z-index: 9; }
+@media (min-width: 960px) {
+  .hand-cap { margin: 8px 0 18px; font-size: 14px; }
+  .hand-sec .hand-fig { width: 560px; margin: 0 auto; }
+}
+.hand-fig .v32-pic { margin-top: -15cqw; }
+.hand-cap { position: relative; z-index: 1; }
