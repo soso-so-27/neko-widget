@@ -41,7 +41,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
     /// Normal public Release UI; simctl supplies synthetic Photos externally.
     @MainActor
     func testReviewPublicIPadCompatibility() {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 480
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
@@ -68,8 +68,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
         capture("01-onboarding")
         guard tap("onboarding-purpose-start") else { return }
         let photoPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        guard photoPermission.waitForExistence(timeout: 60) else {
-            capture("missing-photo-permission"); XCTFail("Normal Photos permission prompt missing"); return
+        // The prompt comes once the app's first load is ready (the allow
+        // button stops spinning); a cold Release launch on the hosted iPad
+        // Simulator can take longer than a minute (run 45146324837).
+        guard photoPermission.waitForExistence(timeout: 150) else {
+            capture("missing-photo-permission")
+            XCTFail("Normal Photos permission prompt missing: " + app.debugDescription); return
         }
         capture("02-photo-permission")
         let fullAccess = photoPermission.buttons.matching(NSPredicate(format: "label IN %@", [
