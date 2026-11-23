@@ -653,3 +653,30 @@ section.price.price, section.end.end { --band: #fff; }
 .konoko::before, .s2x .mbox::before { content: ""; position: absolute; z-index: 5; top: 8px; left: 50%; width: 30%; height: 22px; margin-left: -15%; border-radius: 12px; background: #1c1c1e; }
 .s2x .mbox { padding-top: 40px; height: 340px; border-bottom: 0; border-radius: 44px 44px 0 0; }
 @media (min-width: 960px) { .s2x .mbox { height: 420px; } }
+
+/* ---------- Apple 公式の iPhone 16 Pro の枠（App Store 配信後に公開） ----------
+   枠 1350×2760、画面 x72 y69 1206×2622、角 192。画面の中身は .scr に入れる */
+.dev { position: relative; aspect-ratio: 1350 / 2760; border: 0 !important; outline: 0 !important; border-radius: 0 !important; background: none !important; box-shadow: none !important; padding: 0 !important; overflow: visible !important; clip-path: none !important; filter: drop-shadow(0 26px 34px rgba(20,30,60,.28)); }
+.dev::before { display: none !important; }
+.dev::after { content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; background: url("../images/store/device/iphone16pro_black.webp") top center / 100% auto no-repeat; }
+.dev .scr { position: absolute; left: 5.333%; top: 2.5%; width: 89.333%; height: 95%; border-radius: 15.92% / 7.32%; overflow: hidden; background: #f2f2f7; }
+.dev .scr > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+/* この子：スマホは幅の 78%、PC は 360px */
+.konoko.dev { width: min(78%, 380px); margin: 6cqw auto 0; }
+@media (min-width: 640px) { .konoko.dev { width: 360px; } }
+/* まど：上 6 割だけ見せて、下は帯で切る */
+.dev.cut { aspect-ratio: 1350 / 1650; width: 100%; overflow: hidden !important; margin-top: 10px; }
+.dev.cut::after { background-size: 100% auto; }
+.dev.cut .scr { top: 4.18%; height: 100%; border-radius: 15.92% 15.92% 0 0 / 11.6% 11.6% 0 0; }
+.dev.cut .mbox { position: static; height: 100%; border: 0 !important; outline: 0 !important; border-radius: 0 !important; box-shadow: none !important; padding: 13% 4% 0 !important; background: #f2f2f7; }
+.dev.cut .mbox::before { display: none !important; }
+.dev.cut .mbox .one { height: auto; aspect-ratio: 4 / 3; }
+/* いちばん上の電話も同じ枠に */
+.v32-1 .cv .phone { height: 154.9cqw; background: none; padding: 0; box-shadow: none; border-radius: 0; filter: drop-shadow(0 4cqw 5cqw rgba(0,0,0,.35)); }
+.v32-1 .cv .phone::after { content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none; background: url("../images/store/device/iphone16pro_black.webp") top center / 100% auto no-repeat; }
+.v32-1 .cv .phone .in { position: absolute; left: 5.333%; top: 2.5%; width: 89.333%; height: 95%; padding: 0; border-radius: 15.92% / 7.32%; overflow: hidden; background: none; }
+.v32-1 .cv .phone .screen { border-radius: 0; }
+.v32-1 .cv .phone .island { display: none; }
+/* 月の作品の本：紙の質感 */
+.book .pg:not(.cover), .book::before { background: #fbfaf7 url("../images/store/device/paper_tile.webp") 0 0 / 256px 256px; }
+@media (min-width: 960px) { .s2x .dev.cut { width: 400px; } .s2x .chat { height: 460px; } }
