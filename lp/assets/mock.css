@@ -627,3 +627,11 @@
 section.faq.faq { --band: #f5f1ea; }
 section.price.price, section.end.end { --band: #fff; }
 @media (min-width: 960px) { section.price.price, section.end.end { --band: #f5f1ea; } section.faq.faq { --band: #fff; } }
+
+/* ---------- 動き：出現と奥行き（小さく・1回だけ） ---------- */
+.motion .rv { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+.motion .rv.in { opacity: 1; transform: none; }
+/* 写真の面ののわは、縁の向こうから顔を出す */
+.motion .wall-nowa.rv { opacity: 0; transform: translateY(40%); transition: opacity .3s ease .45s, transform .8s cubic-bezier(.3,1.4,.4,1) .45s; }
+.motion .wall-nowa.rv.in { transform: none; }
+.motion [data-depth] { will-change: translate; }
