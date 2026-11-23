@@ -169,7 +169,10 @@ class PublicPageTests(unittest.TestCase):
         self.assertIn("あなたが共有や書き出しを選んだ作品の画像・PDFも", policy)
         self.assertIn("月と年の作品、ウィジェットの画像は、iPhoneの中で処理します。", policy)
         self.assertIn("PDFは、作るあいだiPhoneの中に一時ファイルを作ります。共有が終わると消します。", policy)
-        self.assertIn("2026年11月21日", policy)
+        # 11/21 にムービーを外した改定。その後の改定（11/23 通知の保持）でも日付は11/21以降のまま
+        m = re.search(r"最終更新日：2026年11月(\d+)日", policy)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 21)
 
 
 if __name__ == "__main__":
