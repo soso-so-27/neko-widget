@@ -1,0 +1,103 @@
+/* v32 の画面写真の部品（gen.py の CSS を cqw に直したもの。1320px = 100cqw） */
+.v32 { width: min(560px, 100%); margin: 0 auto; container-type: inline-size; --bg:#ffffff;--ink:#1c1c1e;--sub:#6e6e76;--acc:#2f7cf6;--accink:#ffffff;--mark:#cfe1ff;--em:#1c1c1e; }
+.v32 { background: var(--band, #fff); box-shadow: 0 0 0 100vmax var(--band, #fff); clip-path: inset(0 -100vmax); }
+.v32:nth-of-type(even) { --band: #eef3fb; }
+.v32-head { text-align: center; padding-top: 12cqw; font-family: "Zen Maru Gothic", sans-serif; }
+.v32-1 .v32-head { padding-top: 7cqw; }
+.v32-head h1, .v32-head h2 { font-size: 9.4cqw; font-weight: 900; line-height: 1.24; letter-spacing: .01em; color: var(--ink); }
+.v32-head .after { margin-top: 3.3cqw; font-size: 4.8cqw; font-weight: 900; }
+.v32-head .after em { font-style: normal; background: linear-gradient(transparent 58%, var(--mark) 58%); padding: 0 .45cqw; }
+.v32-pic { position: relative; overflow: hidden; margin-top: 1cqw;
+  }
+.cv { position: absolute; left: 0; width: 100cqw; height: 217.27cqw; font-family: "Zen Maru Gothic", "Yu Gothic", sans-serif; color: var(--ink); }
+.v32-head .store { display: inline-block; margin-top: 4.5cqw; line-height: 0; }
+.v32-head .store img { height: 54px; width: auto; }
+.v32-head .free { margin-top: 8px; font: 500 12.5px "Hiragino Sans", sans-serif; color: #8b8178; }
+.v32-fig { container-type: inline-size; }
+/* PC: 左に見出し、右に図。図の箱は横にはみ出してよい（背景の形を箱の端で切らない）、上下だけ帯で切る */
+@media (min-width: 960px) {
+  .v32 { width: min(1080px, 100% - 96px); container-type: normal; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); column-gap: clamp(56px, 7vw, 112px); align-items: center; padding-top: 48px; }
+  .v32-head, .v32-1 .v32-head { padding: 0 0 48px; text-align: left; }
+  .v32-head h1, .v32-head h2 { font-size: clamp(34px, 3.2vw, 44px); }
+  .v32-head .after { margin-top: 18px; font-size: clamp(18px, 1.5vw, 21px); }
+  .v32-head .after em { padding: 0 2px; }
+  .v32-head .store { margin-top: 30px; }
+  .v32-pic { margin-top: 0; overflow: visible clip; }
+  .v32 .cv .blob { border-radius: 50% 50% 0 0 / 68% 68% 0 0; }
+}
+.cv 900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+.cv .phone{z-index:2;position:absolute;left:12.121cqw;width:75.758cqw;top:60.606cqw;height:174.242cqw;border-radius:11.364cqw;background:linear-gradient(160deg,#5b5b60,#2b2b2e);padding:1.061cqw;box-shadow:0 5.303cqw 10.606cqw rgba(0,0,0,.45)}
+.cv .phone .in{width:100%;height:100%;border-radius:10.303cqw;background:#000;padding:1.212cqw}
+.cv .screen{width:100%;height:100%;border-radius:9.242cqw;overflow:hidden;position:relative;background:#000}
+.cv .screen img.shot{width:100%;display:block}
+.cv .island{position:absolute;left:50%;top:2.576cqw;width:20.455cqw;height:5.758cqw;margin-left:-10.227cqw;border-radius:3.030cqw;background:#000;z-index:3}
+.cv .wall{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cv .wl{position:absolute;left:0;right:0;text-align:center;color:#fff;font:500 2.121cqw 'Yu Gothic'}
+.cv .ic{position:absolute;width:11.364cqw;height:11.364cqw;border-radius:2.879cqw;background:rgba(255,255,255,.26)}
+.cv .pop{position:absolute;border-radius:6.970cqw;overflow:hidden;box-shadow:0 4.545cqw 9.848cqw rgba(0,0,0,.55);z-index:5}
+.cv .pop img{width:100%;height:100%;object-fit:cover;display:block}
+.cv .sticker{position:absolute;width:20.455cqw;height:20.455cqw;border-radius:50%;background:var(--acc);color:var(--accink);font-size:4.848cqw;font-weight:900;line-height:1.2;display:flex;align-items:center;justify-content:center;text-align:center;transform:rotate(9deg);box-shadow:0 1.515cqw 3.788cqw rgba(0,0,0,.3);z-index:8}
+.cv .home{position:absolute;inset:0}
+.cv .sb{position:absolute;left:0;right:0;top:3.333cqw;height:4.545cqw;color:#1c1c1e;font:700 3.030cqw -apple-system,'Segoe UI',sans-serif;z-index:4}
+.cv .sb .t{position:absolute;left:7.273cqw;top:0.303cqw}
+.cv .sb .r{position:absolute;right:6.515cqw;top:0.758cqw;display:flex;gap:0.909cqw;align-items:flex-end}
+.cv .sb .bar{width:0.682cqw;background:#1c1c1e;border-radius:0.227cqw}
+.cv .sb .bat{width:4.697cqw;height:2.273cqw;border-radius:0.682cqw;background:#1c1c1e;margin-left:0.606cqw}
+.cv .wid{position:absolute;left:4.242cqw;right:4.242cqw;top:14.394cqw;height:62.727cqw;border-radius:6.364cqw;overflow:hidden;box-shadow:0 1.970cqw 4.545cqw rgba(0,0,0,.22)}
+.cv .wid img{width:100%;height:100%;object-fit:cover;display:block}
+.cv .wn{position:absolute;left:0;right:0;top:78.485cqw;text-align:center;color:rgba(28,28,30,.72);font:500 2.273cqw 'Yu Gothic',sans-serif}
+.cv .app{position:absolute;width:11.364cqw;height:11.364cqw;border-radius:2.879cqw;box-shadow:0 0.606cqw 1.364cqw rgba(0,0,0,.10)}
+.cv .day{position:absolute;background:#fff;padding:1.364cqw 1.364cqw 0;border-radius:2.273cqw;box-shadow:0 2.273cqw 5.303cqw rgba(0,0,0,.30);z-index:7}
+.cv .day img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:1.364cqw;display:block}
+.cv .day p{font-size:3.485cqw;font-weight:900;text-align:center;padding:0.909cqw 0 1.212cqw;color:#1c1c1e}
+.cv .chip{position:absolute;background:var(--acc);color:var(--accink);font-size:3.788cqw;font-weight:900;padding:1.061cqw 3.030cqw 1.212cqw;border-radius:4.545cqw;z-index:9;box-shadow:0 0.909cqw 2.273cqw rgba(0,0,0,.25);white-space:nowrap}
+.cv .from{position:absolute;display:flex;align-items:center;gap:1.970cqw;background:#fff;border-radius:6.818cqw;padding:1.515cqw 4.091cqw 1.515cqw 1.667cqw;box-shadow:0 1.818cqw 4.545cqw rgba(0,0,0,.22);z-index:9;font-size:3.939cqw;font-weight:900;white-space:nowrap}
+.cv .from .av{width:8.485cqw;height:8.485cqw;border-radius:50%;background:var(--acc);color:var(--accink);display:flex;align-items:center;justify-content:center;font-size:3.333cqw}
+.cv .from small{display:block;font-size:2.727cqw;font-weight:700;color:var(--sub)}
+.cv .note{position:absolute;background:#fff;border-radius:6.818cqw;padding:1.970cqw 4.242cqw 2.121cqw;box-shadow:0 1.818cqw 4.545cqw rgba(0,0,0,.24);z-index:9;font-size:4.091cqw;font-weight:900;white-space:nowrap;color:#1c1c1e}
+.cv .note small{display:block;font-size:2.879cqw;font-weight:700;color:var(--sub);margin-bottom:0.152cqw}
+.cv .out{position:absolute;width:20.455cqw;height:21.970cqw;border-radius:2.576cqw;background:#eceef2;border:0.379cqw dashed #c3c7d0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:8;color:#6f7482;font-size:3.485cqw;font-weight:900;box-shadow:0 1.364cqw 3.030cqw rgba(0,0,0,.14)}
+.cv .out span{font:400 9.091cqw 'Segoe UI Emoji';filter:grayscale(1);opacity:.6;line-height:1.1}
+.cv .out:after{content:"";position:absolute;left:2.273cqw;right:2.273cqw;top:36%;height:0.682cqw;background:#b5bac5;border-radius:0.379cqw;transform:rotate(-38deg)}
+.cv .card{position:absolute;border-radius:3.333cqw;overflow:hidden;background:#fff;box-shadow:0 3.030cqw 6.818cqw rgba(0,0,0,.34);z-index:7}
+.cv .card img{position:absolute;display:block}
+.cv .lab{position:absolute;background:var(--acc);color:var(--accink);font-size:3.182cqw;font-weight:900;padding:0.758cqw 2.424cqw 0.909cqw;border-radius:3.788cqw;z-index:9;white-space:nowrap;box-shadow:0 0.758cqw 1.970cqw rgba(0,0,0,.22)}
+.cv .talk{position:absolute;width:32.576cqw;height:45.455cqw;border-radius:3.333cqw;background:#f1f2f5;box-shadow:0 2.273cqw 5.303cqw rgba(0,0,0,.28);z-index:7;overflow:hidden;padding:1.970cqw 1.970cqw 0}
+.cv .talk h4{font-size:2.727cqw;font-weight:900;color:#8b909c;text-align:center;margin-bottom:1.364cqw}
+.cv .talk .b{background:#fff;border-radius:1.970cqw;height:4.091cqw;margin:0 0 1.212cqw;width:70%}
+.cv .talk .b.r{margin-left:30%;background:#cfe6c7}
+.cv .talk img{width:46%;aspect-ratio:1;object-fit:cover;border-radius:1.667cqw;display:block;margin:0 0 1.212cqw;filter:grayscale(.55);opacity:.75}
+.cv .talk:after{content:"";position:absolute;left:0;right:0;top:5.303cqw;height:25.000cqw;background:linear-gradient(#f1f2f5 12%,rgba(241,242,245,0))}
+.cv .book{position:absolute;border-radius:0.758cqw 1.970cqw 1.970cqw 0.758cqw;overflow:hidden;background:#fbf8f2;box-shadow:0 2.576cqw 6.061cqw rgba(0,0,0,.36);z-index:7}
+.cv .book img{width:100%;height:100%;object-fit:cover;display:block}
+.cv .book:before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.576cqw;background:linear-gradient(90deg,rgba(0,0,0,.34),rgba(0,0,0,.05) 70%,rgba(255,255,255,.18));z-index:2}
+.cv .book b{position:absolute;left:4.242cqw;bottom:2.576cqw;color:#fff;font:700 4.697cqw 'Yu Mincho','Hiragino Mincho ProN',serif;text-shadow:0 0.152cqw 1.061cqw rgba(0,0,0,.6);z-index:3}
+.cv .chat{position:absolute;width:39.394cqw;height:53.030cqw;border-radius:3.636cqw;background:#8fa9d6;box-shadow:0 2.576cqw 6.061cqw rgba(0,0,0,.32);z-index:7;overflow:hidden}
+.cv .chat .hd{height:6.364cqw;background:#7d98c9;color:#fff;font-size:2.727cqw;font-weight:900;display:flex;align-items:center;justify-content:center}
+.cv .chat .bd{position:absolute;left:0;right:0;bottom:0;padding:0 1.667cqw 1.667cqw;display:flex;flex-direction:column;gap:1.061cqw}
+.cv .chat .m{display:flex;align-items:flex-end;gap:0.909cqw}
+.cv .chat .m.r{justify-content:flex-end}
+.cv .chat .av{width:4.394cqw;height:4.394cqw;border-radius:50%;background:#fff;color:#7d98c9;font-size:1.818cqw;font-weight:900;display:flex;align-items:center;justify-content:center;flex:none}
+.cv .chat .t{background:#fff;color:#1c1c1e;font-size:2.576cqw;font-weight:700;padding:1.061cqw 1.818cqw;border-radius:2.121cqw;white-space:nowrap}
+.cv .chat .m.r .t{background:#9be27a}
+.cv .chat .ph{width:18.939cqw;height:18.939cqw;border-radius:1.970cqw;object-fit:cover;display:block}
+.cv .chat .fade{position:absolute;left:0;right:0;top:6.364cqw;height:22.727cqw;background:linear-gradient(#8fa9d6 8%,rgba(143,169,214,.82) 45%,rgba(143,169,214,0));z-index:2}
+.cv .roll{position:absolute;width:42.424cqw;background:#fff;border-radius:3.333cqw;padding:1.515cqw 1.515cqw 1.667cqw;box-shadow:0 2.576cqw 6.061cqw rgba(0,0,0,.30);z-index:8}
+.cv .roll h4{font-size:2.727cqw;font-weight:900;color:#6e6e76;text-align:center;margin-bottom:1.061cqw}
+.cv .roll .g{display:grid;grid-template-columns:repeat(3,1fr);gap:0.606cqw}
+.cv .roll .g>*{aspect-ratio:1;border-radius:1.061cqw;overflow:hidden;background:#e9ebf0;display:flex;align-items:center;justify-content:center}
+.cv .roll .g img{width:100%;height:100%;object-fit:cover;display:block}
+.cv .memo{position:absolute;border-radius:3.030cqw;overflow:hidden;background:#fff;box-shadow:0 3.030cqw 6.818cqw rgba(0,0,0,.34);z-index:7}
+.cv .memo img{position:absolute;display:block}
+.cv .paper{position:absolute;background:#fff;box-shadow:0 3.788cqw 8.333cqw rgba(0,0,0,.30);z-index:5;overflow:hidden}
+.cv .paper img{position:absolute;display:block}
+.cv .tile{position:absolute;border-radius:3.030cqw;overflow:hidden;box-shadow:0 1.970cqw 4.545cqw rgba(0,0,0,.20);z-index:6;background:#fff}
+.cv .tile img{width:100%;display:block}
+.cv .blob{position:absolute;left:-12.121cqw;top:96.970cqw;width:124.242cqw;height:166.667cqw;border-radius:50% 50% 0 0;background:linear-gradient(#dfeaff,#eef4ff 55%);z-index:1}
+.cv .tape{position:absolute;width:18.939cqw;height:5.909cqw;background:rgba(255,214,110,.82);box-shadow:0 0.455cqw 1.061cqw rgba(0,0,0,.12);z-index:6}
+.cv .pill{position:absolute;background:#fff;border-radius:6.061cqw;padding:1.667cqw 3.485cqw 1.818cqw;box-shadow:0 1.515cqw 3.788cqw rgba(0,0,0,.18);z-index:6;font-size:3.939cqw;font-weight:900;white-space:nowrap;color:#1c1c1e;display:flex;align-items:center;gap:1.515cqw}
+.cv .pill i{width:2.273cqw;height:2.273cqw;border-radius:50%;display:block}
+.cv .note:after{content:"";position:absolute;left:5.303cqw;bottom:-1.212cqw;width:3.333cqw;height:3.333cqw;background:#fff;border-radius:0.606cqw;transform:rotate(45deg);z-index:-1}
+.cv .paw{position:absolute;width:6.970cqw;height:6.970cqw;z-index:1;opacity:.9}
+.cv .tag{position:absolute;background:#fff;color:#1c1c1e;font-size:3.939cqw;font-weight:900;padding:1.212cqw 3.333cqw 1.364cqw;border-radius:4.545cqw;box-shadow:0 1.061cqw 3.030cqw rgba(0,0,0,.4);z-index:9;white-space:nowrap}

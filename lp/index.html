@@ -13,7 +13,7 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="ねこのまど｜撮りためた猫の写真に、毎日会える">
   <meta property="og:description" content="毎日ちがう1枚が、ホーム画面のまどに。無料ではじめられます。">
-  <meta property="og:image" content="https://nekonomado.com/images/og.png">
+  <meta property="og:image" content="https://nekonomado.com/images/store/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="images/app-icon-180.png">
   <link rel="apple-touch-icon" href="images/app-icon-180.png">
@@ -21,6 +21,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/lp.css">
+  <link rel="stylesheet" href="assets/v32.css">
+  <link rel="stylesheet" href="assets/mock.css">
 </head>
 <body>
 
@@ -33,195 +35,72 @@
 
 <main id="top">
 
-<!-- 最初の画面：まどの向こうに、うちの子のいい表情。窓辺にのわ。その下に約束と入手 -->
-<section class="hero">
-  <div class="window">
-    <div class="arch"><img src="images/photo-grey-yawn.webp" alt="あくびをする灰色の猫" width="1200" height="900"><i class="mul h"></i></div>
-    <i class="sill"></i>
-    <img class="nowa-sill" src="images/nowa-peek.webp" alt="" width="640" height="409">
-  </div>
-  <div class="in">
-    <h1>撮りためた猫の写真に、<br>毎日会える。</h1>
-    <p class="lead">ホーム画面に、毎日ちがう1枚。</p>
+<!-- App Store の画面写真 v32 の部品と寸法を、ページ用に組み直したもの（lp/assets/v32.css）。見出しは文字。写真は lp/images/store/（公開リポジトリに入れない） -->
+<section class="v32 v32-1">
+  <div class="v32-head">
+    <h1>撮るだけ撮って、<br>見返せていない。</h1>
+    <p class="after"><em>毎日ちがう1枚が、ホーム画面に。</em></p>
     <a class="store" id="hero-cta" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
     <p class="free">無料ではじめられます</p>
   </div>
+  <div class="v32-fig"><div class="v32-pic" style="height:154.55cqw" aria-hidden="true">
+    <div class="cv" style="top:-42.42cqw"><img src="images/store/nowa_peek_wink.png" alt="" style="position:absolute;left:22.727cqw;top:45.152cqw;width:28.030cqw;transform:rotate(-3deg);z-index:1"><div class="phone"><div class="in"><div class="screen"><div class="island"></div><div class="home" style="background:linear-gradient(170deg,#fffaf2,#fbeede 60%,#f6e2cc)"><div class="sb"><div class="t">9:41</div><div class="r"><div class="bar" style="height:1.061cqw"></div><div class="bar" style="height:1.515cqw"></div><div class="bar" style="height:1.970cqw"></div><div class="bar" style="height:2.424cqw"></div><div class="bat"></div></div></div><div class="wid"><img src="images/store/NYXC6588.webp" alt="" style="object-position:62% 40%"></div><div class="wn">ねこのまど</div></div></div></div></div><div class="note" style="left:5.303cqw;top:76.515cqw"><small>こんな時もあったな</small>子猫のころの1枚</div><div class="day" style="left:-0.5cqw;top:106cqw;width:24cqw;transform:rotate(-7deg)"><img src="images/store/mugi_face.webp" alt="" style="object-position:50% 30%"><p>きのう</p></div></div>
+  </div></div>
 </section>
 
-<!-- アプリの中は猫だけ：iPhoneの写真（まざっている）→ ねこのまど（猫だけ） -->
-<section class="feat only">
-  <div class="in">
-    <h2 class="big-h">アプリの中は、猫だけ。</h2>
+<section class="v32 v32-3 wall-sec">
+  <div class="v32-head">
+    <h2>ひらけば、<br>ぜんぶ猫。</h2>
+    <p class="after"><em>スクショもレシートも、まざらない。</em></p>
   </div>
-  <div class="pair" aria-hidden="true">
-    <figure>
-      <div class="phone mid"><div class="island"></div><div class="screen white roll">
-        <div class="rgrid">
-          <i class="doc"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
-          <img src="images/photo-everyday-food.webp" alt="">
-          <img src="images/photo-grey-bed.webp" alt="">
-          <i class="doc"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path class="ln" d="M9.5 7h5M9.5 10h5M9.5 13h3"/></svg></i>
-          <img src="images/photo-everyday-landscape.webp" alt="">
-          <img src="images/photo-everyday-table.webp" alt="">
-          <img src="images/photo-lap.webp" alt="">
-          <i class="doc"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
-          <img src="images/photo-everyday-food.webp" alt="" style="object-position: 20% 50%">
-          <i class="doc"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path class="ln" d="M9.5 7h5M9.5 10h5M9.5 13h3"/></svg></i>
-          <img src="images/photo-stretch.webp" alt="">
-          <img src="images/photo-everyday-landscape.webp" alt="" style="object-position: 80% 50%">
-          <img src="images/photo-everyday-table.webp" alt="" style="object-position: 30% 60%">
-          <i class="doc"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21z"/><path class="ln" d="M9 8h6M9 11.5h6M9 15h4"/></svg></i>
-          <img src="images/photo-everyday-food.webp" alt="" style="object-position: 80% 40%">
-        </div>
-        <p class="rcount">すべての写真 12,840枚</p>
-      </div></div>
-      <figcaption>iPhoneの写真</figcaption>
-    </figure>
-    <span class="arrow">→</span>
-    <figure>
-      <div class="phone mid"><div class="island"></div><div class="screen white roll">
-        <div class="rgrid">
-          <img src="images/photo-grey-bed.webp" alt=""><img src="images/photo-two-cats.webp" alt=""><img src="images/photo-lap.webp" alt="">
-          <img src="images/photo-grey-chair.webp" alt=""><img src="images/photo-stretch.webp" alt=""><img src="images/photo-grey-yawn.webp" alt="">
-          <img src="images/photo-grey-ball.webp" alt=""><img src="images/photo-sofa.webp" alt=""><img src="images/photo-two-cats.webp" alt="" style="object-position: 15% 50%">
-          <img src="images/photo-stretch.webp" alt="" style="object-position: 80% 50%"><img src="images/photo-lap.webp" alt="" style="object-position: 50% 20%"><img src="images/photo-grey-chair.webp" alt="" style="object-position: 50% 70%">
-          <img src="images/photo-grey-yawn.webp" alt="" style="object-position: 30% 40%"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 70% 60%"><img src="images/photo-sofa.webp" alt="" style="object-position: 30% 50%">
-        </div>
-        <p class="rcount cat">猫の写真 2,402枚</p>
-      </div></div>
-      <figcaption>ねこのまど</figcaption>
-    </figure>
-  </div>
-  <div class="in">
-    <p>スクショもレシートも、まざりません。選ぶ手間も、整理もいりません。</p>
-    <p class="safe">猫を見つけるのは、iPhone の中。そのために写真を外へ送ることはありません。</p>
+  <div class="wall" aria-hidden="true">
+    <img class="wall-nowa" src="images/store/nowa_loaf.webp" alt="" width="360" height="217">
+    <div class="wall-grid"><img src="images/store/wall/w01.webp" alt="" loading="lazy"><img src="images/store/wall/w02.webp" alt="" loading="lazy"><img src="images/store/wall/w03.webp" alt="" loading="lazy"><img src="images/store/wall/w20.webp" alt="" loading="lazy"><img src="images/store/wall/w05.webp" alt="" loading="lazy"><img src="images/store/wall/w23.webp" alt="" loading="lazy"><img src="images/store/wall/w07.webp" alt="" loading="lazy"><img src="images/store/wall/w08.webp" alt="" loading="lazy"><img src="images/store/wall/w09.webp" alt="" loading="lazy"><img src="images/store/wall/w10.webp" alt="" loading="lazy"><img src="images/store/wall/w11.webp" alt="" loading="lazy"><img src="images/store/wall/w12.webp" alt="" loading="lazy"><img src="images/store/wall/w13.webp" alt="" loading="lazy"><img src="images/store/wall/w14.webp" alt="" loading="lazy"><img src="images/store/wall/w15.webp" alt="" loading="lazy"><img src="images/store/wall/w16.webp" alt="" loading="lazy"><img src="images/store/months/p2.webp" alt="" loading="lazy"><img src="images/store/wall/w18.webp" alt="" loading="lazy"><img src="images/store/wall/w19.webp" alt="" loading="lazy"><img src="images/store/wall/w06.webp" alt="" loading="lazy"><img src="images/store/wall/w21.webp" alt="" loading="lazy"><img src="images/store/wall/w22.webp" alt="" loading="lazy"><img src="images/store/wall/w04.webp" alt="" loading="lazy"><img src="images/store/wall/w24.webp" alt="" loading="lazy"><img src="images/store/wall/w25.webp" alt="" loading="lazy"><img src="images/store/wall/w26.webp" alt="" loading="lazy"><img src="images/store/wall/w27.webp" alt="" loading="lazy"><img src="images/store/wall/w28.webp" alt="" loading="lazy"></div>
   </div>
 </section>
 
-<!-- きょうの1枚：くもって届いたホーム画面 → 札をタップして晴れたホーム画面 -->
-<section class="feat">
-  <div class="in">
-    <h2 class="big-h">きょうは、<br>どの子だろう。</h2>
+<section class="v32 v32-2 hand-sec">
+  <div class="v32-head">
+    <h2>かわいい1枚が、<br>トークだと流れる。</h2>
+    <p class="after"><em>家族のホーム画面なら、流れない。</em></p>
   </div>
-  <div class="pair tops" aria-hidden="true">
-    <figure>
-      <div class="top-crop"><div class="phone mid"><div class="island"></div><div class="screen home">
-        <div class="clip still">
-          <img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%">
-          <div class="frost"><img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"><i class="fog"></i>
-            <svg class="paw p1" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-            <svg class="paw p2" viewBox="0 0 32 32"><ellipse cx="16" cy="21" rx="7.5" ry="6.5"/><ellipse cx="7.5" cy="12.5" rx="3" ry="3.8"/><ellipse cx="13" cy="7.5" rx="3" ry="3.8"/><ellipse cx="19.5" cy="7.5" rx="3" ry="3.8"/><ellipse cx="25" cy="12.5" rx="3" ry="3.8"/></svg>
-            <span class="tag">タップで、きょうの1枚</span>
-          </div>
-        </div>
-        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
-      </div></div></div>
-      <figcaption>届いたとき</figcaption>
-    </figure>
-    <span class="arrow">→</span>
-    <figure>
-      <div class="top-crop"><div class="phone mid"><div class="island"></div><div class="screen home">
-        <div class="widget"><img src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"></div>
-        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
-      </div></div></div>
-      <figcaption>札をタップすると</figcaption>
-    </figure>
+  <p class="hand-cap">実家の母の iPhone</p>
+  <div class="v32-fig hand-fig"><div class="v32-pic" style="height:104cqw" aria-hidden="true">
+    <div class="cv" style="top:-42.42cqw"><div class="phone"><div class="in"><div class="screen"><div class="island"></div><div class="home" style="background:linear-gradient(170deg,#f3f7ff,#e3ecfb 60%,#d6e2f6)"><div class="sb"><div class="t">9:41</div><div class="r"><div class="bar" style="height:1.061cqw"></div><div class="bar" style="height:1.515cqw"></div><div class="bar" style="height:1.970cqw"></div><div class="bar" style="height:2.424cqw"></div><div class="bat"></div></div></div><div class="wid"><img src="images/store/share_big.webp" alt="" style="object-position:58% 50%"></div><div class="wn">ねこのまど</div></div></div></div></div><div class="from" style="left:21cqw;top:124cqw"><div class="av">ゆい</div>ゆいから</div></div>
+  </div></div>
+</section>
+
+<section class="v32 v32-4 fan-sec">
+  <div class="v32-head">
+    <h2>この子との毎日は、<br>あっという間。</h2>
+    <p class="after"><em>毎月1日、先月がアルバムになる。</em></p>
   </div>
-  <div class="in">
-    <p>ホーム画面のまどは、毎日くもって届きます。札をタップすると、きょうの1枚に会えます。</p>
+  <div class="shot" aria-hidden="true"><img src="images/store/album_screen.webp" alt="" loading="lazy" width="1320" height="1725"></div>
+</section>
+
+<div class="pair">
+<section class="v32 konoko-sec">
+  <div class="v32-head">
+    <h2>うちの子のことは、<br>ぜんぶここに。</h2>
+    <p class="after"><em>誕生日も、ワクチンも、体重も。</em></p>
+  </div>
+  <div class="konoko" aria-hidden="true">
+    <img src="images/store/konoko_top.webp" alt="" loading="lazy" width="1320" height="1112">
+    <img src="images/store/konoko_rows.webp" alt="" loading="lazy" width="1320" height="1130">
   </div>
 </section>
 
-<!-- あの日の1枚：うちの子の1年前のきょうの写真が、ホーム画面に帰ってくる -->
-<section class="feat">
-  <div class="in">
-    <h2 class="big-h">忘れていた1枚が、<br>帰ってくる。</h2>
+<section class="v32 v32-5">
+  <div class="v32-head">
+    <h2>もしものとき、<br>この子を守る準備。</h2>
+    <p class="after"><em>迷子のチラシも、避難のメモも、先に作れる。</em></p>
   </div>
-  <div class="back" aria-hidden="true">
-    <div class="top-crop tall"><div class="phone"><div class="island"></div><div class="screen home">
-      <div class="widget"><img src="images/photo-grey-chair.webp" alt="" style="object-position: 48% 62%; transform: scale(1.7); transform-origin: 48% 60%"><span class="chip big">1年前のきょう</span></div>
-      <p class="wname">ねこのまど</p>
-      <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
-    </div></div></div>
-    <ul class="labels"><li>きょうは むぎの誕生日</li><li>うちに来て 4年</li><li>1年前の今ごろ</li></ul>
-  </div>
-  <div class="in">
-    <p>1年前のきょう、誕生日、うちに来て 4年。そんな日には、その日の1枚が札つきで帰ってきます。</p>
-  </div>
+  <div class="v32-fig"><div class="v32-pic" style="height:140cqw" aria-hidden="true">
+    <div class="cv" style="top:-42.42cqw"><div class="paper" style="left:8.333cqw;top:65.909cqw;width:83.333cqw;height:104.167cqw;transform:rotate(-3deg);border-radius:0.455cqw"><img src="images/store/flyer.webp" alt="" style="left:0;top:0;width:83.333cqw"></div></div>
+  </div></div>
 </section>
 
-<!-- この子：うちの子のための1ページ（アプリの「この子」タブ） -->
-<section class="feat">
-  <div class="in">
-    <h2 class="big-h">うちの子のことは、<br>ぜんぶここに。</h2>
-  </div>
-  <div class="pic" aria-hidden="true">
-    <div class="phone"><div class="island"></div><div class="screen konoko">
-      <div class="k-photo"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 40%">
-        <p class="k-name"><b>むぎ</b>オス・4歳4か月</p>
-      </div>
-      <div class="k-tools">
-        <span><i><svg viewBox="0 0 24 24"><rect x="3.5" y="7" width="17" height="12" rx="2.5"/><path d="M9 7V5.5h6V7M12 10v6M9 13h6"/></svg></i>病院</span><span><i><svg viewBox="0 0 24 24"><path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11M11 11V5a1.5 1.5 0 0 1 3 0v6M14 11V6.5a1.5 1.5 0 0 1 3 0V14c0 3.5-2.5 6-5.5 6S6 18 5 15.5L3.8 12.6a1.4 1.4 0 0 1 2.5-1.2L8 14"/></svg></i>預ける</span><span><i><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg></i>迷子</span><span><i><svg viewBox="0 0 24 24"><path d="M8 6a4 4 0 0 1 8 0M6 9a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v10a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19z"/><rect x="9" y="13" width="6" height="4" rx="1"/></svg></i>避難</span><span><i><svg viewBox="0 0 24 24"><rect x="4" y="4" width="4" height="4" rx="1"/><rect x="10" y="4" width="4" height="4" rx="1"/><rect x="16" y="4" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="4" y="16" width="4" height="4" rx="1"/><rect x="10" y="16" width="4" height="4" rx="1"/><rect x="16" y="16" width="4" height="4" rx="1"/></svg></i>見せる</span>
-      </div>
-      <ul class="k-rows">
-        <li><b>誕生日</b><span>7月10日（あと230日）</span></li>
-        <li><b>ワクチン</b><span>前回 11月8日</span></li>
-        <li><b>病院</b><span>前回 11月11日</span></li>
-        <li><b>体重</b><span>5.56kg</span></li>
-        <li><b>この子のこと</b><span>›</span></li>
-        <li><b>家族の手帳</b><span>›</span></li>
-      </ul>
-    </div></div>
-  </div>
-  <div class="in">
-    <p>誕生日、ワクチン、病院、体重。うちの子のことを1ページに。もしものときは、迷子のチラシや病院で見せるメモが、すぐに作れます。</p>
-  </div>
-</section>
-
-<!-- 家族のまど：あなたのiPhone → 実家のiPhone -->
-<section class="feat">
-  <div class="in">
-    <h2 class="big-h">離れた家族の<br>ホーム画面にも。</h2>
-  </div>
-  <div class="pair" aria-hidden="true">
-    <figure>
-      <div class="phone mid"><div class="island"></div><div class="screen white send">
-        <img class="sent" src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%">
-        <span class="sendbtn">実家のまどに届ける</span>
-      </div></div>
-      <figcaption>あなたのiPhone</figcaption>
-    </figure>
-    <span class="arrow">→</span>
-    <figure>
-      <div class="phone mid"><div class="island"></div><div class="screen home">
-        <div class="widget"><img src="images/photo-grey-bed.webp" alt="" style="object-position: 52% 45%"><span class="from">ゆうから・いま届いた1枚</span><span class="heart">♥</span></div>
-        <div class="apps"><i class="a0"></i><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
-      </div></div>
-      <figcaption>実家のiPhone</figcaption>
-    </figure>
-  </div>
-  <div class="in">
-    <p>トークだと流れてしまう1枚が、実家のホーム画面に。ハートが返ってきます。招待された人はずっと無料、まどを作るのは Plus です。</p>
-  </div>
-</section>
-
-<!-- 月の作品：本の形と、届いた知らせ -->
-<section class="feat">
-  <div class="in">
-    <h2 class="big-h">毎月1日、<br>先月が1冊に。</h2>
-  </div>
-  <div class="bookwrap" aria-hidden="true">
-    <p class="notice"><img src="images/app-icon-180.png" alt="" width="22" height="22">10月の作品が届きました</p>
-    <div class="spread">
-      <div class="cover"><img src="images/photo-grey-yawn.webp" alt="" style="object-position: 50% 30%"><p><b>むぎ</b>2026年10月</p></div>
-      <div class="pg left"><img class="a" src="images/photo-grey-bed.webp" alt=""><img class="b" src="images/photo-grey-ball.webp" alt="" style="object-position: 50% 40%"><small>10月3日・10月9日</small></div>
-      <div class="pg right"><img class="c" src="images/photo-grey-chair.webp" alt="" style="object-position: 48% 62%; transform: scale(1.6); transform-origin: 48% 60%"><small>10月21日</small></div>
-    </div>
-  </div>
-  <div class="in">
-    <p>先月の猫の写真が、1冊の作品になって届きます。Plus（はじめの14日間は無料）。</p>
-  </div>
-</section>
+</div>
 
 <section class="price" id="price">
   <div class="in">
@@ -230,38 +109,37 @@
       <div class="plan">
         <h3>無料</h3>
         <p class="yen">0<small>円</small></p>
-        <p>猫の写真の一覧・毎日ちがう1枚・もしものときの準備・招待されたまど</p>
+        <ul class="feat"><li>猫の写真の一覧</li><li>毎日ちがう1枚</li><li>もしものときの準備</li><li>家族から届く写真</li></ul>
       </div>
       <div class="plan plus">
         <h3>ねこのまど Plus</h3>
         <p class="yen">980<small>円／月</small></p>
-        <p>月の作品と1年の作品・まどを作る・家族で書く手帳・記録の保存</p>
-        <p class="trial">はじめの14日間は無料</p>
+        <ul class="feat"><li>月の作品と1年の作品</li><li>家族に写真を届ける</li><li>家族で書く手帳</li><li>機種変更しても戻せる保存</li></ul>
+        <a class="trial" href="https://apps.apple.com/jp/app/id6801962436">14日間、無料で試す</a>
       </div>
     </div>
     <ul class="trust">
       <li>広告もトラッキングもありません</li>
     </ul>
-    <p class="fine">価格は税込みです。Plusは月ごとの自動更新で、いつでも解約できます。やめても、写真とメモは消えません。</p>
+    <p class="fine">Plusは14日間の無料期間のあと、月980円（税込み）で自動更新されます。いつでも解約でき、やめても写真とメモは消えません。</p>
   </div>
 </section>
 
 <section class="faq">
   <div class="in">
     <h2>よくある質問</h2>
-    <details><summary>写真が勝手に送られたりしませんか？</summary><p>送りません。猫かどうかはiPhoneの中で見分けます。まどに届くのは、自分で選んで「届ける」を押した写真だけです。</p></details>
-    <details><summary>家族も払う必要がありますか？</summary><p>いいえ。招待されてまどや家族の手帳に入る人は無料です。</p></details>
-    <details><summary>14日間のお試しが終わったら？</summary><p>解約していれば無料のまま使えます。写真・メモ・まどの写真は消えません。</p></details>
+    <details><summary>写真が勝手に送られたりしませんか？</summary><p>送りません。猫かどうかはiPhoneの中で見分けます。家族に届くのは、自分で選んで「届ける」を押した写真だけです。</p></details>
+    <details><summary>家族も払う必要がありますか？</summary><p>いいえ。招待されて写真を受け取る人や、家族の手帳に入る人は無料です。</p></details>
+    <details><summary>14日間のお試しが終わったら？</summary><p>解約していれば無料のまま使えます。写真・メモ・家族から届いた写真は消えません。</p></details>
     <details><summary>iPhoneの「写真」アプリと何が違いますか？</summary><p>猫の写真だけを集めて、毎日ちがう1枚をホーム画面に届けます。今ある写真をそのまま使うので、移す必要はありません。</p></details>
     <details><summary>写真を届けられないときは？</summary><p>iPhoneの「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」がオンのときは、届ける前と表示する前に、iPhoneの中で写真を確かめます。センシティブな写真は届けず、表示もしません。</p></details>
-    <details><summary>Androidで使えますか？</summary><p>いいえ。iOS 17.1以降のiPhoneで使えます。</p></details>
+    <details><summary>家族がAndroidでも使えますか？</summary><p>いいえ。写真を受け取る家族も、iOS 17.1以降のiPhoneが必要です。</p></details>
   </div>
 </section>
 
 <section class="end">
   <div class="in">
-    <img class="nowa" src="images/nowa-sit-up.webp" alt="" width="545" height="640">
-    <h2>うちの子に、毎日会いに。</h2>
+    <h2>うちの子に、<br class="sp">毎日会いに。</h2>
     <a class="store" id="end-cta" href="https://apps.apple.com/jp/app/id6801962436"><img src="images/app-store-badge-black.svg" alt="App Storeからダウンロード" width="152" height="56"></a>
     <p class="small">iOS 17.1以降のiPhone</p>
   </div>
@@ -271,24 +149,29 @@
 <footer class="foot">
   <div class="in">
     <nav><a href="https://nekonomado.com/guide/">使い方</a><a href="https://nekonomado.com/privacy/">プライバシーポリシー</a><a href="https://nekonomado.com/support/">サポート</a></nav>
-    <p>画面はイメージです。猫の写真はUnsplashの素材写真です。</p>
+    <p>画面はイメージです。</p>
     <p>© 2026 ねこのまど</p>
   </div>
 </footer>
 
 <!-- スマホで下に浮かぶ小さな帯。最初と最後の入手ボタンが見えているあいだは隠す -->
-<a class="bar" href="https://apps.apple.com/jp/app/id6801962436" aria-label="ねこのまどをApp Storeで入手">
+<a class="getbar" href="https://apps.apple.com/jp/app/id6801962436" aria-label="ねこのまどをApp Storeで入手">
   <img src="images/app-icon-180.png" alt="" width="40" height="40">
   <span><b>ねこのまど</b><small>無料ではじめられる</small></span>
   <span class="go">入手</span>
 </a>
 
 <script>
-/* 動くのは、くもりを晴らす短い動き1つだけ。見えているあいだだけくり返す。
-   下の帯は、最初と最後の入手ボタンが見えていないときだけ出す。 */
+/* 下の帯は、最初と最後の入手ボタンが見えていないときだけ出す。
+   写真の面の幅は、スクロールバーを除いた画面の幅（--vw）。 */
+(function () {
+  var root = document.documentElement;
+  function vw() { if (root.clientWidth > 0) root.style.setProperty('--vw', root.clientWidth / 100 + 'px'); }
+  vw(); window.addEventListener('resize', vw);
+})();
 (function () {
   if (!('IntersectionObserver' in window)) return;
-  var bar = document.querySelector('.bar'), seen = {};
+  var bar = document.querySelector('.getbar'), seen = {};
   var io = new IntersectionObserver(function (es) {
     es.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
     bar.classList.toggle('on', !seen['hero-cta'] && !seen['end-cta']);
