@@ -145,9 +145,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 15))
-        XCUIDevice.shared.press(.home)
-        let edit = try prepareLPHomeEditing(in: springboard)
-        XCTAssertTrue(edit.isHittable)
+        try prepareLPHomeEditing(in: springboard)
         XCTAssertTrue(try addWidgetFromGallery(page: 3, in: springboard))
         if let done = waitForElement(in: springboard, labels: ["完了", "Done"],
             elementTypes: [.button], timeout: 5, requireHittable: true) { done.tap() }
@@ -157,24 +155,29 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func prepareLPHomeEditing(in springboard: XCUIApplication) throws -> XCUIElement {
+    private func prepareLPHomeEditing(in springboard: XCUIApplication) throws {
         // Use a known system icon because a fresh Home Screen can fill the
         // usual wallpaper coordinates with icons or default widgets.
         let safari = springboard.icons.matching(NSPredicate(format: "label == %@", "Safari")).firstMatch
+        if !safari.waitForExistence(timeout: 8), springboard.windows["SBSwitcherWindow:Main"].exists {
+            // Dismiss a confirmed App Switcher only after the first gesture
+            // has settled. Two quick Home presses open the switcher.
+            XCUIDevice.shared.press(.home)
+        }
         if safari.waitForExistence(timeout: 8), safari.isHittable {
             safari.press(forDuration: 1.2)
             if let editHome = waitForElement(in: springboard,
                 labels: ["ホーム画面を編集", "Edit Home Screen"],
                 elementTypes: [.button, .staticText, .menuItem], timeout: 5, requireHittable: true) {
                 editHome.tap()
-                if let edit = waitForElement(in: springboard, labels: ["編集", "Edit"],
-                    elementTypes: [.button], timeout: 6, requireHittable: true) { return edit }
+                if waitForElement(in: springboard, labels: ["編集", "Edit"],
+                    elementTypes: [.button], timeout: 6, requireHittable: true) != nil { return }
             }
-            XCUIDevice.shared.press(.home)
+            springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.81)).tap()
         }
         let edit = enterHomeScreenEditing(in: springboard)
         if edit == nil { print("LP Home editing state:\n\(springboard.debugDescription)") }
-        return try XCTUnwrap(edit)
+        _ = try XCTUnwrap(edit)
     }
 
     @MainActor
