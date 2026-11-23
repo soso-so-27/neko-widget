@@ -200,9 +200,13 @@ const PUBLIC_1_0_PAGES = Object.freeze([
   { name: "community", path: "community/", h1: "コミュニティ基準", visibleRevision: true,
     requiredPhrases: ["1つのまどは6人まで", "入れるのは招待された人だけ", "運営者だけが開ける鍵で暗号化して送ります", "受付番号が出る", "その相手からの新しい写真を止められます", "確認用の画像は7日で消し"] },
   { name: "support", path: "support/", h1: "サポート", visibleRevision: true, visibleRevisionDate: "2026-11-22",
+    requiredPageLinks: ["tokushoho/"],
     requiredPhrases: ["変わらないときは、ウィジェットを編集して「ねこのまど」の設定を確かめ", "まどを作った人がPlusを使っている必要があります", "招待された人は無料", "1人1日5枚まで", "500枚まで", "写真アプリに保存してください", "それまでの記録は消えません", "緊急通報先ではありません", "販売について", "月額980円（税込）", "14日間無料", "氏名・住所・電話番号", "家族が入れない", "iOS 17.1以上", "家族にもう一度招待してもらうと戻ります", "証明の写真は、招待の前でも「この子のこと」で開けます", "まどには、新しいiPhoneでもう一度招待を受けて参加してください"] },
   { name: "guide", path: "guide/", h1: "ねこのまどの使い方", visibleRevision: true, visibleRevisionDate: "2026-11-22",
     requiredPhrases: ["「猫を探す」を押します", "毎日新しい1枚に入れ替わります", "くもりのまどと「もう一枚」も無料で使えます", "家族の手帳を作って、家族で一緒に書く", "1つのまどに届けられるのは、1人1日5枚まで", "1つのまどにつき新しいものから500枚まで", "招待されて入るのは無料です", "月額980円です", "解約しても、写真・まど・メモは消えません"] },
+  { name: "tokushoho", path: "tokushoho/", h1: "特定商取引法に基づく表記",
+    visibleRevision: true, visibleRevisionDate: "2026-11-23", auxiliary: true,
+    requiredPhrases: ["月額980円（税込）", "14日間は無料"] },
 ].map(page => Object.freeze({ ...page, forbiddenPhrases: [SHARING_BETA_BOUNDARY_PHRASE, "完全ローカル版", "新規の暗号化通報受付は停止",
   "毎日の入れ替わりはPlusの機能", "毎日新しい1枚に入れ替わるのはPlusの機能", "最初の1枚がそのまま残ります"] })));
 
@@ -529,6 +533,7 @@ function validateLinks({
   pageUrl,
   baseUrl,
   expectedPageUrls,
+  requiredPageUrls,
   requiredSameOriginUrls,
   label,
 }) {
@@ -557,7 +562,7 @@ function validateLinks({
       throw new Error(`${label} contains an unresolved internal policy link: ${target.pathname}`);
     }
   }
-  const missing = [...expectedPageUrls].filter((url) => !internal.has(url));
+  const missing = requiredPageUrls.filter((url) => !internal.has(url));
   if (missing.length > 0) {
     throw new Error(`${label} does not link to every page in its policy profile`);
   }
@@ -573,6 +578,7 @@ async function fetchPolicyPage({
   pageUrl,
   baseUrl,
   expectedPageUrls,
+  requiredPageUrls,
   requiredSameOriginUrls,
   expectedRevision,
   fetchImpl,
@@ -601,8 +607,8 @@ async function fetchPolicyPage({
     if (h1 !== page.h1) {
       throw new Error(`${page.name} returned an unexpected h1`);
     }
-    const revision = extractPolicyRevision(html, page.name);
-    if (revision !== expectedRevision) {
+    const revision = page.auxiliary ? null : extractPolicyRevision(html, page.name);
+    if (revision !== null && revision !== expectedRevision) {
       throw new Error(`${page.name} returned policy revision ${revision}; expected ${expectedRevision}`);
     }
     const text = visibleText(html);
@@ -628,6 +634,7 @@ async function fetchPolicyPage({
       pageUrl,
       baseUrl,
       expectedPageUrls,
+      requiredPageUrls,
       requiredSameOriginUrls,
       label: page.name,
     });
@@ -705,6 +712,8 @@ export async function checkPublicPolicySite({
     ? MEDIA_STAGING_PUBLIC_PAGES : profileDefinition.pages;
   const pageUrls = expectedPages.map((page) => new URL(page.path, baseUrl));
   const expectedPageUrls = new Set(pageUrls.map((url) => url.href));
+  const corePageUrls = pageUrls.filter((_, index) => !expectedPages[index].auxiliary)
+    .map((url) => url.href);
   const requiredSameOriginUrls = new Set(
     profileDefinition.requiredSharingBetaLink ? [new URL("../", baseUrl).href] : [],
   );
@@ -713,6 +722,10 @@ export async function checkPublicPolicySite({
     pageUrl: pageUrls[index],
     baseUrl,
     expectedPageUrls,
+    requiredPageUrls: [
+      ...corePageUrls,
+      ...(page.requiredPageLinks ?? []).map((path) => new URL(path, baseUrl).href),
+    ],
     requiredSameOriginUrls,
     expectedRevision,
     fetchImpl,
