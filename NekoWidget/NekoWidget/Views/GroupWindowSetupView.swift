@@ -147,8 +147,44 @@ enum GroupWindowPresentation {
             || (window.ownerParticipantID != nil && window.ownerParticipantID == window.myParticipantID)
     }
 
-    static func inviteMessage(windowName: String) -> String {
-        "ねこのまどの「\(windowName)」で、うちの猫の写真を届け合おう。このリンクから参加してね。"
+    /// 11/23 (猫友のまど): made on this iPhone from the まど's name and the
+    /// first named cat in この子. It goes only into the share sheet, where it
+    /// can be changed; nothing of it is sent to the relay.
+    static func inviteMessage(windowName: String, catName: String?) -> String {
+        let window = windowName.isEmpty ? "まど" : "「\(windowName)」"
+        let cat = catName.map { "うちの\($0)" } ?? "うちの子"
+        return "\(window)に席をとったよ。\(cat)と、そっちの子の写真を届け合おう。無料で入れるよ"
+    }
+
+    @MainActor static func inviteMessage(windowName: String) -> String {
+        inviteMessage(windowName: windowName, catName: ownCatName)
+    }
+
+    /// The first named cat in この子, or nil (the message then says 「うちの子」).
+    @MainActor static var ownCatName: String? {
+        (CatCareStore.shared.state?.cats ?? []).lazy
+            .compactMap { $0.name?.value.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    /// 11/23 (猫友のまど): the seats still open, under the same cap.
+    static func openSeats(_ window: GroupWindow) -> Int { max(0, memberLimit - window.memberCount) }
+    static func openSeatsText(_ count: Int) -> String { "あと\(count)人、無料で入れます" }
+
+    /// 11/23: a young まど shows one row at the top of its photos. Young is
+    /// fewer than 3 people and fewer than 10 photos kept on this iPhone;
+    /// after that the まど is in use, and inviting stays on 「メンバー」.
+    static let youngMemberLimit = 3
+    static let youngPhotoLimit = 10
+    static func offersSeatsRow(_ window: GroupWindow, photoCount: Int) -> Bool {
+        window.canManage && window.state == .active && !isPaused(window) && openSeats(window) > 0
+            && window.memberCount < youngMemberLimit && photoCount < youngPhotoLimit
+    }
+
+    /// 11/23: 設定's 「猫友を招く」: the first まど this iPhone made that has
+    /// an open seat, from the まど list read in this run.
+    static func windowWithOpenSeats(_ windows: [GroupWindow]) -> GroupWindow? {
+        windows.first { isMyWindow($0) && $0.canManage && $0.state == .active && !isPaused($0) && openSeats($0) > 0 }
     }
 
     static func memberCountText(_ window: GroupWindow) -> String {
@@ -289,6 +325,23 @@ final class GroupWindowMembersModel: ObservableObject {
             invitation = made
             GroupInvitationMemory.remember(id: made.id, expiresAt: made.expiresAt, windowID: windowID)
         }
+    }
+
+    /// The link to send now: the active one, else the existing steps in
+    /// their order (revoke a remembered older link, then make a new one).
+    /// Nil when it cannot be sent; `actionErrorMessage` then says why (11/7, W3).
+    func invitationToShare() async -> GroupInvitation? {
+        if let invitation = activeInvitation { return invitation }
+        if window == nil { await load() }
+        if let invitation = activeInvitation { return invitation }
+        if earlierInvitation != nil {
+            await revokeInvitation()
+            guard actionErrorMessage == nil else { return nil }
+        }
+        guard canInvite else { return nil }
+        await createInvitation()
+        guard actionErrorMessage == nil else { return nil }
+        return activeInvitation
     }
 
     func revokeInvitation() async {
@@ -1330,6 +1383,7 @@ final class GroupJoinModel: ObservableObject {
             do {
                 try await client.cancel(requestID: request.id, operationID: UUID())
                 phase = .cancelled
+                if let windowID { GroupFirstPhotoMemory.forget(windowID: windowID) }
                 errorMessage = nil
             } catch {
                 errorMessage = GroupWindowPresentation.message(for: error)
@@ -1347,6 +1401,10 @@ final class GroupJoinModel: ObservableObject {
         case .rejected: phase = .rejected
         case .expired: phase = .expired
         case .cancelled: phase = .cancelled
+        }
+        // 11/23: a first photo chosen while waiting is for this まど only.
+        if [Phase.rejected, .expired, .cancelled].contains(phase), let windowID {
+            GroupFirstPhotoMemory.forget(windowID: windowID)
         }
     }
 }
@@ -1455,7 +1513,7 @@ struct GroupJoinView: View {
 
     private var applySection: some View {
         Section {
-            TextField("まどでの名前（例：お父さん）", text: VisibleTextInput.binding($model.displayName))
+            TextField("まどでの名前（例：みか・お父さん）", text: VisibleTextInput.binding($model.displayName))
                 .focused($typingName)
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-join-name")
@@ -1497,6 +1555,11 @@ struct GroupJoinView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            // 11/23: while waiting, the first photo can be chosen; it is
+            // offered for sending once this まど opens as a member.
+            if let windowID = model.windowID {
+                GroupFirstPhotoChoiceRow(windowID: windowID)
+            }
             if request.admissionPaused == true {
                 Label("いまは一時的に参加できません。", systemImage: "pause.circle")
                     .font(.footnote)

@@ -1012,6 +1012,60 @@ private struct GroupLibraryDeliveryRequest: Identifiable {
     var id: String { localIdentifier }
 }
 
+/// 11/23: 「うちの子を1枚えらぶ」 on the waiting screen after 「参加する」.
+struct GroupFirstPhotoChoiceRow: View {
+    let windowID: String
+    @Environment(\.groupWindowCatPhotos) private var catPhotos
+    @State private var chosen: String?
+    @State private var showsCatPicker = false
+    @State private var pickedItem: PhotosPickerItem?
+
+    var body: some View {
+        Group {
+            if catPhotos.isEmpty {
+                PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) { label }
+            } else {
+                Button { showsCatPicker = true } label: { label }
+            }
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("group-join-choose-first-photo")
+        .sheet(isPresented: $showsCatPicker) {
+            GroupCatPhotoPickerSheet(photos: catPhotos, pickedItem: $pickedItem) { identifier in
+                showsCatPicker = false
+                remember(identifier)
+            }
+        }
+        .onChange(of: pickedItem) { _, item in
+            guard let item else { return }
+            pickedItem = nil
+            if let identifier = item.itemIdentifier { remember(identifier) }
+        }
+        .onAppear { chosen = GroupFirstPhotoMemory.chosen(windowID: windowID) }
+    }
+
+    private func remember(_ identifier: String) {
+        GroupFirstPhotoMemory.choose(identifier, windowID: windowID)
+        chosen = identifier
+    }
+
+    private var label: some View {
+        HStack(spacing: 12) {
+            if let chosen {
+                PhotoAssetImageView(localIdentifier: chosen, targetPixelSize: CGSize(width: 120, height: 120),
+                                    networkAccessAllowed: false)
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityHidden(true)
+            }
+            Text(chosen == nil ? "うちの子を1枚えらぶ" : "参加できたら、この1枚を届けられます")
+                .font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+}
+
 struct GroupWindowScreen: View {
     @StateObject private var model: GroupWindowScreenModel
     @Environment(\.groupWindowCatPhotos) private var catPhotos
@@ -1137,6 +1191,9 @@ struct GroupWindowScreen: View {
                 }
                 if let message = model.message {
                     screenMessage(message)
+                }
+                if let window = model.shownWindow, !model.isFormer, showsSeatsRow(window) {
+                    seatsRow(window)
                 }
                 if let notice = model.receiveNotice {
                     Label(notice, systemImage: "hourglass")
@@ -1279,6 +1336,7 @@ struct GroupWindowScreen: View {
             await model.showStored()
             await model.sync()
             markSeen()
+            offerFirstPhoto()
 #if DEBUG
             if GroupWindowUIFixture.showsFailedDelivery { model.showFixtureFailedDelivery() }
 #endif
@@ -1305,6 +1363,44 @@ struct GroupWindowScreen: View {
         .sheet(item: $openedEntry) { entry in
             GroupPhotoDetail(model: model, startID: entry.id)
         }
+    }
+
+    /// 11/23 (猫友のまど): a young まど with open seats. Never in the App
+    /// Store screenshots, which stay as approved.
+    private func showsSeatsRow(_ window: GroupWindow) -> Bool {
+#if DEBUG
+        if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) { return false }
+#endif
+        return GroupWindowPresentation.offersSeatsRow(window, photoCount: model.entries.count)
+    }
+
+    /// One slim row, the same invitation as the seats screen.
+    private func seatsRow(_ window: GroupWindow) -> some View {
+        GroupSeatsInviteButton(client: model.client, windowID: model.windowID, windowName: window.name,
+                               identifier: "group-window-seats-row") { preparing in
+            HStack(spacing: 8) {
+                if preparing { ProgressView() }
+                Text(GroupWindowPresentation.openSeatsText(GroupWindowPresentation.openSeats(window)))
+                Spacer(minLength: 8)
+                Image(systemName: "plus")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    /// 11/23: the photo chosen while waiting for approval, offered once with
+    /// the usual confirmation when this まど can take photos.
+    private func offerFirstPhoto() {
+        guard libraryDelivery == nil, prepared == nil, model.canSend,
+              let chosen = GroupFirstPhotoMemory.chosen(windowID: model.windowID) else { return }
+        GroupFirstPhotoMemory.forget(windowID: model.windowID)
+        libraryDelivery = GroupLibraryDeliveryRequest(localIdentifier: chosen)
     }
 
     private func pausedCard(_ window: GroupWindow) -> some View {
@@ -2780,13 +2876,13 @@ struct GroupWindowCreateScreen: View {
     private var form: some View {
         Form {
             Section {
-                TextField("例：実家のまど", text: VisibleTextInput.binding($name))
+                TextField("例：猫友のまど・実家のまど", text: VisibleTextInput.binding($name))
                     .focused($typing, equals: .name)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("group-window-create-name")
             } header: { Text("まどの名前") }
             Section {
-                TextField("例：お母さん", text: VisibleTextInput.binding($ownerName))
+                TextField("例：さや・お母さん", text: VisibleTextInput.binding($ownerName))
                     .textContentType(.nickname)
                     .focused($typing, equals: .owner)
                     .disabled(model.isWorking)
@@ -3404,11 +3500,65 @@ private struct KnownWindowCard: View {
     }
 }
 
-/// 11/22 (A5): right after 「作る」, the one thing to do: invite the family.
-/// The link made with the まど is sent from here (or made first, when that
-/// failed), with the members screen's model and share sheet. Once it is
-/// sent, or with 「あとで」, the new まど itself opens. Members, the home
-/// screen and the rest stay on 「メンバー」.
+/// 11/23 (猫友のまど): 「猫友を招く」 away from the seats screen (a young
+/// まど's row, 設定). The same link steps and share sheet; the members
+/// model reads the まど only when pressed.
+struct GroupSeatsInviteButton<Content: View>: View {
+    @StateObject private var model: GroupWindowMembersModel
+    private let windowName: String
+    private let identifier: String
+    private let content: (_ preparing: Bool) -> Content
+    @State private var sharing: GroupInvitation?
+    @State private var preparing = false
+    @State private var problem: String?
+
+    init(client: any GroupWindowClient, windowID: String, windowName: String, identifier: String,
+         @ViewBuilder content: @escaping (_ preparing: Bool) -> Content) {
+        _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
+        self.windowName = windowName
+        self.identifier = identifier
+        self.content = content
+    }
+
+    var body: some View {
+        Button(action: share) { content(preparing) }
+            .disabled(preparing || model.isWorking)
+            .accessibilityIdentifier(identifier)
+            .alert("招待リンクを送れませんでした", isPresented: Binding(
+                get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(problem ?? "") }
+            .sheet(item: $sharing) { invitation in
+                GroupInvitationShareSheet(
+                    item: invitation.shareText,
+                    message: GroupWindowPresentation.inviteMessage(windowName: model.window?.name ?? windowName),
+                    onFinish: { sharing = nil }
+                )
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+            }
+    }
+
+    private func share() {
+        preparing = true
+        Task {
+            defer { preparing = false }
+            if let invitation = await model.invitationToShare() {
+                sharing = invitation
+            } else {
+                problem = model.actionErrorMessage ?? model.loadFailureMessage
+                    ?? "いまは招待できません。"
+            }
+        }
+    }
+}
+
+/// 11/23 (猫友のまど): right after 「作る」, the seats of the new まど: who
+/// is in it, the open seats, and one 「猫友を招く」. The link made with the
+/// まど is sent from here (or made first, when that failed), with the
+/// members screen's model and share sheet. Once it is sent, or with
+/// 「あとで」, the new まど itself opens. Members, the home screen and the
+/// rest stay on 「メンバー」.
 struct GroupWindowFirstInviteScreen: View {
     @StateObject private var model: GroupWindowMembersModel
     private let onDone: () -> Void
@@ -3421,9 +3571,11 @@ struct GroupWindowFirstInviteScreen: View {
         self.onDone = onDone
     }
 
-    private var name: String {
-        model.window?.name ?? GroupWindowListNavigation.shared.listedWindows[model.windowID]?.name ?? ""
+    private var shownWindow: GroupWindow? {
+        model.window ?? GroupWindowListNavigation.shared.listedWindows[model.windowID]
     }
+
+    private var name: String { shownWindow?.name ?? "" }
 
     /// Not yet read (the press reads it first), or a link can be sent now.
     private var canSend: Bool {
@@ -3432,54 +3584,68 @@ struct GroupWindowFirstInviteScreen: View {
 
     private var problem: String? { model.actionErrorMessage ?? model.loadFailureMessage }
 
+    /// The creator first, then the others, in the order the relay lists them.
+    private var seated: [GroupMember] {
+        guard let window = shownWindow else { return [] }
+        let active = window.activeMembers
+        return active.filter { $0.role == .owner } + active.filter { $0.role != .owner }
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            // The new まど as its card will show it in the list.
-            ZStack(alignment: .bottomLeading) {
-                Color(uiColor: .secondarySystemGroupedBackground)
-                    .aspectRatio(16 / 10, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .overlay { WindowCardEmptyCover() }
-                    .clipped()
-                Text(name)
-                    .font(.title3.bold())
-                    .foregroundStyle(NekoPalette.ink)
-                    .padding(14)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(name)
-            .accessibilityIdentifier("group-window-first-invite-name")
-            if let problem {
-                Label(problem, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("group-window-first-invite-problem")
-            }
-            Button(action: sendInvitation) {
-                Group {
-                    if preparing {
-                        WorkingLabel(title: "招待リンクを送る", workingTitle: "用意しています…", working: true)
-                    } else {
-                        Label("招待リンクを送る", systemImage: "square.and.arrow.up")
-                    }
+        ScrollView {
+            VStack(spacing: 16) {
+                // The new まど as its card will show it in the list.
+                ZStack(alignment: .bottomLeading) {
+                    Color(uiColor: .secondarySystemGroupedBackground)
+                        .aspectRatio(16 / 10, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .overlay { WindowCardEmptyCover() }
+                        .clipped()
+                    Text(name)
+                        .font(.title3.bold())
+                        .foregroundStyle(NekoPalette.ink)
+                        .padding(14)
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 50)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(name)
+                .accessibilityIdentifier("group-window-first-invite-name")
+                seats
+                if let window = shownWindow, GroupWindowPresentation.openSeats(window) > 0 {
+                    Text(GroupWindowPresentation.openSeatsText(GroupWindowPresentation.openSeats(window)) + "。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("group-window-seats-open-line")
+                }
+                if let problem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("group-window-first-invite-problem")
+                }
+                Button(action: sendInvitation) {
+                    Group {
+                        if preparing {
+                            WorkingLabel(title: "猫友を招く", workingTitle: "用意しています…", working: true)
+                        } else {
+                            Text("猫友を招く")
+                        }
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(preparing || model.isWorking || !canSend)
+                .accessibilityIdentifier("group-window-first-invite-send")
+                Button("あとで") { onDone() }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .disabled(preparing)
+                    .accessibilityIdentifier("group-window-first-invite-later")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(preparing || model.isWorking || !canSend)
-            .accessibilityIdentifier("group-window-first-invite-send")
-            Button("あとで") { onDone() }
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .disabled(preparing)
-                .accessibilityIdentifier("group-window-first-invite-later")
-            Spacer(minLength: 0)
+            .padding(16)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(problem)
@@ -3496,6 +3662,42 @@ struct GroupWindowFirstInviteScreen: View {
         }
     }
 
+    /// The まど's seats (its cap): people in it, then empty seats that
+    /// invite, as 「猫友を招く」 does.
+    private var seats: some View {
+        let people = seated
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 14) {
+            ForEach(0..<GroupWindowPresentation.memberLimit, id: \.self) { index in
+                if index < people.count {
+                    VStack(spacing: 6) {
+                        GroupMemberAvatar(name: people[index].displayName, size: 64)
+                        Text(people[index].displayName)
+                            .font(.footnote)
+                            .lineLimit(1)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(people[index].displayName)
+                    .accessibilityIdentifier("group-window-seat-\(index)")
+                } else {
+                    Button(action: sendInvitation) {
+                        VStack(spacing: 6) {
+                            Circle()
+                                .strokeBorder(Color.accentColor.opacity(0.5),
+                                              style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                                .frame(width: 64, height: 64)
+                                .overlay { Image(systemName: "plus").font(.title2).foregroundStyle(Color.accentColor) }
+                            Text(" ").font(.footnote)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(preparing || model.isWorking || !canSend)
+                    .accessibilityLabel("猫友を招く")
+                    .accessibilityIdentifier("group-window-seat-\(index)")
+                }
+            }
+        }
+    }
+
     /// The link made with the まど goes at once. When making it failed, or
     /// an older link is remembered, the members screen's own steps run first
     /// (revoke the old one, make a new one), then the sheet opens (11/7, W3).
@@ -3504,15 +3706,7 @@ struct GroupWindowFirstInviteScreen: View {
         preparing = true
         Task {
             defer { preparing = false }
-            if model.window == nil { await model.load() }
-            if let invitation = model.activeInvitation { sharing = invitation; return }
-            if model.earlierInvitation != nil {
-                await model.revokeInvitation()
-                guard model.actionErrorMessage == nil else { return }
-            }
-            guard model.canInvite else { return }
-            await model.createInvitation()
-            guard model.actionErrorMessage == nil, let made = model.activeInvitation else { return }
+            guard let made = await model.invitationToShare() else { return }
             sharing = made
         }
     }

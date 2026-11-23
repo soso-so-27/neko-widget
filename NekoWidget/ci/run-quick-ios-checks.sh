@@ -180,6 +180,7 @@ python3 ci/test-save-1121g.py
 python3 ci/test-widget-1121h.py
 python3 ci/test-wall-1121i.py
 python3 ci/test-ux-mado-1122f.py
+python3 ci/test-friend-seats-1123.py
 python3 ci/test-ux-notebook-1122g.py
 python3 ci/test-ux-quiet-1122i.py
 python3 ci/test-ux-stuck-1122n.py

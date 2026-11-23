@@ -5,20 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="apple-itunes-app" content="app-id=6801962436">
-  <meta name="description" content="うちの猫の写真を届け合う「みんなのまど」に招待されています。">
+  <meta name="description" content="猫の写真が、ホーム画面に届きます。参加は無料です。">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="ねこのまど">
-  <meta property="og:title" content="ねこのまど｜みんなのまどへの招待">
-  <meta property="og:description" content="うちの猫の写真を届け合う「みんなのまど」に招待されています。">
-  <title>みんなのまどへの招待 — ねこのまど</title>
+  <meta property="og:title" content="ねこのまど｜猫友のまどへの招待">
+  <meta property="og:description" content="猫の写真が、ホーム画面に届きます。参加は無料です。">
+  <title>猫友のまどへの招待 — ねこのまど</title>
   <link rel="stylesheet" href="assets/site.css">
   <style>
     [hidden] { display: none !important; }
-    .steps { margin: 24px 0 8px; }
-    .steps li { margin: 0 0 16px; }
+    .stage { background: var(--bg); border-radius: 22px; padding: 28px 16px 18px; text-align: center; margin-bottom: 24px; }
+    .stage svg { width: min(180px, 52vw); height: auto; display: block; margin: 0 auto; }
+    .stage p { margin: 14px auto 0; color: var(--muted); font-size: 0.92rem; }
     .button { display: block; text-align: center; text-decoration: none; font-weight: 600;
       border-radius: 14px; padding: 14px 18px; border: 1px solid var(--border); margin-top: 8px; }
-    .button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .button.primary { background: var(--accent); color: #fff; border-color: var(--accent); margin-top: 20px; }
+    .between { text-align: center; margin: 14px 0 0; }
   </style>
 </head>
 <body>
@@ -26,20 +28,37 @@
     <p class="eyebrow">ねこのまど</p>
   </header>
   <main>
-    <h1>みんなのまどへの招待</h1>
-    <p>うちの猫の写真を届け合う「みんなのまど」に招待されています。参加は無料です。</p>
+    <div class="stage">
+      <!-- A widget drawn in place: this page cannot read the inviter's photos. -->
+      <svg viewBox="0 0 180 180" role="img" aria-label="ホーム画面に届いた猫の写真">
+        <rect x="0" y="0" width="180" height="180" rx="40" fill="#f3e6d3"/>
+        <rect x="26" y="22" width="128" height="104" rx="10" fill="#cfe3f2"/>
+        <rect x="88" y="22" width="4" height="104" fill="#f3e6d3"/>
+        <rect x="26" y="72" width="128" height="4" fill="#f3e6d3"/>
+        <rect x="18" y="122" width="144" height="10" rx="5" fill="#d9c3a5"/>
+        <path d="M118 120 C140 118 146 100 136 92" stroke="#26221f" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <ellipse cx="96" cy="104" rx="26" ry="20" fill="#26221f"/>
+        <circle cx="90" cy="76" r="19" fill="#26221f"/>
+        <path d="M74 66 L76 48 L88 60 Z" fill="#26221f"/>
+        <path d="M106 66 L104 48 L92 60 Z" fill="#26221f"/>
+        <circle cx="83" cy="76" r="3.2" fill="#f2c94c"/>
+        <circle cx="97" cy="76" r="3.2" fill="#f2c94c"/>
+        <rect x="18" y="146" width="56" height="20" rx="10" fill="#ffffff"/>
+        <text x="46" y="160" font-size="11" font-weight="700" text-anchor="middle" fill="#26221f">のわ</text>
+      </svg>
+      <p>猫友の猫が、ホーム画面に届きます</p>
+    </div>
+    <h1>猫友のまどに、<br>席がとってあります</h1>
+    <p>参加は無料です。</p>
     <p id="android-note" class="updated" hidden>ねこのまどは、いまはiPhoneだけで使えます。</p>
     <p id="desktop-note" hidden>iPhoneでこのリンクを開いてください。</p>
-    <ol id="steps" class="steps">
-      <li>ねこのまどを入れる
-        <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a></li>
-      <li>このページに戻る</li>
-      <li>「アプリで開く」を押す
-        <a class="button" id="open-app" href="nekowidget://join">アプリで開く</a></li>
-    </ol>
-    <p id="install-note" class="updated">もう入れてある方は、3だけで参加できます。招待リンクは24時間使えます。</p>
+    <div id="steps">
+      <a class="button primary" href="https://apps.apple.com/jp/app/id6801962436">App Store で入れる</a>
+      <p class="updated between">入れてあるときは</p>
+      <a class="button" id="open-app" href="nekowidget://join">アプリで開く</a>
+    </div>
     <p id="in-app-note" class="updated" hidden>うまく開かないときは、右上のメニューから「Safariで開く」を選んでください。</p>
-    <p class="updated">このページに名前や招待コードを入力する必要はありません。招待の鍵は、リンクの「#」から後ろにあり、このサイトには送られません。</p>
+    <p class="updated"><a href="/privacy/">招待リンクと鍵の扱い</a></p>
   </main>
   <script>
     // The invitation lives only in the fragment; it is handed to the app and
@@ -55,7 +74,6 @@
       var show = function (id) { document.getElementById(id).hidden = false; };
       var hideSteps = function () {
         document.getElementById("steps").hidden = true;
-        document.getElementById("install-note").hidden = true;
       };
       var iPadDesktopMode = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
       if (/Android/i.test(ua)) {

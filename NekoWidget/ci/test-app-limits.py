@@ -149,9 +149,11 @@ class NameTests(unittest.TestCase):
             self.assertIn(needle, cleaner)
         self.assertNotIn(".properties.", cleaner)  # older macOS checks compile this file
         for text in ('TextField("例：実家のまど", text: VisibleTextInput.binding($name))',
-                     'TextField("まどでの名前（例：お父さん）", text: VisibleTextInput.binding($model.displayName))'):
+                     'TextField("まどでの名前（例：みか・お父さん）", text: VisibleTextInput.binding($model.displayName))'):
             self.assertIn(text, WINDOW_SETUP)
-        self.assertIn('TextField("例：お母さん", text: VisibleTextInput.binding($ownerName))', WINDOW)
+        # 11/23 (猫友のまど): friends as well as family in the examples.
+        self.assertIn('TextField("例：猫友のまど・実家のまど", text: VisibleTextInput.binding($name))', WINDOW)
+        self.assertIn('TextField("例：さや・お母さん", text: VisibleTextInput.binding($ownerName))', WINDOW)
         self.assertIn('TextField("家族に表示するあなたの名前", text: VisibleTextInput.binding($displayName))', NOTEBOOK)
         self.assertIn('TextField("あなたの名前", text: VisibleTextInput.binding($name))', NOTEBOOK)
 
