@@ -44,7 +44,7 @@
     <p class="free">無料ではじめられます</p>
   </div>
   <div class="v32-fig"><div class="v32-pic" style="height:154.55cqw" aria-hidden="true">
-    <div class="cv" style="top:-42.42cqw"><img src="images/store/nowa_peek_wink.png" alt="" style="position:absolute;left:22.727cqw;top:45.152cqw;width:28.030cqw;transform:rotate(-3deg);z-index:1"><div class="phone"><div class="in"><div class="screen"><div class="island"></div><div class="home" style="background:linear-gradient(170deg,#fffaf2,#fbeede 60%,#f6e2cc)"><div class="sb"><div class="t">9:41</div><div class="r"><div class="bar" style="height:1.061cqw"></div><div class="bar" style="height:1.515cqw"></div><div class="bar" style="height:1.970cqw"></div><div class="bar" style="height:2.424cqw"></div><div class="bat"></div></div></div><div class="wid"><img src="images/store/NYXC6588.webp" alt="" style="object-position:62% 40%"></div><div class="wn">ねこのまど</div></div></div></div></div><div class="note" style="left:5.303cqw;top:76.515cqw"><small>こんな時もあったな</small>子猫のころの1枚</div><div class="day" style="left:-0.5cqw;top:106cqw;width:24cqw;transform:rotate(-7deg)"><img src="images/store/mugi_face.webp" alt="" style="object-position:50% 30%"><p>きのう</p></div></div>
+    <div class="cv" style="top:-42.42cqw"><img data-depth="-0.05" src="images/store/nowa_peek_wink.png" alt="" style="position:absolute;left:22.727cqw;top:45.152cqw;width:28.030cqw;transform:rotate(-3deg);z-index:1"><div class="phone"><div class="in"><div class="screen"><div class="island"></div><div class="home" style="background:linear-gradient(170deg,#fffaf2,#fbeede 60%,#f6e2cc)"><div class="sb"><div class="t">9:41</div><div class="r"><div class="bar" style="height:1.061cqw"></div><div class="bar" style="height:1.515cqw"></div><div class="bar" style="height:1.970cqw"></div><div class="bar" style="height:2.424cqw"></div><div class="bat"></div></div></div><div class="wid"><img src="images/store/NYXC6588.webp" alt="" style="object-position:62% 40%"></div><div class="wn">ねこのまど</div></div></div></div></div><div data-depth="0.06" class="note" style="left:5.303cqw;top:76.515cqw"><small>こんな時もあったな</small>子猫のころの1枚</div><div data-depth="0.12" class="day" style="left:-0.5cqw;top:106cqw;width:24cqw;transform:rotate(-7deg)"><img src="images/store/mugi_face.webp" alt="" style="object-position:50% 30%"><p>きのう</p></div></div>
   </div></div>
 </section>
 
@@ -219,6 +219,23 @@
   book.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
   book.addEventListener('touchend', function (e) { if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); x0 = null; });
   show();
+})();
+
+/* 奥行きと出現（11/23）。動きは小さく、1回だけ。「動きを減らす」設定ではすべて止める */
+(function () {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var root = document.documentElement; root.classList.add('motion');
+  // 絵が画面に入ったら、少し浮かび上がる（見出しや文はそのまま）
+  var els = document.querySelectorAll('.v32-3 .wall, .s2x .talk, .s2x .mado, .book, .book-ctl, .konoko, .v32-5 .v32-fig, .plans, .wall-nowa');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }); }, { rootMargin: '0px 0px -12% 0px' });
+    els.forEach(function (el) { el.classList.add('rv'); io.observe(el); });
+  }
+  // いちばん上：札・写真・のわが、電話と少しちがう速さで動いて奥行きを出す
+  var layers = document.querySelectorAll('[data-depth]'), ticking = false;
+  function draw() { var y = Math.min(window.scrollY, 900);
+    layers.forEach(function (el) { el.style.translate = '0 ' + (-y * parseFloat(el.dataset.depth)).toFixed(1) + 'px'; }); ticking = false; }
+  window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(draw); } }, { passive: true });
 })();
 </script>
 </body>
