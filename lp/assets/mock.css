@@ -680,3 +680,31 @@ section.price.price, section.end.end { --band: #fff; }
 /* 月の作品の本：紙の質感 */
 .book .pg:not(.cover), .book::before { background: #fbfaf7 url("../images/store/device/paper_tile.webp") 0 0 / 256px 256px; }
 @media (min-width: 960px) { .s2x .dev.cut { width: 400px; } .s2x .chat { height: 460px; } }
+
+/* ===== 配色：白と淡い青（ストアの画面写真と同じ。温度を冷にそろえる） ===== */
+:root { --page:#ffffff; --ink:#1c1c1e; --ink-2:#55596a; --ink-3:#7f8494; --line:#e3e8f0; --rule:#e3e8f0; --blue:#2f7cf6;
+  --sh-obj: 0 24px 60px -28px rgba(20,30,60,.30); --sh-tag: 0 6px 18px -8px rgba(20,30,60,.30); }
+html body { background:#ffffff; }
+html body .v32 { --bg:#ffffff; --ink:#1c1c1e; --sub:#55596a; --acc:#2f7cf6; --em:#1c1c1e; }
+html body section.v32, html body section.price, html body section.faq, html body section.end { --band:#ffffff !important; }
+html body section.v32.v32-3, html body section.v32.fan-sec, html body section.v32.v32-5, html body section.faq.faq { --band:#eef3fb !important; }
+@media (min-width:960px){ html body section.faq.faq{--band:#ffffff !important;} html body section.price.price, html body section.end.end{--band:#eef3fb !important;} html body .pair section.v32{--band:transparent !important;} }
+.top { background: color-mix(in srgb, #ffffff 92%, transparent); }
+.price h2,.faq h2,.end h2,.v32-head h1,.v32-head h2,.plan .yen,.v32-1 .v32-head .after { color:#1c1c1e; }
+.v32-head .after,.feat,.v32:not(.v32-1) .v32-head .after em { color:#55596a; }
+.v32-head .free,.plan p,details p,.hand-cap,.vs-h,.fine,.small { color:#7f8494; }
+.plan { background:#ffffff; }
+.plan.plus { border-color:#2f7cf6; }
+.feat li::before,.trust li::before { color:#2f7cf6; background:#2f7cf6; }
+.trust li::before { background:none; }
+summary::after { color:#2f7cf6; }
+.plan a.trial { color:#1f66d6 !important; }
+.s2x .mado .tag,.s2x .send,.getbar .go { background:#2f7cf6; }
+.top-cta { color:#1f66d6; }
+.s2x .chat { background:#e4eaf3; }
+.s2x .chat::before { background:linear-gradient(#e4eaf3,transparent); }
+.konoko,.dev .scr,.dev.cut .mbox,.madocol,.shot,.hand-fig .cv .home { background:#f2f4f8 !important; }
+.wall-grid img { background:#f2f4f8; }
+.book .pg:not(.cover),.book::before { background-color:#fbfbfa; }
+/* いちばん上の電話の壁紙は、次の淡い青の帯と分けるため暖色に */ .v32-1 .cv .home { background:linear-gradient(170deg,#fffaf2,#fbeede 60%,#f6e2cc) !important; }
+.getbar { background:#ffffff; }
