@@ -13,7 +13,7 @@ on:
         default: approved-groups
         required: true
         type: choice
-        options: [approved-groups, version-description, daily-photo-app-description, daily-photo-plus-description, seasonal-movie-app-metadata]
+        options: [approved-groups, version-description, daily-photo-app-description, daily-photo-plus-description, seasonal-movie-app-metadata, store-copy-1123]
 permissions:
   contents: read
 jobs:
