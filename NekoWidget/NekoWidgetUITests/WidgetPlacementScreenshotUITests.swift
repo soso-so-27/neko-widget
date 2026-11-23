@@ -164,6 +164,17 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             // has settled. Two quick Home presses open the switcher.
             XCUIDevice.shared.press(.home)
         }
+        // The freshly installed app and test runner are on the second page.
+        // Add the widget on the first page so only system apps appear around it.
+        let captureAppIcons = springboard.icons.matching(NSPredicate(format:
+            "label == %@ OR label BEGINSWITH %@ OR identifier BEGINSWITH %@",
+            "ねこのまど", "NekoWidgetUITe", "jp.nekowidget"))
+        if captureAppIcons.allElementsBoundByIndex.contains(where: { $0.isHittable }) {
+            springboard.swipeRight()
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        XCTAssertFalse(captureAppIcons.allElementsBoundByIndex.contains(where: { $0.isHittable }),
+            "The capture page still shows the app or UI test runner icon.")
         if safari.waitForExistence(timeout: 8), safari.isHittable {
             safari.press(forDuration: 1.2)
             if let editHome = waitForElement(in: springboard,
