@@ -456,3 +456,98 @@
   .vs-h { font-size: 15px; }
 }
 .talkcol::before { height: 34%; }
+
+/* ---------- V. 月の作品：アプリと同じく、1枚ずつめくれる本 ---------- */
+.book { position: relative; width: calc(100% - 64px); max-width: 380px; aspect-ratio: 3 / 4.15; margin: 7cqw auto 9cqw; perspective: 1800px; }
+.book .pg { position: absolute; inset: 0; background: #fbfaf7; border-radius: 6px 14px 14px 6px; overflow: hidden;
+  box-shadow: 0 1px 0 #e7e2d8, 0 24px 50px -26px rgba(40,30,20,.45), inset 10px 0 14px -10px rgba(0,0,0,.18);
+  transform-origin: 0 50%; transition: transform .7s cubic-bezier(.3,.1,.2,1), box-shadow .7s; backface-visibility: hidden; }
+.book .pg.turned { transform: rotateY(-104deg); box-shadow: none; pointer-events: none; }
+.book .pg img { position: absolute; left: 7%; right: 7%; top: 17%; width: 86%; height: 58%; object-fit: cover; }
+.book .pt { position: absolute; top: 6%; left: 0; right: 0; text-align: center; font: 500 13px/1 "Yu Mincho", "Hiragino Mincho ProN", serif; color: #7d776f; letter-spacing: .06em; }
+.book .pd { position: absolute; left: 7%; bottom: 13%; font: 500 13px/1 "Yu Mincho", "Hiragino Mincho ProN", serif; color: #6f6a62; }
+.book .pn { position: absolute; left: 0; right: 0; bottom: 5%; text-align: center; font: 500 12px/1 "Hiragino Sans", sans-serif; color: #8a857d; }
+.book .cover img { inset: 0; left: 0; top: 0; width: 100%; height: 100%; }
+.book .cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(0,0,0,.55)); }
+.book .cover .ct { position: absolute; z-index: 1; left: 8%; bottom: 7%; color: #fff; }
+.book .cover b { display: block; font: 700 46px/1 "Yu Mincho", "Hiragino Mincho ProN", "Noto Serif JP", serif; }
+.book .cover small { display: block; margin-top: 8px; font: 600 12px/1 "Hiragino Sans", sans-serif; letter-spacing: .2em; opacity: .92; }
+/* 右下の角がめくれかけて、めくれることを示す */
+.book .pg::before { content: ""; position: absolute; z-index: 2; right: 0; bottom: 0; width: 34px; height: 34px;
+  background: linear-gradient(135deg, transparent 50%, #e9e4da 50%, #fffdf8 75%); border-top-left-radius: 6px; box-shadow: -2px -2px 5px rgba(0,0,0,.12); }
+.book .bk { position: absolute; z-index: 30; top: 0; bottom: 0; width: 50%; border: 0; background: none; cursor: pointer; padding: 0; }
+.book .prev { left: 0; } .book .next { right: 0; }
+.book.at-start .prev, .book.at-end .next { display: none; }
+.book .bk:focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
+@media (min-width: 960px) { .book { width: 380px; margin: 0 auto 40px; } }
+@media (prefers-reduced-motion: reduce) { .book .pg { transition: none; } }
+/* 高解像度の元写真は縦長。顔の位置に合わせる */ .wall-grid img:nth-child(1) { object-position: 50% 78%; }
+
+/* ---------- W. 区切り2：いつものトーク／ねこのまど（初見の読み手で確認済みの形） ---------- */
+.s2x .s2{max-width:520px;margin:0 auto;padding:72px 24px 88px}
+.s2x .tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--head);font-weight:900;font-size:17px;letter-spacing:.04em;padding:7px 16px;border-radius:999px}
+.s2x .tag img{width:24px;height:24px;border-radius:7px}
+.s2x .note{font-family:var(--head);font-weight:700;font-size:16px;line-height:1.6;margin-top:12px}
+.s2x /* ── いつものトーク ── */
+.talk{margin-top:36px}
+.s2x .talk .tag{background:#eceef2;color:#5c6470}
+.s2x .talk .note{color:#6b7380}
+.s2x .chat{margin-top:12px;border-radius:24px;background:#dfe4ec;height:330px;overflow:hidden;position:relative;padding:0 16px}
+.s2x .chat .row{display:flex;gap:8px;align-items:flex-end;margin-top:11px}
+.s2x .chat .row.r{justify-content:flex-end}
+.s2x .chat i{flex:none;width:28px;height:28px;border-radius:50%;background:#fff;color:#8a93a1;font:700 12px var(--head);display:grid;place-items:center;font-style:normal}
+.s2x .chat .bb{background:#fff;color:#4b5158;border-radius:17px;padding:8px 14px;font-size:15px;font-family:var(--head);font-weight:700}
+.s2x .chat .r .bb{background:#bfe3ad;color:#3b5230}
+.s2x .chat .bar{height:36px;border-radius:17px;background:#fff}
+.s2x .chat .r .bar{background:#bfe3ad}
+.s2x .chat::before{content:"";position:absolute;inset:0 0 auto;height:26px;background:linear-gradient(#dfe4ec,rgba(223,228,236,0));z-index:1}
+.s2x .up{position:absolute;z-index:2;left:236px;top:24px;font:700 13px var(--head);color:#6b7380;display:flex;align-items:center;gap:6px}
+.s2x .up svg{width:16px;height:16px}
+.s2x /* ── ねこのまど ── */
+.turn{margin-top:60px;text-align:center}
+.s2x .mado{margin-top:26px}
+.s2x .mado .tag{background:var(--blue);color:#fff;padding-left:8px}
+.s2x .p{position:relative;border-radius:20px;overflow:hidden;margin:0;background:#eee}
+.s2x .p img{width:100%;height:100%;object-fit:cover}
+.s2x .p.big{grid-column:1/-1;aspect-ratio:4/3;border-radius:24px}
+.s2x .p.mid{grid-column:span 3;aspect-ratio:1}
+.s2x .p.sml{grid-column:span 2;aspect-ratio:1;border-radius:16px}
+.s2x .who{position:absolute;left:8px;bottom:8px;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.94);border-radius:999px;padding:4px 11px 4px 4px;
+  font-family:var(--head);font-weight:700;font-size:13px;line-height:1;color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.s2x .who b{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:12px}
+.s2x .who span{color:var(--ink-3);font-weight:500;font-size:12px}
+.s2x .big .who{left:12px;bottom:12px;font-size:16px;padding:5px 14px 5px 5px;gap:8px}
+.s2x .big .who b{width:30px;height:30px;font-size:14px}
+.s2x .big .who span{font-size:14px}
+.s2x .sml .who{padding:3px 8px;font-size:11.5px;left:6px;bottom:6px}
+.s2x .sml .who span{font-size:11.5px;color:var(--ink-2)}
+.s2x .ma{background:#8d9a63}
+.s2x .pa{background:#6f8fb8}
+.s2x .yu{background:#d08a76}
+.s2x .send{margin:14px auto 0;width:max-content;display:flex;align-items:center;gap:9px;background:var(--blue);color:#fff;font-family:var(--head);font-weight:700;font-size:17px;padding:12px 30px;border-radius:999px;box-shadow:0 10px 20px -10px rgba(47,124,246,.8)}
+.s2x .send svg{width:20px;height:20px}
+.s2x .mado .note{color:var(--ink);text-align:center;margin-top:18px}
+.s2x .mado .note small{display:block;font-family:var(--body);font-weight:400;font-size:14px;color:var(--ink-2);margin-top:4px}
+.s2x .tag, .s2x .bb, .s2x .who, .s2x .send, .s2x .note, .s2x .up, .s2x .turn { font-family: "Zen Maru Gothic", sans-serif; }
+.s2x-in { width: calc(100% - 48px); margin: 0 auto; }
+.s2x .talk { margin-top: 6cqw; }
+.s2x .chat { margin-top: 12px; border-radius: 24px; background: #dfe4ec; height: 300px; overflow: hidden; position: relative; padding: 0 16px; }
+.s2x .chat .gone { margin-top: -62px; }
+.s2x .chat .gone img { width: 176px; height: 132px; object-fit: cover; border-radius: 16px; filter: saturate(.6); opacity: .8; }
+.s2x .turn { margin: 12cqw 0 0; text-align: center; font-weight: 900; font-size: 6.6cqw; line-height: 1.4; color: #1c1c1e; }
+.s2x .mado { margin-top: 5cqw; padding-bottom: 4cqw; }
+.s2x .mwall { margin-top: 12px; display: grid; grid-template-columns: repeat(6,1fr); gap: 8px; }
+.s2x .p { position: relative; border-radius: 20px; overflow: hidden; margin: 0; background: #eee; }
+.s2x .mado .note { color: #4e4e56; text-align: center; margin-top: 16px; font-size: 15px; }
+.s2x .up { left: auto; right: 18px; }
+@media (min-width: 960px) {
+  .v32.s2x { display: block; }
+  .s2x .v32-head { text-align: center; padding-bottom: 0; }
+  .s2x-in { width: min(1000px, 100% - 96px); display: grid; grid-template-columns: 5fr 6fr; column-gap: 72px; align-items: start; padding-top: 40px; }
+  .s2x .talk { grid-column: 1; grid-row: 1 / span 2; margin-top: 0; }
+  .s2x .chat { height: 420px; }
+  .s2x .turn { grid-column: 2; grid-row: 1; margin: 0; text-align: left; font-size: 28px; }
+  .s2x .mado { grid-column: 2; grid-row: 2; margin-top: 18px; }
+  .s2x .mado .note { text-align: left; }
+  .s2x .send { margin-left: 0; }
+}
