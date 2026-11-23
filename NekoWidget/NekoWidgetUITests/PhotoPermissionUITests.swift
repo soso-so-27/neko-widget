@@ -4374,9 +4374,15 @@ final class SoloMemoriesUITests: XCTestCase {
                     predicate: NSPredicate(format: "label == %@", "購入状況の確認が必要です"), object: purchase)
                 XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 5), .completed)
             }
-            XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
-            XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
-                          || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
+            if state == "expired" {
+                // 11/16 (#1041): an ended Plus is not 「確認できません」; it can
+                // be bought again, and 「購入を復元」 stays next to it.
+                XCTAssertTrue(purchase.isEnabled, "An expired Plus must be offered again: " + app.debugDescription)
+            } else {
+                XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
+                XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
+                              || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
+            }
             // One button: 「購入を復元」 re-checks and restores (11/5).
             XCTAssertFalse(app.buttons["membership-offer-refresh"].exists)
             XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
