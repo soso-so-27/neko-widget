@@ -2985,35 +2985,9 @@ struct GroupWindowListSection: View {
         // 「＋」 is hidden (11/7). A failed load keeps it, having no other.
         let hidesHeaderCreate = model.windows.isEmpty && known.isEmpty && model.message == nil
         VStack(alignment: .leading, spacing: 10) {
-            if compactHeader {
-                HStack {
-                    Text("みんなのまど")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityAddTraits(.isHeader)
-                        .onLongPressGesture(minimumDuration: 1.5) { showsDiagnosis.toggle() }
-                    Spacer()
-                    if !hidesHeaderCreate {
-                        NavigationLink {
-                            GroupWindowCreateScreen(client: model.client)
-                        } label: {
-                            if openInbox.showsCreatePrompt {
-                                Label("まどを作る", systemImage: "plus")
-                                    .font(.body.weight(.semibold))
-                                    .frame(minHeight: 44)
-                            } else {
-                                Image(systemName: "plus")
-                                    .font(.body.weight(.semibold))
-                                    .frame(width: 44, height: 44)
-                            }
-                        }
-                        .disabled(model.isWorking)
-                        .accessibilityLabel("まどを作る")
-                        .accessibilityIdentifier("group-window-create")
-                    }
-                }
-                .frame(minHeight: 44)
-            } else {
+            // 11/23: no 「みんなのまど」 heading under the title 「まど」; the
+            // 「＋」 sits on the title row (toolbar below), the cards say the rest.
+            if !compactHeader {
                 Text("みんなのまど")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -3133,6 +3107,36 @@ struct GroupWindowListSection: View {
                     .buttonStyle(.plain)
                 }
                 .accessibilityIdentifier("group-window-former-list")
+            }
+        }
+        .toolbar {
+            if compactHeader {
+                // The title, with the 11/22 long press for the diagnosis.
+                ToolbarItem(placement: .principal) {
+                    Text("まど")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                        .onLongPressGesture(minimumDuration: 1.5) { showsDiagnosis.toggle() }
+                }
+            }
+            if compactHeader && !hidesHeaderCreate {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        GroupWindowCreateScreen(client: model.client)
+                    } label: {
+                        if openInbox.showsCreatePrompt {
+                            Label("まどを作る", systemImage: "plus")
+                                .labelStyle(.titleAndIcon)
+                                .font(.body.weight(.semibold))
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.body.weight(.semibold))
+                        }
+                    }
+                    .disabled(model.isWorking)
+                    .accessibilityLabel("まどを作る")
+                    .accessibilityIdentifier("group-window-create")
+                }
             }
         }
         .task {

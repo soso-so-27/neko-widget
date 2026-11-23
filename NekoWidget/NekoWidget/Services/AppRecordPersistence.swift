@@ -2751,6 +2751,26 @@ enum AppRecordCapture {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
                 guard var entries = state["entries"] as? [[String: Any]] else { throw ToolBackupError.invalid }
+                // 11/23: a photo deleted in the Photos app does not travel to
+                // the next iPhone. Only with full access is a missing photo
+                // known to be deleted (limited access hides some); copies
+                // restored from another iPhone have no photo here and stay.
+                if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized {
+                    let linked = entries.compactMap { entry -> String? in
+                        guard entry["isRestoredCopy"] as? Bool != true else { return nil }
+                        return entry["photoIdentifier"] as? String
+                    }
+                    var present = Set<String>()
+                    if !linked.isEmpty {
+                        PHAsset.fetchAssets(withLocalIdentifiers: linked, options: nil)
+                            .enumerateObjects { asset, _, _ in present.insert(asset.localIdentifier) }
+                    }
+                    entries.removeAll { entry in
+                        guard entry["isRestoredCopy"] as? Bool != true,
+                              let id = entry["photoIdentifier"] as? String else { return false }
+                        return !present.contains(id)
+                    }
+                }
                 for i in entries.indices { entries[i]["isRestoredCopy"] = true }
                 state["entries"] = entries
                 bytes = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
