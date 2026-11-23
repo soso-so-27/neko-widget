@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      NEKO_STAGING_API_ORIGIN: https://neko-window-sharing-staging.nakanishisoya.workers.dev
+      NEKO_STAGING_API_ORIGIN: https://api-staging.nekonomado.com
 
     steps:
       - name: Check out repository

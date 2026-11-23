@@ -272,12 +272,14 @@ jobs:
                 "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
               ;;
             media-staging)
-              expected_media_origin="https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+              expected_media_origin="https://api-staging.nekonomado.com"
+              legacy_media_origin="https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+              configured_media_origin="${SHARING_STAGING_API_ORIGIN:-}"
               expected_media_privacy_url="https://soso-so-27.github.io/neko-widget/privacy/"
               expected_media_support_url="https://soso-so-27.github.io/neko-widget/support/"
               expected_media_community_url="https://soso-so-27.github.io/neko-widget/community/"
-              if [[ "${SHARING_STAGING_API_ORIGIN:-}" != "$expected_media_origin" ]]; then
-                echo "SHARING_STAGING_API_ORIGIN must exactly match the monitored limited-beta Worker." >&2
+              if [[ "$configured_media_origin" != "$expected_media_origin" && "$configured_media_origin" != "$legacy_media_origin" ]]; then
+                echo "SHARING_STAGING_API_ORIGIN must be an exact hostname for the monitored limited-beta Worker." >&2
                 exit 1
               fi
               if [[ "${SHARING_STAGING_PRIVACY_URL:-}" != "$expected_media_privacy_url" ]]; then
@@ -292,7 +294,12 @@ jobs:
                 echo "SHARING_STAGING_COMMUNITY_STANDARDS_URL must exactly match the monitored limited-beta standards." >&2
                 exit 1
               fi
-              release_origin="$expected_media_origin"
+              release_origin="$configured_media_origin"
+              # Report readiness and Sandbox billing have separate, exact origin
+              # approvals. Keep their existing endpoint until reviewed again.
+              if [[ "${INTERNAL_REPORTS_REQUESTED:-false}" == "true" || "${BILLING_SANDBOX_REQUESTED:-false}" == "true" ]]; then
+                release_origin="$legacy_media_origin"
+              fi
               release_moderation_key_id="${SHARING_STAGING_MODERATION_KEY_ID:-}"
               release_moderation_public_key="${SHARING_STAGING_MODERATION_PUBLIC_KEY:-}"
               release_privacy_url="$expected_media_privacy_url"
@@ -543,14 +550,17 @@ jobs:
               raise SystemExit("pairing-only must not receive media safety configuration.")
 
           if mode == "media-staging":
+              if origin not in {
+                  "https://api-staging.nekonomado.com",
+                  "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+              }:
+                  raise SystemExit("The media staging origin is not approved.")
               expected_media_binding = {
-                  "SHARING_STAGING_API_ORIGIN": "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
                   "SHARING_STAGING_PRIVACY_URL": "https://soso-so-27.github.io/neko-widget/privacy/",
                   "SHARING_STAGING_SUPPORT_URL": "https://soso-so-27.github.io/neko-widget/support/",
                   "SHARING_STAGING_COMMUNITY_STANDARDS_URL": "https://soso-so-27.github.io/neko-widget/community/",
               }
               actual_media_binding = {
-                  "SHARING_STAGING_API_ORIGIN": origin,
                   "SHARING_STAGING_PRIVACY_URL": privacy_url,
                   "SHARING_STAGING_SUPPORT_URL": support_url,
                   "SHARING_STAGING_COMMUNITY_STANDARDS_URL": community_url,
@@ -806,7 +816,14 @@ jobs:
           BILLING_SANDBOX_REQUESTED: ${{ inputs.billing_sandbox }}
         run: |
           set -euo pipefail
-          test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+          legacy_media_origin="https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+          case "$RELEASE_SHARING_API_ORIGIN" in
+            https://api-staging.nekonomado.com|"$legacy_media_origin") ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" || "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+            test "$RELEASE_SHARING_API_ORIGIN" = "$legacy_media_origin"
+          fi
           if [[ "${TWO_DEVICE_STAGING_REQUESTED:-false}" == "true" ]]; then
             test "$INTERNAL_REPORTS_REQUESTED" = "false"
             if [[ "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then

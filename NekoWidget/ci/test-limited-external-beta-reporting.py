@@ -37,7 +37,7 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
             workflow,
         )
         for expected in (
-            'expected_media_origin="https://neko-window-sharing-staging.nakanishisoya.workers.dev"',
+            'expected_media_origin="https://api-staging.nekonomado.com"',
             'expected_media_privacy_url="https://soso-so-27.github.io/neko-widget/privacy/"',
             'expected_media_support_url="https://soso-so-27.github.io/neko-widget/support/"',
             'expected_media_community_url="https://soso-so-27.github.io/neko-widget/community/"',

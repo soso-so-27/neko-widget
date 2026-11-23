@@ -28,7 +28,8 @@ struct GroupShareConfiguration {
         else { return nil }
         if mode == "media-staging" {
 #if DEBUG || INTERNAL_PRESENTATION
-            guard raw == "https://neko-window-sharing-staging.nakanishisoya.workers.dev" else { return nil }
+            guard ["https://api-staging.nekonomado.com", "https://neko-window-sharing-staging.nakanishisoya.workers.dev"]
+                .contains(raw) else { return nil }
 #else
             return nil
 #endif

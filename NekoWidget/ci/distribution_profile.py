@@ -10,6 +10,7 @@ PUBLIC = "app-store-candidate"
 OFF_KEY = "OwnerInternalReportsDisabled"
 OWNER_SCHEMA = "jp.nekowidget.moderation-release-metadata.v4"
 ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+STAGING_ORIGINS = ("https://api-staging.nekonomado.com", ORIGIN)
 RECIPIENT = "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"
 PLISTS = ("Info.plist", "PlugIns/NekoWidgetShareExtension.appex/Info.plist",
           "PlugIns/NekoWidgetWidgetExtension.appex/Info.plist")
@@ -50,7 +51,7 @@ def verify_info(info, *, extension=False, share_extension=False):
             enabled = info.get("GroupShareExtensionEnabled")
             if enabled not in ("YES", "NO") or info.get("GroupWindowsEnabled") != enabled:
                 raise ValueError("Group Share switch must match the group runtime.")
-            if info.get("GroupShareAPIBaseURL") != ORIGIN:
+            if info.get("GroupShareAPIBaseURL") not in STAGING_ORIGINS:
                 raise ValueError("Owner Group Share photo endpoint changed.")
             scope = info.get("GroupShareKeychainGroup")
             if not isinstance(scope, str) or "$" in scope or not scope.endswith(".group-share"):
@@ -59,7 +60,7 @@ def verify_info(info, *, extension=False, share_extension=False):
                     or info.get("SharingReviewPreviewEnabled") not in (False, "NO")):
                 raise ValueError("Owner Group Share media runtime changed.")
         return
-    if info.get("SharingReleaseMode") != "media-staging" or info.get("SharingAPIBaseURL") != ORIGIN:
+    if info.get("SharingReleaseMode") != "media-staging" or info.get("SharingAPIBaseURL") not in STAGING_ORIGINS:
         raise ValueError("Owner internal target changed.")
     if info.get("SharingModerationKeyID") != "moderation-v2" or info.get("SharingModerationPublicKey") != RECIPIENT:
         raise ValueError("Owner internal recipient changed.")

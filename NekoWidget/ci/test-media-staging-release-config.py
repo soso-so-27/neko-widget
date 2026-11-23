@@ -497,17 +497,21 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
                 trust_manifest,
                 str(policy_path),
             ]
-            valid = subprocess.run(
-                [sys.executable, "-c", public_dns_stub + embedded, *valid_arguments],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(valid.returncode, 0, valid.stderr)
-            self.assertEqual(
-                valid.stdout,
-                f"1:{policy_hash}:{MODERATION_PUBLIC_KEY_SHA256}:1:{manifest_hash}\n",
-            )
+            for origin in (MEDIA_ORIGIN, "https://api-staging.nekonomado.com"):
+                with self.subTest(origin=origin):
+                    args = valid_arguments.copy()
+                    args[1] = origin
+                    valid = subprocess.run(
+                        [sys.executable, "-c", public_dns_stub + embedded, *args],
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertEqual(valid.returncode, 0, valid.stderr)
+                    self.assertEqual(
+                        valid.stdout,
+                        f"1:{policy_hash}:{MODERATION_PUBLIC_KEY_SHA256}:1:{manifest_hash}\n",
+                    )
 
             missing_privacy = list(valid_arguments)
             missing_privacy[2] = ""
@@ -533,6 +537,9 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             self.assertIn("small-order X25519 point", invalid.stderr)
 
             malformed_cases = []
+            production_origin = valid_arguments.copy()
+            production_origin[1] = "https://api.nekonomado.com"
+            malformed_cases.append((production_origin, "media staging origin is not approved"))
             unsupported_key_id = list(valid_arguments)
             unsupported_key_id[4] = "moderation-v3"
             malformed_cases.append((unsupported_key_id, "not explicitly supported"))
