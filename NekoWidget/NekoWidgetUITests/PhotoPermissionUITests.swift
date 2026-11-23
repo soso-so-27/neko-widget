@@ -2055,6 +2055,36 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
     }
 
+    /// 診察メモ's 「できあがり」 (vet-reading) keeps 「PDFで渡す」「画像で渡す」 in a bar
+    /// at the bottom. At the largest text the two buttons stack and the bar
+    /// reaches above the window's middle, where app.swipeUp starts: the drag
+    /// lands on the bar, the memo does not move, and a line under the bar
+    /// stays unhittable (run 45088516380: 体重 stayed at y 564 through ten
+    /// swipes). Scrolls the memo itself, from between the top bar and the
+    /// bottom bar, until the element is clear of both.
+    @MainActor
+    private func revealVetReadingElement(_ element: XCUIElement, app: XCUIApplication) {
+        let bar = app.buttons["vet-export-pdf"]
+        let top = app.navigationBars["できあがり"]
+        XCTAssertTrue(top.waitForExistence(timeout: 5), app.debugDescription)
+        func lowest() -> CGFloat { bar.exists ? bar.frame.minY : app.frame.maxY }
+        func shown() -> Bool {
+            guard element.exists, element.isHittable else { return false }
+            return element.frame.maxY <= lowest() && element.frame.minY >= top.frame.maxY
+        }
+        for _ in 0..<10 where !shown() {
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let upper = origin.withOffset(CGVector(dx: app.frame.midX, dy: top.frame.maxY + 24))
+            let lower = origin.withOffset(CGVector(dx: app.frame.midX, dy: lowest() - 24))
+            if !element.exists || element.frame.maxY > lowest() {
+                lower.press(forDuration: 0.05, thenDragTo: upper, withVelocity: .slow, thenHoldForDuration: 0.05)
+            } else {
+                upper.press(forDuration: 0.05, thenDragTo: lower, withVelocity: .slow, thenHoldForDuration: 0.05)
+            }
+        }
+        XCTAssertTrue(shown(), "Required line must be readable above the bar: \(element.identifier) / " + app.debugDescription)
+    }
+
     /// 病院で見せる's page between the navigation bar on top and 「先生に見せる」 at
     /// the bottom. A row under either still reads as hittable, but a tap there
     /// does nothing (runs 42545036862 and 42564398913: the picker and a past
@@ -2295,7 +2325,11 @@ final class SoloMemoriesUITests: XCTestCase {
         // 11/8: the memo names only むぎ (by saved identity), so it is not asked again.
         XCTAssertEqual(confirm.value as? String, "1")
         XCTAssertTrue(add.isEnabled)
-        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        // The memo list stays under the sheets and lists the other cat's memo
+        // (そら); read the confirmation sheet itself, the Form holding its switch.
+        let confirmation = app.collectionViews.containing(.switch, identifier: "vet-confirm-target").firstMatch
+        XCTAssertTrue(confirmation.exists, app.debugDescription)
+        XCTAssertFalse(confirmation.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-source-confirmation")
         setVetToggle(confirm, to: "1", app: app)
         revealVetElement(add, app: app); XCTAssertTrue(add.isEnabled); add.tap()
@@ -2310,12 +2344,15 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(recordsRow.waitForExistence(timeout: 5))
         XCTAssertTrue((recordsRow.label + " " + (recordsRow.value as? String ?? "")).contains("1件"), recordsRow.debugDescription)
         let show = app.buttons["vet-show"]; revealVetElement(show, app: app); show.tap()
-        XCTAssertTrue(app.scrollViews["vet-reading"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
-        XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
+        // As above, the memo list under the sheets is not the reading surface.
+        let selectedReading = app.scrollViews["vet-reading"]
+        XCTAssertTrue(selectedReading.waitForExistence(timeout: 5))
+        XCTAssertTrue(selectedReading.staticTexts["食べる量が少なかった。"].exists)
+        XCTAssertFalse(selectedReading.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-record-in-person-display")
-        // The reading screen is titled 「診察メモ」; the page under it 「病院で見せる」.
-        app.navigationBars["診察メモ"].buttons["閉じる"].tap()
+        // 11/12: the reading screen is titled 「できあがり」 (the sheet itself says
+        // 診察メモ); the page under it 「病院で見せる」.
+        app.navigationBars["できあがり"].buttons["閉じる"].tap()
         XCTAssertTrue(app.scrollViews["vet-reading"].waitForNonExistence(timeout: 5))
         // 11/12: the record and 「診察メモから外す」 are on 「見せる写真・記録」's page.
         openVetRow("vet-step-records", title: "見せる写真・記録", app: app)
@@ -2432,7 +2469,7 @@ final class SoloMemoriesUITests: XCTestCase {
         revealVetElement(show, app: app); show.tap()
         let reading = app.scrollViews["vet-reading"]
         XCTAssertTrue(reading.waitForExistence(timeout: 5))
-        revealVetElement(reading.staticTexts["memory-note-weight"], app: app)
+        revealVetReadingElement(reading.staticTexts["memory-note-weight"], app: app)
         XCTAssertEqual(reading.staticTexts["memory-note-weight"].label, "体重 4.2 kg")
         XCTAssertTrue(reading.staticTexts["むぎ · 測定日 不明"].exists)
         XCTAssertFalse(reading.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "private-")).firstMatch.exists)
@@ -2491,7 +2528,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let reading = app.scrollViews["vet-reading"]
         XCTAssertTrue(reading.waitForExistence(timeout: 5))
         let weight = reading.staticTexts["memory-note-weight"]
-        revealVetElement(weight, app: app)
+        revealVetReadingElement(weight, app: app)
         XCTAssertEqual(weight.label, "体重 4.2 kg")
         XCTAssertTrue(reading.staticTexts["むぎ · 測定日 不明"].exists)
         XCTAssertFalse(reading.staticTexts["選んでいない別の猫の記録"].exists)
@@ -2645,7 +2682,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let preview = app.buttons["evacuation-preview-open"]
         for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
         preview.tap()
-        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
+        waitForEvacuationMemo(of: "むぎ", app: app)
         let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
@@ -2670,12 +2707,24 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(restoredFolded.isHittable)
         for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
         preview.tap()
-        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
+        waitForEvacuationMemo(of: "むぎ", app: app)
         let restoredFood = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !restoredFood.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(restoredFood.waitForExistence(timeout: 5))
         capture("evacuation-refreshed-candidate-large-text")
         app.terminate()
+    }
+
+    /// 11/12 (01322ed0): the made 避難メモ is the paper sheet shared with
+    /// 診察メモ and お世話メモ, under the bar 「できあがり」 (was 「むぎの避難メモ」).
+    /// The sheet itself names the memo and its cat.
+    @MainActor
+    private func waitForEvacuationMemo(of name: String, app: XCUIApplication) {
+        XCTAssertTrue(app.navigationBars["できあがり"].waitForExistence(timeout: 5), app.debugDescription)
+        let sheet = app.otherElements["evacuation-share-preview"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(sheet.staticTexts["避難メモ"].exists, app.debugDescription)
+        XCTAssertTrue(sheet.staticTexts[name].exists, app.debugDescription)
     }
 
     /// 11/12: the cats and what to include are each a row's page of
@@ -2793,7 +2842,7 @@ final class SoloMemoriesUITests: XCTestCase {
         preview.tap()
         // The show screen itself (11/8: 「この子のこと」 on the cat's page is
         // folded, so its food line is not what is read here).
-        XCTAssertTrue(app.navigationBars["むぎの避難メモ"].waitForExistence(timeout: 5), app.debugDescription)
+        waitForEvacuationMemo(of: "むぎ", app: app)
         XCTAssertTrue(app.staticTexts["むぎ専用フード"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["非公開の薬メモ"].exists)
         XCTAssertFalse(app.staticTexts["private-contact@example.invalid"].exists)
@@ -2825,7 +2874,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["先にすること：探す・届け出る"].waitForExistence(timeout: 5))
         // 11/12, a list of rows: the face photo is in, so the photo row says so,
         // and the bar names only what is still missing.
-        XCTAssertTrue(app.staticTexts["探すためのチラシを作ります。"].exists)
+        // 11/22 (#1155): no sentence of what the page makes; the title says it.
+        XCTAssertTrue(app.navigationBars["迷子のとき"].exists, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["探すためのチラシを作ります。"].exists)
         let photoRow = app.buttons["lost-cat-row-photo"]
         XCTAssertTrue(photoRow.waitForExistence(timeout: 5), app.debugDescription)
         let photoValue = photoRow.label + " " + (photoRow.value as? String ?? "")
@@ -2937,7 +2988,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(featuresRow.waitForExistence(timeout: 5))
         XCTAssertTrue((featuresRow.label + " " + (featuresRow.value as? String ?? "")).contains("200文字まで"),
                       featuresRow.debugDescription)
-        XCTAssertTrue(app.staticTexts["直すところがあります。赤い文字の欄を見てください"].exists)
+        // 11/12 (11b9742e): the sentence ends with 「。」.
+        XCTAssertTrue(app.staticTexts["直すところがあります。赤い文字の欄を見てください。"].exists, app.debugDescription)
         makeFlyer()
         XCTAssertTrue(app.buttons["lost-cat-edit-text"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["lost-cat-share-image"].isEnabled)
@@ -3267,7 +3319,11 @@ final class SoloMemoriesUITests: XCTestCase {
         let scope = app.buttons["showcase-gallery-scope"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         scope.tap()
-        app.buttons["ミケ"].tap()
+        // 11/22: the この子 tab under this screen names its page dots after the
+        // cats (cat-home-dot-N), so pick ミケ in the picker's own list.
+        let mike = app.collectionViews.buttons["ミケ"]
+        XCTAssertTrue(mike.waitForExistence(timeout: 5), app.debugDescription)
+        mike.tap()
         XCTAssertTrue(scope.label.contains("ミケ"))
         // Choosing a cat may fill its set by recommendation; let that settle.
         _ = app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 5)
@@ -4378,7 +4434,15 @@ final class SoloMemoriesUITests: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
         purchase.tap()
-        XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        // 11/12: bought from Settings, the sheet ends on one line and the one
+        // next step; that button closes it with the purchase completed.
+        let started = app.staticTexts["membership-offer-started"]
+        XCTAssertTrue(started.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(started.label, "Plusが始まりました。")
+        app.buttons["membership-offer-next-step"].tap()
+        let result = app.staticTexts["membership-preview-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("確認を終えて"))
         app.terminate()
     }
 
@@ -4451,7 +4515,9 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
         }
         openTheme("大きく写った猫")
-        let albumPhotos = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "の猫の写真"))
+        // A photo given to a cat is read as 「ミケ、…の写真」 (#1107), not
+        // 「…の猫の写真」: count the album's photo cells by their identifier.
+        let albumPhotos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "curated-album-photo-"))
         XCTAssertEqual(albumPhotos.count, 1)
         selectAlbumCatFilter("fixture-cat-1", expectedName: "ソラ", in: app)
         XCTAssertEqual(albumPhotos.count, 0, "A cat with no matching photos must not fall back to everyone.")
@@ -4850,7 +4916,16 @@ final class SoloMemoriesUITests: XCTestCase {
         )], timeout: 10), .completed)
         XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)
         firstSeptemberPhoto.tap()
-        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
+        // 11/22: the viewer no longer shows 「31 / 50」 (VoiceOver hears it in
+        // the date's hint). Each fixture page is one day apart, so the date
+        // in the title says the browser opened page 31 itself.
+        let openedDate = app.descendants(matching: .any)["photo-browser-date"].firstMatch
+        let pageThirtyOneDate = Date(timeIntervalSince1970: 1_754_006_400 + 31 * 86_400)
+            .formatted(.dateTime.year().month().day().locale(Locale(identifier: "ja_JP")))
+        let openedPageThirtyOne = { XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", pageThirtyOneDate), object: openedDate) }
+        XCTAssertEqual(XCTWaiter.wait(for: [openedPageThirtyOne()], timeout: 10), .completed,
+                       "The month jump must open page 31 (\(pageThirtyOneDate)).")
         app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
         // Returning restores the exact row asynchronously.
         // Wait on that same photo, without scrolling or choosing a substitute.
@@ -4872,7 +4947,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(firstSeptemberPhoto.isHittable)
         capture("photo-grid-month-jump-beyond-first-batch")
         firstSeptemberPhoto.tap()
-        XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [openedPageThirtyOne()], timeout: 10), .completed,
+                       "Reopening from the restored row must open page 31 again.")
         app.terminate()
     }
 
@@ -4893,13 +4969,21 @@ final class SoloMemoriesUITests: XCTestCase {
         // the grid. Scroll the photo collection, never the first scroll view.
         let photoList = app.scrollViews["photo-library-all-scroll"]
         XCTAssertTrue(photoList.waitForExistence(timeout: 5))
+        // 11/22 (#1155): the viewer shows no 「25 / 50」. The paging fixture's
+        // photo N is taken on 2025-08-01 + N days, so the viewer's date says
+        // which photo opened.
+        let takenOn = [25: "2025年8月26日", 49: "2025年9月19日"]
         for number in [25, 49] {
             let target = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-\(number)"]
             for _ in 0..<14 where !target.isHittable { photoList.swipeUp() }
             XCTAssertTrue(target.isHittable, "Scrolling alone reaches photo \(number)")
             XCTAssertEqual(app.buttons.matching(identifier: target.identifier).count, 1)
             target.tap()
-            XCTAssertTrue(app.staticTexts["\(number) / 50"].waitForExistence(timeout: 10))
+            let date = app.descendants(matching: .any).matching(identifier: "photo-browser-date").firstMatch
+            let openedPhoto = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", takenOn[number]!), object: date)
+            XCTAssertEqual(XCTWaiter.wait(for: [openedPhoto], timeout: 10), .completed,
+                           "Photo \(number) opens: " + app.debugDescription)
             app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(target.waitForExistence(timeout: 10))
             let returnedToRow = XCTNSPredicateExpectation(
@@ -5083,7 +5167,11 @@ final class SoloMemoriesUITests: XCTestCase {
             let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
             let thisPhotoSameDay = app.buttons.matching(identifier: "cloudy-photo-same-day")
             let secondDayPhoto = app.buttons.matching(identifier: "day-photos-photo-app-store-screenshot-fixture-2")
-            let secondPage = app.staticTexts.matching(NSPredicate(format: "label == %@", "2 / 2"))
+            // 11/22 (#1155): the viewer shows no 「2 / 2」 (VoiceOver hears the
+            // position in the date's hint, which XCUITest cannot read). Both
+            // same-day photos share one date, so the opened browser is checked
+            // by its date title; the routes around it check which photo it was.
+            let secondPage = app.descendants(matching: .any).matching(identifier: "photo-browser-date")
             let back = app.buttons.matching(identifier: "BackButton")
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             for alert in springboard.alerts.allElementsBoundByIndex where alert.exists {
@@ -5208,7 +5296,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(secondPhoto.isHittable)
         XCTAssertTrue(app.staticTexts["mainline-loaded-2"].waitForExistence(timeout: 15))
         secondPhoto.tap()
-        XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 10))
+        // 11/22 (#1155): no visible 「2 / 2」; the browser opens (its date
+        // title), and the save below names the tapped photo itself.
+        XCTAssertTrue(app.descendants(matching: .any)["photo-browser-date"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["photo-browser-same-day"].exists,
                        "A photo opened in this day's collection must not push the same collection again")
 
@@ -5739,11 +5829,24 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         let image = app.images["photo-detail-zoom-surface"].firstMatch
         XCTAssertTrue(image.waitForExistence(timeout: 10))
+        let date = app.descendants(matching: .any)["photo-browser-date"].firstMatch
+        let savedState = app.buttons["photo-browser-memory-saved-state"].firstMatch
         for index in 0..<(pagesThroughAll ? identifiers.count : 1) {
-            XCTAssertTrue(app.staticTexts["\(index + 1) / \(identifiers.count)"].waitForExistence(timeout: 5),
-                "The production browser must page only through this small collection.")
+            // 11/22: the viewer no longer shows 「1 / 3」 (VoiceOver hears it in
+            // the date's hint). Wait for this page's own date and favorite
+            // state, then name the shown photo through a real browser action.
             // Fixture photo 9 is already a favorite before this flow starts.
-            if !alreadySaved && numbers[index] != 9 {
+            let isSaved = alreadySaved || numbers[index] == 9
+            let onPage = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", highlightFixtureDate(numbers[index])), object: date)
+            let pageState = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", isSaved ? "お気に入りから外す" : "お気に入りに追加"),
+                object: savedState)
+            XCTAssertEqual(XCTWaiter.wait(for: [onPage, pageState], timeout: 5), .completed,
+                "The production browser must page only through this small collection.")
+            if isSaved {
+                assertHighlightBrowserShows(identifiers[index], in: app)
+            } else {
                 let save = app.buttons["お気に入りに追加"]
                 XCTAssertTrue(save.isHittable)
                 save.tap()
@@ -5757,6 +5860,45 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["photo-browser-memory-saved-state"].waitForExistence(timeout: 5))
             if pagesThroughAll && index < identifiers.count - 1 { image.swipeLeft() }
         }
+        if pagesThroughAll, let last = identifiers.last {
+            // Past the last photo the browser stays on it: it holds nothing
+            // outside this collection.
+            image.swipeLeft()
+            assertHighlightBrowserShows(last, in: app)
+        }
+    }
+
+    /// Names the photo the browser shows through its real favorite action:
+    /// removing and re-adding it reports that photo's identifier. The photo
+    /// is a favorite before and after.
+    @MainActor
+    private func assertHighlightBrowserShows(_ identifier: String, in app: XCUIApplication) {
+        let savedState = app.buttons["photo-browser-memory-saved-state"].firstMatch
+        let request = app.staticTexts["solo-memories-highlight-memory-request"]
+        XCTAssertEqual(savedState.label, "お気に入りから外す")
+        for isSaved in [false, true] {
+            XCTAssertTrue(savedState.isHittable)
+            savedState.tap()
+            let named = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", "\(identifier)|\(isSaved)"), object: request)
+            XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 5), .completed,
+                "The browser must still show \(identifier).")
+        }
+    }
+
+    /// The date the browser's title reads for highlight fixture photo
+    /// `number` (AppStoreScreenshotFixture.highlightPhotos, made in UTC).
+    private func highlightFixtureDate(_ number: Int) -> String {
+        let theme = (number - 1) / 3
+        let position = (number - 1) % 3
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = calendar.date(from: DateComponents(
+            year: 2025, month: theme == 4 ? 2 : (theme == 5 ? 7 : 8),
+            day: theme == 4 ? 22 : 3 + position * 7,
+            hour: theme == 4 ? 3 + position * 5 : 12
+        ))!
+        return date.formatted(.dateTime.year().month().day().locale(Locale(identifier: "ja_JP")))
     }
 
     @MainActor
@@ -6308,8 +6450,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.30))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.30))
         start.press(forDuration: 0.05, thenDragTo: end)
-        XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
-        XCTAssertFalse(excerpt.exists, "The second photo must not inherit the first photo's note")
+        // 11/22 (#1155): the viewer shows no 「2 / 2」, and both fixture photos
+        // share one date. The note belongs to the first photo only, so its
+        // excerpt leaving is the page turning; swiping back brings it again.
+        XCTAssertTrue(excerpt.waitForNonExistence(timeout: 5), "The second photo must not inherit the first photo's note")
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
         open.tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.tap()

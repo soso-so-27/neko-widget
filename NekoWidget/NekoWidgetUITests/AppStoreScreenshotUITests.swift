@@ -82,6 +82,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
         guard app.buttons["initial-scan-continue"].waitForExistence(timeout: 60) else {
             capture("scan-not-ready"); XCTFail("Normal scan screen missing"); return
         }
+        // When the first cats are found, 「あとで」 moves under 「ウィジェットを置く」
+        // with an animation; wait for the finished scan before tapping it.
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let decided = app.buttons["initial-scan-widget-guide"].exists
+                || app.staticTexts["onboarding-scan-zero-body"].exists
+            let searching = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", "まだ探しています")).firstMatch.exists
+            return decided && !searching
+        }, object: nil)
+        guard XCTWaiter.wait(for: [settled], timeout: 90) == .completed else {
+            capture("scan-not-settled"); XCTFail("Normal scan did not finish"); return
+        }
         capture("02-onboarding-scan")
         guard tap("initial-scan-continue") else { return }
         if app.buttons["onboarding-plus-offer-skip"].waitForExistence(timeout: 3) {
@@ -345,19 +357,19 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(delete.waitForExistence(timeout: 5), app.debugDescription); delete.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        // 11/21 (CatProfileDeletionCleanup): a cat outside the family notebook
+        // takes what the tools kept for it along, and the dialog says so.
+        XCTAssertTrue(confirmation.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "ツールに書いたことが消えます")).firstMatch.exists, confirmation.debugDescription)
         confirmation.buttons["この子を削除"].tap()
-        // The profile disappears but the tool's original record remains
-        // editable: its name is the page of the row 「名前」 now.
-        let nameRow = app.buttons["care-row-name"]
-        XCTAssertTrue(nameRow.waitForExistence(timeout: 10), app.debugDescription)
-        // The rows are at the top of the page; the folded row was below them.
-        for _ in 0..<6 where !nameRow.isHittable { app.swipeDown(velocity: .slow) }
-        XCTAssertTrue(nameRow.isHittable, app.debugDescription)
-        nameRow.tap()
-        XCTAssertTrue(app.navigationBars["名前"].waitForExistence(timeout: 10), app.debugDescription)
-        let retainedName = app.descendants(matching: .any)["care-cat-name"].firstMatch
-        XCTAssertTrue(retainedName.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(retainedName.value as? String, "ミケ")
+        // The profile and its 預けるとき memo are gone, so ミケ does not come
+        // back as a memo of its own: 預けるとき has no memo open and offers
+        // only the other cat (ソラ).
+        XCTAssertTrue(app.staticTexts["お世話メモはありません。"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons["care-create-22222222-2222-4222-8222-222222222222"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["care-row-name"].exists, "The deleted cat's memo must not remain")
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(
+            format: "label CONTAINS %@", "ミケ")).firstMatch.exists, app.debugDescription)
         app.terminate()
     }
 
