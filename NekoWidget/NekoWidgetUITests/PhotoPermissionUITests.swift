@@ -4368,13 +4368,21 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
             app.buttons["membership-preview-open"].tap()
             let purchase = app.buttons["membership-offer-purchase"]
-            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
             if state == "expiring" {
-                let expired = XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "購入状況の確認が必要です"), object: purchase)
-                XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 5), .completed)
+                // A Plus that ends a few seconds after the sheet opens: until
+                // then it reads as active (words, no purchase button), then
+                // as expired (11/16: bought again from the same sheet).
+                let joined = app.descendants(matching: .any)["membership-offer-active"].firstMatch
+                XCTAssertTrue(joined.waitForExistence(timeout: 3), "Before it ends, Plus is active: " + app.debugDescription)
+                XCTAssertFalse(purchase.exists, "An active Plus offers no purchase button")
+                let offeredAgain = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == true AND enabled == true"), object: purchase)
+                XCTAssertEqual(XCTWaiter.wait(for: [offeredAgain], timeout: 15), .completed,
+                               "After it ends, Plus is offered again: " + app.debugDescription)
+                XCTAssertFalse(joined.exists, "An ended Plus no longer reads as active")
             }
-            if state == "expired" {
+            XCTAssertTrue(purchase.waitForExistence(timeout: 5))
+            if state == "expired" || state == "expiring" {
                 // 11/16 (#1041): an ended Plus is not 「確認できません」; it can
                 // be bought again, and 「購入を復元」 stays next to it.
                 XCTAssertTrue(purchase.isEnabled, "An expired Plus must be offered again: " + app.debugDescription)

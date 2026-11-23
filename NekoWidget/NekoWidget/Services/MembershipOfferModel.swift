@@ -1709,7 +1709,7 @@ struct MembershipOfferFixture: View {
                 BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
             } else {
                 MembershipOfferPreviewView(purchaseResult: result, membershipState: membershipState,
-                                           expiresAfter: CommandLine.arguments.contains("--membership-state-expiring") ? 2 : nil)
+                                           expiresAfter: CommandLine.arguments.contains("--membership-state-expiring") ? 6 : nil)
                 .safeAreaInset(edge: .bottom) {
                     Text(configurationPasses ? "構成確認OK" : "構成確認失敗")
                         .font(.caption)
