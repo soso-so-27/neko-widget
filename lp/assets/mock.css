@@ -646,3 +646,10 @@ section.price.price, section.end.end { --band: #fff; }
 /* 押せるものは押した手ごたえを */
 .store, .top-cta, .getbar .go, .plan a.trial { transition: transform .15s ease; }
 .store:active, .top-cta:active, .getbar .go:active { transform: scale(.96); }
+
+/* ---------- 試し：アプリの画面には iPhone の枠を ---------- */
+.konoko, .s2x .mbox { position: relative; border: 9px solid #1c1c1e; outline: 2px solid #55555a; outline-offset: -1px; border-radius: 44px; box-shadow: var(--sh-obj); }
+.konoko { clip-path: none; overflow: hidden; padding-top: 30px; background: #f2f2f7; }
+.konoko::before, .s2x .mbox::before { content: ""; position: absolute; z-index: 5; top: 8px; left: 50%; width: 30%; height: 22px; margin-left: -15%; border-radius: 12px; background: #1c1c1e; }
+.s2x .mbox { padding-top: 40px; height: 340px; border-bottom: 0; border-radius: 44px 44px 0 0; }
+@media (min-width: 960px) { .s2x .mbox { height: 420px; } }
