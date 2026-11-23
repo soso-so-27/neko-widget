@@ -1981,6 +1981,10 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(openDraft.isEnabled); openDraft.tap()
         let draft = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10), app.debugDescription); draft.tap(); draft.typeText("編集中の文章")
+        // Japanese input commits 「文章」 a moment after typeText returns (run
+        // 45146319025 read 「編集中の」); keep the draft as it was typed.
+        let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "編集中の文章"), object: draft)
+        XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, String(describing: draft.value))
         let draftText = draft.value as? String
         app.buttons["photo-memory-note-keyboard-done"].tap()
         app.buttons["別端末の変更を受信"].tap()
@@ -4378,7 +4382,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
             let restore = app.buttons["membership-offer-restore"]
             for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
-            XCTAssertTrue(restore.isHittable)
+            XCTAssertTrue(restore.isHittable, state + ": " + app.debugDescription)
             XCTAssertTrue(restore.isEnabled)
             if state == "unknown" {
                 let attachment = XCTAttachment(screenshot: app.screenshot())
