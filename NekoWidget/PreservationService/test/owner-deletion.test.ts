@@ -10,6 +10,7 @@ import { route } from '../src/index';
 import { RecoveryWriteLease } from '../src/recovery-write-lease';
 import { OwnerQuarantineRestore } from '../src/owner-quarantine-restore';
 import { insertOwnerWork } from './owner-work-fixture';
+import { MembershipLinks } from '../src/membership-links';
 
 const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const now = () => 100_000;
@@ -222,6 +223,49 @@ describe('explicit owner-requested deletion', () => {
     expect(f.deleteVersion).not.toHaveBeenCalled();
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'processing' });
     await finish(f.executor, f.session.ownerId);
+  });
+
+  it('releases the purchase after verified cloud erasure, before clearing the old D1 records', async () => {
+    const f = await fixture();
+    const oldOwner = f.session.ownerId;
+    const next = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+    const account = crypto.randomUUID();
+    const verify = vi.fn(async () => {});
+    const links = new MembershipLinks({ db, auth: f.auth, now, audience: 'local-preservation-v1',
+      authority: { verify, status: async () => 'active' } });
+    const proof = { billingKeyId: 'a'.repeat(22), nonce: 'b'.repeat(22), signature: 'c'.repeat(86), timestamp: '1800000000' };
+    const link = async (token: string) => {
+      const { challenge } = await links.issue(token, account);
+      return links.complete(token, challenge.challengeId, proof);
+    };
+    const currentLink = () => db.prepare('SELECT owner_id FROM pa_membership_links WHERE billing_account_id=?')
+      .bind(account).first<{ owner_id: string }>();
+    await link(f.session.token);
+    await expect(link(next.token)).rejects.toMatchObject({ code: 'MEMBERSHIP_LINK_CONFLICT' });
+    const record = crypto.randomUUID();
+    await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,metadata)
+      VALUES(?,?,1,?,?,?)`).bind(oldOwner, record, 'a'.repeat(64), crypto.randomUUID(), new Uint8Array([1]).buffer).run();
+    f.versions.push({ key: `recovery/v1/${oldOwner}/owner/${crypto.randomUUID()}`,
+      versionId: 'still-present', bytes: 3, deleteMarker: false });
+    await f.requests.request(f.session.token, f.receipt);
+    f.deleteVersion.mockImplementationOnce(async () => {});
+    await f.executor.step(oldOwner);
+    expect(await currentLink()).toEqual({ owner_id: oldOwner });
+    await expect(link(next.token)).rejects.toMatchObject({ code: 'MEMBERSHIP_LINK_CONFLICT' });
+    await f.executor.step(oldOwner);
+    expect(await currentLink()).toEqual({ owner_id: oldOwner });
+    await f.executor.step(oldOwner);
+    expect(await currentLink()).toBeNull();
+    expect(await f.requests.status(oldOwner, f.receipt)).toEqual({ state: 'processing' });
+    await expect(f.auth.requireSession(f.session.token)).rejects.toMatchObject({ status: 401 });
+    expect(await db.prepare('SELECT owner_id FROM pa_records WHERE record_id=?').bind(record).first())
+      .toEqual({ owner_id: oldOwner });
+    verify.mockRejectedValueOnce(new Error('invalid proof'));
+    await expect(link(next.token)).rejects.toThrow('invalid proof');
+    await expect(link(next.token)).resolves.toEqual({ linked: true });
+    await finish(f.executor, oldOwner);
+    expect(await currentLink()).toEqual({ owner_id: next.ownerId });
+    expect(await db.prepare('SELECT owner_id FROM pa_records WHERE record_id=?').bind(record).first()).toBeNull();
   });
 
   it('does not discard an old uncertain write lease to make deletion finish', async () => {
