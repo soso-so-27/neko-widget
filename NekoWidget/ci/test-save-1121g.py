@@ -125,7 +125,9 @@ class RestoreWithoutPlusTests(unittest.TestCase):
 
     def test_new_iphone_reaches_the_saved_copy(self):
         self.assertIn("if planEnded, value.revision != nil || value.pending != nil {", SYNC)
-        self.assertIn("guard membership.canSave || (membership.linked && !persistence.enabled) else {", VIEW)
+        # 11/24: the rule moved into AppRecordSettingsRules.startStep, which the view follows.
+        self.assertIn("if membership.canSave || (membership.linked && !enabled) { return .enable }", PERSISTENCE)
+        self.assertIn("case .enable:", VIEW)
         # Saving itself still asks for Plus before anything is sent.
         self.assertIn("guard membership.canSave else { throw ManagedPreservationError.membershipRequired }", SYNC)
 
