@@ -392,7 +392,12 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("purchaseAction", refresh)
         self.assertIn("if isMember {", view)
         self.assertLess(view.index("if isMember {"), view.index("Text(offer.billingLine)"))
-        self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
+        # 11/24: unknown (or a purchase Apple already holds): the one button is
+        # 「購入を復元」; a purchase still needs canPurchase and a price.
+        self.assertIn(".disabled(isWorking || (!purchaseRestores && (!canPurchase || offer == nil)))", view)
+        self.assertIn("if purchaseRestores { onRestore() } else { onPurchase() }", view)
+        self.assertIn('static let restoreTitle = "購入を復元"', model)
+        self.assertIn("guard canPurchase, let presentedOffer = offer else { return .unavailable }", model)
 
     def test_purchase_screen_keeps_terms_and_privacy_links(self) -> None:
         # App Review: the one Plus screen links the terms of use and the privacy
@@ -403,8 +408,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         for identifier in ("membership-offer-terms", "membership-offer-privacy"):
             self.assertIn(f'.accessibilityIdentifier("{identifier}")', footer)
         # 11/15: the one 「購入を復元」 is among the links unless the line on
-        # screen asks for it; then it stands under that line instead.
-        self.assertIn("if !restoreNearMessage { restoreButton }", footer)
+        # screen asks for it; then it stands under that line instead. 11/24: and
+        # not while the main button itself is 「購入を復元」.
+        self.assertIn("if !restoreNearMessage && !purchaseRestores { restoreButton }", footer)
         restore = section(view, "    private var restoreButton: some View {", "\n    }\n")
         self.assertIn('.accessibilityIdentifier("membership-offer-restore")', restore)
         self.assertEqual(view.count('"membership-offer-restore"'), 1)
@@ -970,7 +976,7 @@ class RemainingBugs1120Tests(unittest.TestCase):
         self.assertIn("var waitingCannotFix: Bool { self == .purchaseEvidence }", failure)
         message = section(failure, "    var message: String {", "\n    }\n")
         permanent = section(message, "if waitingCannotFix {", "}")
-        self.assertIn('"このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。"', permanent)
+        self.assertIn('"このiPhoneのPlusの購入情報を確認できません。購入し直さずに、お問い合わせください。"', permanent)
         self.assertNotIn("時間をおいて", permanent)
         # Transient failures still say to wait and try 「購入を復元」 again.
         self.assertIn('return reason + "もう一度購入せず、時間をおいて「購入を復元」をお試しください。"', message)
@@ -996,7 +1002,11 @@ class RemainingBugs1120Tests(unittest.TestCase):
         self.assertIn("} catch let error as AppRecordBindingError where Self.needsPersonForSettings(error) {\n"
                       "            settingsUnusable = error\n"
                       "            detail = error.errorDescription", load)
-        self.assertIn("[.destination, .format, .consent].contains(error)", load)
+        # 11/24: settings for another save server (P01) read as not started:
+        # no code, no dot; starting binds again. Format and consent still show.
+        self.assertIn("[.format, .consent].contains(error)", load)
+        self.assertIn("} catch AppRecordBindingError.destination {\n            // 11/24", load)
+        self.assertNotIn("P01とお伝えください", persistence)
         # A locked iPhone still reads again after unlock; the binding is never touched.
         self.assertIn("} catch { detail = Self.bindingUnreadableDetail }", load)
         for forbidden in ("removeItem", "write(", "enabled = false"):

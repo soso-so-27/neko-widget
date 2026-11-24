@@ -143,13 +143,14 @@ struct ManagedPreservationView: View {
             // 11/8 (29): Plus is said once, on 「アカウントとデータを消す」.
             Text("保存したものはすべて消え、元に戻せません。")
         }
-        .confirmationDialog("このアカウントにPlusを連携しますか？",
+        // 11/24: no 「連携」; the one consent line, as under 自動保存's Apple button.
+        .confirmationDialog("このアカウントでPlusを使いますか？",
                             isPresented: $confirmsMembershipLink, titleVisibility: .visible) {
-            Button("連携する") { coordinator.connectMembership(consent: true) }
+            Button("使う") { coordinator.connectMembership(consent: true) }
                 .accessibilityIdentifier("preservation-membership-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("Appleでサインインしたこのアカウントに、このiPhoneのPlusを連携します。あとから別のアカウントに付け替えることはできません。ここで購入や自動更新、写真の保存が始まることはありません。")
+            Text("Plusは、このApple Accountの保存に使います。ここで購入や写真の保存が始まることはありません。")
         }
         .onChange(of: coordinator.isBusy) { _, busy in if !busy { running = nil } }
         .appRecordEditing(retainWhileHidden: coordinator.hasUnsecuredMemo)
@@ -357,15 +358,15 @@ struct ManagedPreservationView: View {
                     Label("新しい写真を保存できます", systemImage: "checkmark.circle.fill")
                         .accessibilityIdentifier("preservation-membership-ready")
                 } else if membership.linked {
-                    Label("Plusは連携済みです", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("このアカウントでPlusを使っています", systemImage: "person.crop.circle.badge.checkmark")
                         .accessibilityIdentifier("preservation-membership-linked")
                     Text(membership.status == .expired
                          ? "Plusが切れているため、新しく保存できません。同じApple AccountでPlusを再開したら、「購入を復元」を押してください。保存した写真はこれまでどおり開けます。"
                          : "Plusをまだ確認できません。保存した写真は下の一覧から開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    Text("Plusがまだ連携されていません")
-                    Button("Plusを連携する") { confirmsMembershipLink = true }
+                    Text("このアカウントでは、まだPlusを使っていません")
+                    Button("このアカウントでPlusを使う") { confirmsMembershipLink = true }
                         .accessibilityIdentifier("preservation-membership-connect")
                 }
             } else {
@@ -770,9 +771,9 @@ struct ManagedPreservationView: View {
         } else if coordinator.membership?.canSave != true {
             plusOfferEntry
             if coordinator.membership?.linked == false {
-                Text("新しく保存するには、Plusの連携が必要です。")
+                Text("新しく保存するには、このアカウントでPlusを使います。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("Plusを連携する") { confirmsMembershipLink = true }
+                Button("このアカウントでPlusを使う") { confirmsMembershipLink = true }
                     .accessibilityIdentifier("preservation-membership-connect")
             } else {
                 Text("いまは新しく保存できません。保存した記録は下の一覧から開けます。")

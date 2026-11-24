@@ -43,7 +43,8 @@ enum PlusOfferContext: Equatable, Sendable {
         case .continueWindow: "このまどを続ける"
         case .createFamily: "家族の手帳を作る"
         case .continueFamily: "家族の手帳を再開する"
-        case .preservation: "保存を始める"
+        // 11/24: 「保存を始める」 is 自動保存's own button; Plus is named Plus.
+        case .preservation: "Plusを始める"
         case .settings: "Plusについて"
         }
     }
@@ -64,7 +65,8 @@ enum PlusOfferContext: Equatable, Sendable {
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .createFamily: "お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
-        case .preservation: "\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"
+        // 11/24: the list's own row already says it (「…新しいiPhoneに戻せる」).
+        case .preservation: nil
         }
     }
 
@@ -210,7 +212,7 @@ enum MembershipRestoreFailure: Equatable {
 
     var message: String {
         if waitingCannotFix {
-            return "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。"
+            return "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、お問い合わせください。"
         }
         let reason: String
         switch self {
@@ -291,6 +293,28 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     var canRestore: Bool { !isWorking && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false) }
+
+    /// 11/24: a new purchase cannot start because the purchase state is
+    /// unknown, or Apple already holds a subscription the server did not
+    /// confirm. The main button is 「購入を復元」 (never a greyed trial or a
+    /// state name): it restores instead of buying again.
+    var restoresInsteadOfPurchase: Bool {
+        guard !isMember, !isWaiting else { return false }
+        if verificationRequired { return true }
+        guard displayedOffer != nil else { return false }
+        if let purchases {
+            return !purchases.canStartNewPurchase && !purchases.isPurchasing && !purchases.isRestoring
+                && purchases.entitlementState != .checking && !purchases.hasBillingIssue
+        }
+#if DEBUG || INTERNAL_PRESENTATION
+        return fixtureStatus == .storeTransaction
+#else
+        return false
+#endif
+    }
+    static let restoreTitle = "購入を復元"
+    /// 11/24: the one line while the main button restores.
+    static let restoreLine = "購入を確かめられません。買い直す必要はありません。"
 
     /// 11/15 (TestFlight 378): the line on screen tells the person to press
     /// 「購入を復元」, so the screen's one 「購入を復元」 stands right under it
@@ -396,7 +420,7 @@ final class MembershipOfferModel: ObservableObject {
                 self.fixtureStatus = .active
                 return true
             case .expired: self.fixtureStatus = .fresh
-            case .fresh, .active, .applePending: break
+            case .fresh, .active, .applePending, .storeTransaction: break
             }
         }
 #endif
@@ -559,7 +583,7 @@ final class MembershipOfferModel: ObservableObject {
                     switch fixtureStatus {
                     case .unknown, .authorityPending: self.fixtureStatus = .active
                     case .expired: self.fixtureStatus = .fresh
-                    case .fresh, .active, .applePending: break
+                    case .fresh, .active, .applePending, .storeTransaction: break
                     }
                 }
     #endif
@@ -651,9 +675,11 @@ final class MembershipOfferModel: ObservableObject {
         } else if purchases?.hasBillingIssue == true {
             purchaseTitle = "お支払い方法の確認が必要です"
             message = "Appleでお支払いを確認できていません。「サブスクリプションを管理」からお支払い方法を確認してください。\nApp Store で手続きが終わると、自動で使えるようになります。"
-        } else if verificationRequired {
-            purchaseTitle = "購入状況の確認が必要です"
-            message = "購入状況を確認できません。もう一度購入せずに、「購入を復元」を押してください。"
+        } else if verificationRequired || restoresInsteadOfPurchase {
+            // 11/24: the one button is 「購入を復元」 (never a greyed trial or a
+            // state name); the line says what to do, once.
+            purchaseTitle = Self.restoreTitle
+            message = Self.restoreLine
         } else {
             purchaseTitle = nil
             message = nil
@@ -667,9 +693,11 @@ final class MembershipOfferModel: ObservableObject {
     static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
         let restoreResult: MembershipOfferActionResult
         if state == .applePending { restoreResult = .waiting }
-        else if state == .expired || expiresAfter != nil { restoreResult = .nothingToRestore }
+        else if state == .expired || state == .storeTransaction || expiresAfter != nil { restoreResult = .nothingToRestore }
         else { restoreResult = .completed }
-        let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: false)
+        // 11/24: StoreKit can still call the account eligible for the trial
+        // while its old transaction blocks a new purchase (the owner's iPhone).
+        let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: state == .storeTransaction)
         model.fixtureStatus = state
         if state == .active, let expiresAfter {
             model.fixtureExpiresAt = .now.addingTimeInterval(expiresAfter)
@@ -791,6 +819,9 @@ final class MembershipOfferModel: ObservableObject {
 #if DEBUG || INTERNAL_PRESENTATION
 enum MembershipOfferFixtureStatus: String {
     case fresh, active, applePending, authorityPending, unknown, expired
+    /// 11/24: Apple still holds a subscription transaction the server did
+    /// not confirm as Plus (a new purchase cannot start; restore can).
+    case storeTransaction
 }
 
 #endif
@@ -1127,6 +1158,7 @@ struct MembershipOfferSheet: View {
             photo: photo, photoAsset: heldPhoto ?? placePhoto, offer: model.displayedOffer,
             isWorking: model.isWorking,
             canPurchase: model.canPurchase, canRestore: model.canRestore,
+            purchaseRestores: model.restoresInsteadOfPurchase,
             message: model.message, restoreNearMessage: model.asksForRestore,
             isMember: model.isMember, memberEndLine: model.memberEndLine,
             purchaseTitle: model.purchaseTitle,
@@ -1353,14 +1385,26 @@ struct PlusSettingsSection<Rows: View>: View {
 
     init(@ViewBuilder rows: () -> Rows) { self.rows = rows() }
 
+#if DEBUG
+    /// 11/24: a UI fixture's state, in place of the live store's.
+    private var fixtureStatus: Status?
+    init(fixtureStatus: PlusSettingsRowStatus, @ViewBuilder rows: () -> Rows) {
+        self.rows = rows()
+        self.fixtureStatus = fixtureStatus
+    }
+#endif
+
     /// Each refresh (launch, foreground, a closed sheet) is `.checking` again
     /// for a moment; the rows keep the last answer so the Plus sheet hung on
     /// this section is not rebuilt, which reloaded it over and over (11/10).
     private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }
 
     private var liveStatus: Status {
+#if DEBUG
+        if let fixtureStatus { return fixtureStatus }
+#endif
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
-        Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
+        return Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
                     firstCheck: purchases.entitlementState == .checking,
                     answerMissing: purchases.entitlementState.cannotBeConfirmed,
                     purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation)
@@ -1409,8 +1453,8 @@ struct PlusSettingsSection<Rows: View>: View {
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).
-            Text(status == .member ? memberHeader : status == .unknown ? "Plus（購入状況を確認できません）"
-                 : billingIssue ? "Plus（お支払いの確認が必要です）" : "Plus")
+            // 11/24: unknown is said once, by the line under 「購入を復元」.
+            Text(status == .member ? memberHeader : billingIssue ? "Plus（お支払いの確認が必要です）" : "Plus")
                 .accessibilityIdentifier(status == .member ? "settings-membership-active"
                                          : status == .unknown ? "settings-membership-unknown"
                                          : billingIssue ? "settings-membership-billing-issue" : "settings-membership-header")
@@ -1729,6 +1773,14 @@ struct MembershipOfferFixture: View {
         NavigationStack {
             if CommandLine.arguments.contains("--billing-owner-enrollment-fixture") {
                 BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
+            } else if CommandLine.arguments.contains("--membership-settings-section") {
+                // 11/24: 設定's Plus section while the purchase cannot be confirmed.
+                Form {
+                    PlusSettingsSection(fixtureStatus: .unknown) {
+                        LabeledContent { Text("オフ") } label: { Label("自動保存", systemImage: "icloud") }
+                    }
+                }
+                .navigationTitle("設定")
             } else {
                 MembershipOfferPreviewView(purchaseResult: result, membershipState: membershipState,
                                            expiresAfter: CommandLine.arguments.contains("--membership-state-expiring") ? 6 : nil)
@@ -1766,6 +1818,7 @@ struct MembershipOfferFixture: View {
         if arguments.contains("--membership-state-apple-pending") { return .applePending }
         if arguments.contains("--membership-state-authority-pending") { return .authorityPending }
         if arguments.contains("--membership-state-fresh") { return .fresh }
+        if arguments.contains("--membership-state-store-transaction") { return .storeTransaction }
         return nil
     }
 }

@@ -198,7 +198,7 @@ jobs:
                      test12Onboarding test13ValidationError test14CatHomeStress test15FamilyNotebookLink
                      test16FamilyOrderAndFarewell
                      test17RecoveryScreens test18CatOrderEntry test19FamilyRepresentativePhoto
-                     test20FamilyReportReplies test21SettingsTree test22MadoScreens)
+                     test20FamilyReportReplies test21SettingsTree test22MadoScreens test23AutoSaveFlow)
           fi
           # `only`: just the named methods (each must be one of this class's).
           if [[ -n "${REVIEW_ONLY// /}" ]]; then

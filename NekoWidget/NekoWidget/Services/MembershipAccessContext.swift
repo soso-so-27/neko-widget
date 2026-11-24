@@ -262,8 +262,9 @@ struct MembershipRestoreButton: View {
         self.identifier = identifier
         self.showsFound = showsFound
         self.restored = restored
-        _model = StateObject(wrappedValue: MembershipOfferModel.live(presentsOffer: false))
+        _model = StateObject(wrappedValue: Self.fixtureModel ?? MembershipOfferModel.live(presentsOffer: false))
     }
+
 
     var body: some View {
         button
@@ -431,3 +432,13 @@ struct MembershipAccessFixture: View {
     }
 }
 #endif
+
+extension MembershipRestoreButton {
+    /// 11/24: 設定's Plus section fixture restores as an unconfirmed purchase would.
+    @MainActor fileprivate static var fixtureModel: MembershipOfferModel? {
+#if DEBUG
+        if CommandLine.arguments.contains("--membership-settings-section") { return .preview(state: .unknown) }
+#endif
+        return nil
+    }
+}

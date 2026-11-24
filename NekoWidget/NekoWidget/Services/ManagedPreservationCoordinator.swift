@@ -454,7 +454,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 try self.check(ticket)
                 self.isSignedIn = true
                 self.consentToNewSave = false
-                self.membership = nil; self.membershipMessage = nil
+                self.membership = nil; self.membershipMessage = nil; self.linkFailure = nil
                 self.noticeContact = nil
                 self.retention = nil
                 try await self.loadPresentation(ticket)
@@ -605,18 +605,31 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    /// 11/24: why the last Plus link stopped, for the screen to show as its
+    /// state (自動保存: 「このPlusはほかの保存で使われています」). Nothing is
+    /// said before the link is tried; a new link or sign-in clears it.
+    @Published private(set) var linkFailure: ManagedPreservationError?
+    /// The person starts again (a new tap, or Plus bought): a new try.
+    func clearLinkFailure() { linkFailure = nil }
+
     func connectMembership(consent: Bool) {
         guard isSignedIn, consent, !isBusy else { return }
         membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
-        membership = nil; membershipMessage = "連携できたか分からないときは、「購入を復元」で確かめられます。"
+        let before = membership
+        membership = nil; membershipMessage = nil; linkFailure = nil
         retention = nil
-        run { ticket in
+        run(onFailure: { error in
+            self.linkFailure = error as? ManagedPreservationError ?? .unavailable
+            // Not linked: what was known before stays on screen, never an endless check.
+            // A link whose answer was lost shows as linked on the next membership read.
+            if self.membership == nil { self.membership = before }
+        }) { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             let result = try await self.client.linkMembership(consent: true)
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.membership = result; self.membershipMessage = nil
             self.retention = nil
-            self.statusMessage = "Plusを連携しました。購入や写真の保存は始まっていません。"
+            self.statusMessage = "このアカウントでPlusを使えるようになりました。購入や写真の保存は始まっていません。"
         }
     }
 
@@ -1383,7 +1396,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         consentToNewSave = false
         consentToToolBackup = false; restoredToolBackup = nil; toolBackupProgress = nil; pendingToolBackupDate = nil; pendingToolDeletions = []
         copyState = .deviceOnly
-        membership = nil; membershipMessage = nil
+        membership = nil; membershipMessage = nil; linkFailure = nil
         noticeContact = nil
         retention = nil
         usage = nil; usageLoading = false; usageMessage = nil

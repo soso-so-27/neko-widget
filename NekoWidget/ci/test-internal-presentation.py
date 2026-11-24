@@ -114,7 +114,9 @@ class InternalPresentationBoundaryTests(unittest.TestCase):
         self.assertIn('if allowsRecordBrowsing { savedCopiesSections }', view)
         self.assertIn('else if coordinator.selected != nil { selectedCopySection }', view)
         saving = public[str(Path('NekoWidget/Services/AppRecordPersistence.swift'))]
-        self.assertIn('Text("前のiPhoneから戻す")', saving)
+        # 11/24: the same Apple button restores what this account saved (no separate box).
+        self.assertIn('SignInWithAppleButton(.continue)', saving)
+        self.assertIn('if membership.canSave || (membership.linked && !enabled) { return .enable }', saving)
         self.assertIn('NavigationLink("自動保存のアカウント") { ManagedPreservationView() }', saving)
         report = public[str(Path('NekoWidget/Views/GroupWindowView.swift'))]
         self.assertIn('Text(GroupReportUnavailableText.message)', report)
