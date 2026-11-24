@@ -249,27 +249,44 @@ class DisabledReleaseConfigTests(unittest.TestCase):
 
     def test_settings_guide_terms_and_notification_rows(self) -> None:
         # 11/11: 使い方 (first in ねこのまどについて), 利用規約 after the privacy
-        # policy, and 通知 last in 写真とウィジェット.
+        # policy, and 通知 last in 写真とウィジェット. 11/24: 使い方 opens a page
+        # with ウィジェットの置き方 first; the three documents are one row,
+        # 「規約とポリシー」, each two taps from 設定.
         settings = (ROOT / "NekoWidget/Views/SettingsView.swift").read_text(encoding="utf-8")
         configuration = (ROOT / "Shared/Sharing/SharingAPIConfiguration.swift").read_text(encoding="utf-8")
         body = settings.split("    var body: some View {\n        Form {", 1)[1].split('.navigationTitle("設定")', 1)[0]
-        order = ['"settings-widget-placement-guide"', "notificationSettingsRow", 'Text("写真とウィジェット")',
-                 "guideLinkRow", '"settings-support-page"', '"settings-privacy-policy"',
-                 "termsOfUseLinkRow", 'Text("ねこのまどについて")']
+        order = ["AppAppearanceRow()", "notificationSettingsRow", 'Text("写真とウィジェット")',
+                 "guideLinkRow", '"settings-support-page"', '"settings-policies"', 'Text("ねこのまどについて")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
-        guide = settings.split("private var guideLinkRow: some View {", 1)[1].split("\n    }\n", 1)[0]
+        for moved in ('"settings-widget-placement-guide"', '"settings-privacy-policy"', '"settings-terms-of-use"',
+                      '"コミュニティ基準"', "termsOfUseLinkRow"):
+            self.assertNotIn(moved, body)
+        row = settings.split("private var guideLinkRow: some View {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("NavigationLink { SettingsGuidePage() } label: {", row)
+        self.assertIn('Label("使い方", systemImage: "book")', row)
+        self.assertIn('.accessibilityIdentifier("settings-guide")', row)
+        guide = settings.split("struct SettingsGuidePage: View {", 1)[1].split("\n}\n", 1)[0]
+        self.assertLess(guide.index('"settings-widget-placement-guide"'), guide.index("guideURL"))
+        self.assertIn("WidgetPlacementGuidePage()", guide)
         self.assertIn("if let url = AppPublicLinksConfiguration.current.guideURL {", guide)
-        self.assertIn('ExternalLinkRow("使い方", systemImage: "book")', guide)
         self.assertIn('.accessibilityIdentifier("settings-guide-page")', guide)
-        terms = settings.split("private var termsOfUseLinkRow: some View {", 1)[1].split("\n    }\n", 1)[0]
-        self.assertIn("if let url = AppPublicLinksConfiguration.termsOfUseURL {", terms)
-        self.assertIn('ExternalLinkRow("利用規約", systemImage: "doc.plaintext")', terms)
-        self.assertIn('.accessibilityIdentifier("settings-terms-of-use")', terms)
+        self.assertIn('.navigationTitle("使い方")', guide)
+        policies = settings.split("struct SettingsPoliciesPage: View {", 1)[1].split("\n}\n", 1)[0]
+        order = ['"settings-privacy-policy"', '"settings-terms-of-use"', '"settings-community-standards"']
+        positions = [policies.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("if let url = AppPublicLinksConfiguration.termsOfUseURL {", policies)
+        self.assertIn('ExternalLinkRow("利用規約", systemImage: "doc.plaintext")', policies)
+        self.assertIn('ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")', policies)
+        self.assertIn('ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")', policies)
+        self.assertIn("SharingAPIConfiguration.current.isReviewVisible ? SharingAPIConfiguration.current.communityStandardsURL : nil",
+                      policies)
+        self.assertIn('.navigationTitle("規約とポリシー")', policies)
+        self.assertIn("if SettingsPoliciesPage.hasAny {\n                    NavigationLink { SettingsPoliciesPage() } label: {", body)
         # 11/11: 外観 (自動・ライト・ダーク), set on the windows so sheets follow;
         # only the real root takes it, never a fixture.
-        self.assertLess(settings.index('"settings-widget-placement-guide"'), settings.index("AppAppearanceRow()"))
-        self.assertLess(settings.index("AppAppearanceRow()"), settings.index("                notificationSettingsRow"))
+        self.assertLess(body.index("AppAppearanceRow()"), body.index("                notificationSettingsRow"))
         for part in ('static let key = "app.appearance.v1"', 'case .system: "自動"', 'case .light: "ライト"',
                      'case .dark: "ダーク"', "window.overrideUserInterfaceStyle = style",
                      'Label("外観", systemImage: "circle.lefthalf.filled")',

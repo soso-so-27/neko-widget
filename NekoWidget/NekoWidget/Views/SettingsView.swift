@@ -53,6 +53,66 @@ struct AccountDeletionChoicesView: View {
     }
 }
 
+/// 設定 → 使い方 (11/24): the widget guide first, then the full guide on the web.
+@MainActor
+struct SettingsGuidePage: View {
+    var body: some View {
+        List {
+            NavigationLink {
+                WidgetPlacementGuidePage()
+            } label: {
+                Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
+            }
+            .accessibilityIdentifier("settings-widget-placement-guide")
+            if let url = AppPublicLinksConfiguration.current.guideURL {
+                Link(destination: url) {
+                    ExternalLinkRow("ほかの使い方", systemImage: "book")
+                }
+                .accessibilityIdentifier("settings-guide-page")
+            }
+        }
+        .navigationTitle("使い方")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 設定 → 規約とポリシー (11/24): the three documents, two taps from 設定.
+@MainActor
+struct SettingsPoliciesPage: View {
+    static var hasAny: Bool {
+        AppPublicLinksConfiguration.current.privacyURL != nil || AppPublicLinksConfiguration.termsOfUseURL != nil
+            || communityStandardsURL != nil
+    }
+    private static var communityStandardsURL: URL? {
+        SharingAPIConfiguration.current.isReviewVisible ? SharingAPIConfiguration.current.communityStandardsURL : nil
+    }
+
+    var body: some View {
+        List {
+            if let url = AppPublicLinksConfiguration.current.privacyURL {
+                Link(destination: url) {
+                    ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
+                }
+                .accessibilityIdentifier("settings-privacy-policy")
+            }
+            if let url = AppPublicLinksConfiguration.termsOfUseURL {
+                Link(destination: url) {
+                    ExternalLinkRow("利用規約", systemImage: "doc.plaintext")
+                }
+                .accessibilityIdentifier("settings-terms-of-use")
+            }
+            if let url = Self.communityStandardsURL {
+                Link(destination: url) {
+                    ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
+                }
+                .accessibilityIdentifier("settings-community-standards")
+            }
+        }
+        .navigationTitle("規約とポリシー")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 /// The production settings sheet's presentation shell, also used by isolated UI fixtures.
 struct SettingsSheetHost<Content: View>: View {
     let onClose: () -> Void
@@ -124,10 +184,27 @@ struct AutoSaveSettingsRow: View {
                 : persistence.planEnded ? "止まっています"
                 : persistence.needsAttention ? "保存できていません"
                 // 11/16: the save server's pause for everyone, not this iPhone's failure.
-                : persistence.showsIntakePaused ? AppRecordPersistence.intakePausedRowValue : "オン")
+                : persistence.showsIntakePaused ? AppRecordPersistence.intakePausedRowValue
+                // 11/24: with when it last saved, when that is known.
+                : AutoSaveRowWords.on(lastSaved: persistence.lastSavedAt, now: .now, calendar: .nekoGregorian))
         } label: {
             Label("自動保存", systemImage: "icloud")
         }
+    }
+}
+
+/// 11/24: 「オン・今日 8:02」, 「オン・昨日 21:10」, 「オン・11月20日」; just
+/// 「オン」 when no save time is known (a value that cannot be had is not shown).
+enum AutoSaveRowWords {
+    static func on(lastSaved: Date?, now: Date, calendar: Calendar) -> String {
+        guard let lastSaved, lastSaved <= now.addingTimeInterval(60) else { return "オン" }
+        let time = "\(calendar.component(.hour, from: lastSaved)):" + String(format: "%02d", calendar.component(.minute, from: lastSaved))
+        if calendar.isDate(lastSaved, inSameDayAs: now) { return "オン・今日 \(time)" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(lastSaved, inSameDayAs: yesterday) { return "オン・昨日 \(time)" }
+        let year = calendar.component(.year, from: lastSaved)
+        let monthDay = "\(calendar.component(.month, from: lastSaved))月\(calendar.component(.day, from: lastSaved))日"
+        return year == calendar.component(.year, from: now) ? "オン・\(monthDay)" : "オン・\(year)年\(monthDay)"
     }
 }
 
@@ -271,33 +348,13 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            // 11/8: Plus first, as an account sits at the top of iOS 設定, then
-            // saving (what keeps the records); one-row sections are grouped.
+            // 11/8: Plus first, as an account sits at the top of iOS 設定.
+            // 11/24: 自動保存 (a Plus feature) is in the Plus section, not a
+            // one-row 保存 section; a build without the Plus offer keeps 保存.
             if canOpenMembershipOffer {
-                PlusSettingsSection()
-            }
-
-            // 保存: one row for moving to a new iPhone (11/7). The profile file,
-            // the way without Plus, is inside 自動保存; a build without 自動保存
-            // keeps it here as the only way.
-            Section {
-                if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink {
-                        AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,
-                                                                hasProfiles: !catProfilesPresentation.profiles.isEmpty))
-                    } label: { AutoSaveSettingsRow() }
-                        .accessibilityIdentifier("settings-managed-preservation")
-                } else {
-                    NavigationLink {
-                        CatProfileTransferView(actions: catProfilesActions,
-                            hasProfiles: !catProfilesPresentation.profiles.isEmpty)
-                    } label: {
-                        Label("プロフィールの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .accessibilityIdentifier("settings-cat-profile-transfer")
-                }
-            } header: {
-                Text("保存")
+                PlusSettingsSection { saveRow }
+            } else {
+                Section { saveRow } header: { Text("保存") }
             }
 
             Section {
@@ -310,12 +367,6 @@ struct SettingsView: View {
                         Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
                     }
                 }
-                NavigationLink {
-                    WidgetPlacementGuidePage()
-                } label: {
-                    Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
-                }
-                .accessibilityIdentifier("settings-widget-placement-guide")
                 AppAppearanceRow()
                 notificationSettingsRow
             } header: {
@@ -387,18 +438,12 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-support-page")
                 }
-                if let url = AppPublicLinksConfiguration.current.privacyURL {
-                    Link(destination: url) {
-                        ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
+                // 11/24: the three documents behind one row, each two taps away.
+                if SettingsPoliciesPage.hasAny {
+                    NavigationLink { SettingsPoliciesPage() } label: {
+                        Label("規約とポリシー", systemImage: "doc.text")
                     }
-                    .accessibilityIdentifier("settings-privacy-policy")
-                }
-                termsOfUseLinkRow
-                if SharingAPIConfiguration.current.isReviewVisible,
-                   let url = SharingAPIConfiguration.current.communityStandardsURL {
-                    Link(destination: url) {
-                        ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
-                    }
+                    .accessibilityIdentifier("settings-policies")
                 }
                 // Telling a friend, from where people look for the app's own
                 // things (11/6). Hidden until the App Store page exists.
@@ -616,22 +661,32 @@ struct SettingsView: View {
         return changed.joined(separator: "・")
     }
 
-    // 11/11: 使い方・利用規約・通知, kept out of `body` (type-check time).
-    @ViewBuilder private var guideLinkRow: some View {
-        if let url = AppPublicLinksConfiguration.current.guideURL {
-            Link(destination: url) {
-                ExternalLinkRow("使い方", systemImage: "book")
-            }
-            .accessibilityIdentifier("settings-guide-page")
+    // 11/11: 使い方・通知, kept out of `body` (type-check time).
+    // 11/24: 使い方 opens a page whose first row is 「ウィジェットの置き方」.
+    private var guideLinkRow: some View {
+        NavigationLink { SettingsGuidePage() } label: {
+            Label("使い方", systemImage: "book")
         }
+        .accessibilityIdentifier("settings-guide")
     }
 
-    @ViewBuilder private var termsOfUseLinkRow: some View {
-        if let url = AppPublicLinksConfiguration.termsOfUseURL {
-            Link(destination: url) {
-                ExternalLinkRow("利用規約", systemImage: "doc.plaintext")
+    /// 保存: 自動保存 with its state, or (a build without 自動保存) the profile
+    /// file as the only way to move to a new iPhone (11/7).
+    @ViewBuilder private var saveRow: some View {
+        if ManagedPreservationConfiguration.current.isEnabled {
+            NavigationLink {
+                AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,
+                                                        hasProfiles: !catProfilesPresentation.profiles.isEmpty))
+            } label: { AutoSaveSettingsRow() }
+                .accessibilityIdentifier("settings-managed-preservation")
+        } else {
+            NavigationLink {
+                CatProfileTransferView(actions: catProfilesActions,
+                    hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+            } label: {
+                Label("プロフィールの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
             }
-            .accessibilityIdentifier("settings-terms-of-use")
+            .accessibilityIdentifier("settings-cat-profile-transfer")
         }
     }
 

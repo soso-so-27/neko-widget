@@ -103,7 +103,7 @@ class WidgetPlacementTests(unittest.TestCase):
 
 class PurchaseContinuesTests(unittest.TestCase):
     def test_prompt_purchase_makes_the_window(self):
-        prompt = section(OFFER, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        prompt = section(OFFER, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection<Rows: View>: View {")
         self.assertIn("if !finishedWithPlus { onDeclined?() } else { onPurchased?() }", prompt)
         create = section(WINDOW, "struct GroupWindowCreateScreen: View {", "struct GroupWindowStandardsAgreement: View {")
         self.assertIn("onPurchased: createAfterPromptPurchase)", create)

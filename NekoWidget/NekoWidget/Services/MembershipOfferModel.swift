@@ -1340,14 +1340,18 @@ struct PlusCancelNoteGate<Content: View>: View {
     }
 }
 
-struct PlusSettingsSection: View {
+struct PlusSettingsSection<Rows: View>: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    /// 11/24: 自動保存 (a Plus feature) sits in this section, after Plus's own rows.
+    private let rows: Rows
     @State private var showsOffer = false
     @State private var showsManagement = false
     /// The last answer before a re-check: shown while it runs (11/10).
     @State private var lastAnswer: Status?
 
     private typealias Status = PlusSettingsRowStatus
+
+    init(@ViewBuilder rows: () -> Rows) { self.rows = rows() }
 
     /// Each refresh (launch, foreground, a closed sheet) is `.checking` again
     /// for a moment; the rows keep the last answer so the Plus sheet hung on
@@ -1401,6 +1405,7 @@ struct PlusSettingsSection: View {
             if status == .notMember || status == .checking {
                 MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")
             }
+            rows
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).

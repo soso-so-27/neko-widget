@@ -185,9 +185,9 @@ struct ManagedPreservationView: View {
             if deletesAccount { deletionContent }
             else if let deletion = coordinator.accountDeletionState {
                 accountDeletionSection(deletion)
-                if deletion == .unconfirmed && !coordinator.isSignedIn { authenticationSection }
+                if deletion == .unconfirmed && !coordinator.isSignedIn { authenticationSection() }
             }
-            else if !coordinator.isSignedIn { authenticationSection }
+            else if !coordinator.isSignedIn { authenticationSection() }
             else if coordinator.selected != nil { selectedCopySection }
             else {
                 if let draft = coordinator.draft { newCopySection(draft) }
@@ -249,9 +249,9 @@ struct ManagedPreservationView: View {
     @ViewBuilder private var deletionContent: some View {
         if let deletion = coordinator.accountDeletionState {
             accountDeletionSection(deletion)
-            if deletion == .unconfirmed && !coordinator.isSignedIn { authenticationSection }
+            if deletion == .unconfirmed && !coordinator.isSignedIn { authenticationSection(forDeletion: true) }
         } else if !coordinator.isSignedIn {
-            authenticationSection
+            authenticationSection(forDeletion: true)
         } else if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
             Section {
                 Text("保存したものとアカウントを消します。")
@@ -290,8 +290,11 @@ struct ManagedPreservationView: View {
         .accessibilityIdentifier("preservation-account-deletion-status")
     }
 
-    private var authenticationSection: some View {
+    /// 11/24: on 「自動保存のアカウントを消す」, one sentence says why to sign in,
+    /// instead of the address note and forgetting the sign-in.
+    private func authenticationSection(forDeletion: Bool = false) -> some View {
         Section {
+            if forDeletion { Text("消すには、保存に使ったApple Accountでサインインします。") }
             if let challenge = coordinator.preparedSignIn {
                 SignInWithAppleButton(.continue) { request in
                     request.requestedScopes = [.email]
@@ -311,13 +314,15 @@ struct ManagedPreservationView: View {
             }
         } header: { Text("サインイン") }
         footer: {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("メールアドレスは、保存についての大事なお知らせにだけ使います。")
-                Button("このiPhoneのサインイン情報を消す") { confirmsForgetSignIn = true }
-                    .confirmationDialog("このiPhoneのサインイン情報を消しますか？", isPresented: $confirmsForgetSignIn,
-                                        titleVisibility: .visible) {
-                        Button("サインイン情報を消す", role: .destructive) { coordinator.signOut() }
-                    } message: { Text("保存した記録は残ります。もう一度サインインすると、また使えます。") }
+            if !forDeletion {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("メールアドレスは、保存についての大事なお知らせにだけ使います。")
+                    Button("このiPhoneのサインイン情報を消す") { confirmsForgetSignIn = true }
+                        .confirmationDialog("このiPhoneのサインイン情報を消しますか？", isPresented: $confirmsForgetSignIn,
+                                            titleVisibility: .visible) {
+                            Button("サインイン情報を消す", role: .destructive) { coordinator.signOut() }
+                        } message: { Text("保存した記録は残ります。もう一度サインインすると、また使えます。") }
+                }
             }
         }
     }
