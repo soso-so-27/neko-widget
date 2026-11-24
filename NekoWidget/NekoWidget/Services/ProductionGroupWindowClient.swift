@@ -794,7 +794,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         for member in head.roster.members {
             guard let row = rows.first(where: { $0.id == member.participantID }), row.personID == member.personID,
                   row.role.rawValue == member.role.rawValue else { throw GroupClientError.invalidResponse }
-            let name = try GroupNameCrypto.open(row.encryptedDisplayName, slot: "member:" + member.participantID, key: key, roster: head)
+            let name = try GroupNameCrypto.openMember(row.encryptedDisplayName, participantID: member.participantID,
+                state: row.state, key: key, roster: head)
             members.append(.init(id: member.participantID, personID: member.personID, displayName: name, role: row.role, state: row.state,
                 devices: member.devices.enumerated().map { index, device in
                     let isThisDevice = device.id == myDeviceID

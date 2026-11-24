@@ -105,6 +105,22 @@ enum GroupNameCrypto {
         // from loading or relax any roster/signature/key validation.
         return (try? GroupWire.name(value.name)) ?? "名前を表示できません"
     }
+    /// 11/24h: someone who left or was removed stays in the signed roster
+    /// until the creator's iPhone renews the key. Erasing their data
+    /// (「まどと家族の手帳のデータを消す」) empties that row's name on the
+    /// server, so for a departed row the name is only a label: an empty or
+    /// unreadable one shows as a former member and never stops the member
+    /// list or the key renewal (which carries only active members' names).
+    /// Every other state keeps the full check above; an empty or invalid
+    /// name for an active member is still an error.
+    static let departedMemberName = "以前のメンバー"
+    static func openMember(_ ciphertext: Data, participantID: String, state: GroupMemberState,
+                           key: SymmetricKey, roster: VerifiedGroupRoster) throws -> String {
+        let slot = "member:" + participantID
+        guard state == .left || state == .removed else { return try open(ciphertext, slot: slot, key: key, roster: roster) }
+        guard !ciphertext.isEmpty else { return departedMemberName }
+        return (try? open(ciphertext, slot: slot, key: key, roster: roster)) ?? departedMemberName
+    }
 
     struct JoinBox: Codable { let ownerDeviceID: String; let encapsulatedKey: Data; let ciphertext: Data }
     struct JoinName: Codable { let boxes: [JoinBox]; let signature: Data }
