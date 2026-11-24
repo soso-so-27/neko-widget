@@ -34,6 +34,121 @@ function time(value: unknown): number {
   if (typeof value !== 'string') throw unavailable();
   const n = Date.parse(value); if (!Number.isSafeInteger(n)) throw unavailable(); return n;
 }
+type Interval = { from: number; to: number };
+type ChargeSeries = { service: string; cost: number; intervals: Interval[] };
+type BillingCycle = Map<string, ChargeSeries>;
+
+function coveredThrough(start: number, intervals: Interval[]): number {
+  let end = start;
+  for (const interval of [...intervals].sort((a, b) => a.from - b.from)) {
+    if (interval.from > end) break;
+    end = Math.max(end, interval.to);
+  }
+  return end;
+}
+
+function nextBillingStart(start: number, previousStart: number | undefined): number {
+  const next = new Date(start);
+  const thisMonthEnd = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  let anchorDay = next.getUTCDate();
+  if (anchorDay === thisMonthEnd && previousStart !== undefined) {
+    anchorDay = Math.max(anchorDay, new Date(previousStart).getUTCDate());
+  }
+  next.setUTCDate(1);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  return next.setUTCDate(Math.min(anchorDay, lastDay));
+}
+
+function cloudflareCosts(cf: any, account: string, started: number, diagnostic: CostDiagnostic) {
+  if (cf.success !== true || (cf.errors?.length ?? 0) > 0 || (cf.messages?.length ?? 0) > 0
+      || !Array.isArray(cf.result) || !cf.result.length || cf.result_info) throw unavailable();
+
+  const subscriptions = new Map<string, Map<number, BillingCycle>>();
+  for (const row of cf.result) {
+    diagnostic.stage = 'integrity'; diagnostic.reason = 'invalid_evidence';
+    if (row.BillingAccountId !== account || row.BillingCurrency !== 'USD' || row.ChargeCategory !== 'Usage'
+        || typeof row.ServiceName !== 'string' || !row.ServiceName
+        || typeof row.SubscriptionId !== 'string' || !row.SubscriptionId) throw unavailable();
+    diagnostic.stage = 'period'; diagnostic.reason = 'invalid_period';
+    const start = time(row.BillingPeriodStart), from = time(row.ChargePeriodStart), to = time(row.ChargePeriodEnd);
+    if (start > from || from >= to || to > started) throw unavailable();
+
+    const cycles = subscriptions.get(row.SubscriptionId) ?? new Map<number, BillingCycle>();
+    subscriptions.set(row.SubscriptionId, cycles);
+    const cycle = cycles.get(start) ?? new Map<string, ChargeSeries>();
+    cycles.set(start, cycle);
+    const key = JSON.stringify([row.ServiceName, row.ChargeDescription, row.ZoneId, row.PricingUnit]);
+    const series: ChargeSeries = cycle.get(key) ?? { service: row.ServiceName, cost: 0, intervals: [] };
+    cycle.set(key, series);
+    diagnostic.stage = 'integrity'; diagnostic.reason = 'duplicate_or_invalid_amount';
+    series.cost += positive(row.ContractedCost);
+    series.intervals.push({ from, to });
+  }
+
+  let monthlyUsd = 0, coveredAt = started;
+  for (const cycles of subscriptions.values()) {
+    const starts = [...cycles.keys()].sort((a, b) => a - b);
+    const currentStart = starts.at(-1)!;
+    const previousStart = starts.at(-2);
+    // A previous cycle can still be fresh for 48 hours after it closes.
+    // Its freshness cannot substitute for evidence of the new monthly cycle.
+    diagnostic.stage = 'coverage'; diagnostic.reason = 'missing_days_or_services';
+    if (started >= nextBillingStart(currentStart, previousStart)) throw unavailable();
+
+    for (const [index, start] of starts.entries()) {
+      const next = starts[index + 1] ?? started;
+      for (const series of cycles.get(start)!.values()) {
+        series.intervals.sort((a, b) => a.from - b.from);
+        let previousEnd = start;
+        for (const interval of series.intervals) {
+          diagnostic.stage = 'period'; diagnostic.reason = 'invalid_period';
+          if (interval.to > next) throw unavailable();
+          diagnostic.stage = 'integrity'; diagnostic.reason = 'duplicate_or_invalid_amount';
+          if (interval.from < previousEnd) throw unavailable();
+          previousEnd = interval.to;
+        }
+      }
+    }
+
+    const current = cycles.get(currentStart)!;
+    diagnostic.stage = 'freshness'; diagnostic.reason = 'short_or_stale_period';
+    let currentForecast = 0, latest = currentStart;
+    for (const series of current.values()) {
+      const end = series.intervals.at(-1)!.to;
+      if (end - currentStart < day || end < started - 2 * day) throw unavailable();
+      latest = Math.max(latest, end);
+      coveredAt = Math.min(coveredAt, end);
+      currentForecast += series.cost * 31 * day / (end - currentStart);
+      diagnostic.addCloudflare(series.service, series.cost);
+    }
+
+    diagnostic.stage = 'coverage'; diagnostic.reason = 'missing_days_or_services';
+    const currentIntervals = [...current.values()].flatMap(series => series.intervals);
+    if (coveredThrough(currentStart, currentIntervals) !== latest) throw unavailable();
+
+    let previousForecast = 0;
+    if (previousStart !== undefined) {
+      const previous = cycles.get(previousStart)!;
+      const previousIntervals = [...previous.values()].flatMap(series => series.intervals);
+      if (coveredThrough(previousStart, previousIntervals) !== currentStart) throw unavailable();
+      let previousCost = 0;
+      for (const [key, series] of previous) {
+        previousCost += series.cost;
+        // A series present for the whole prior cycle must still be present without gaps.
+        // Metered series with sparse usage need only contribute where reported.
+        if (coveredThrough(previousStart, series.intervals) !== currentStart) continue;
+        const intervals = current.get(key)?.intervals;
+        if (!intervals || coveredThrough(currentStart, intervals) !== intervals.at(-1)!.to) throw unavailable();
+      }
+      previousForecast = previousCost * 31 * day / (currentStart - previousStart);
+    }
+    monthlyUsd += Math.max(currentForecast, previousForecast);
+  }
+  if (!Number.isFinite(monthlyUsd)) throw unavailable();
+  return { monthlyUsd, coveredAt };
+}
+
 /** Full account totals are conservative: no unverified resource allocation,
  * credit, refund, free plan, or missing provider is treated as zero. */
 export async function collectCosts(env: CostEnv, now: () => number, fetcher: CostFetch = fetch,
@@ -87,38 +202,13 @@ async function collect(env: CostEnv, now: () => number, fetcher: CostFetch, diag
   } while (pageToken);
   diagnostic.stage = 'coverage'; diagnostic.reason = 'missing_days_or_services';
   if (dates.size !== 30 || !seen.size) throw unavailable();
-  // Omitting dates intentionally uses the current billing cycle: a calendar
-  // range without the subscription anchor can return a misleading empty set.
+  // Omitting dates lets the provider return each subscription's billing cycles.
+  // A calendar range without the subscription anchor can return an empty set.
   diagnostic.provider = 'cloudflare';
   const cf = await json(fetcher, `https://api.cloudflare.com/client/v4/accounts/${env.COST_CLOUDFLARE_ACCOUNT_ID}/billable-usage`,
     { headers: { Authorization: `Bearer ${env.COST_CLOUDFLARE_TOKEN}` } }, diagnostic);
-  if (cf.success !== true || (cf.errors?.length ?? 0) > 0 || (cf.messages?.length ?? 0) > 0
-      || !Array.isArray(cf.result) || !cf.result.length || cf.result_info) throw unavailable();
-  const periods = new Map<string, { start: number; end: number; cost: number }>();
-  const cfSeen = new Set<string>();
-  for (const row of cf.result) {
-    if (row.BillingAccountId !== env.COST_CLOUDFLARE_ACCOUNT_ID || row.BillingCurrency !== 'USD'
-        || row.ChargeCategory !== 'Usage' || typeof row.ServiceName !== 'string' || !row.ServiceName
-        || typeof row.SubscriptionId !== 'string' || !row.SubscriptionId) throw unavailable();
-    diagnostic.stage = 'period'; diagnostic.reason = 'invalid_period';
-    const from = time(row.BillingPeriodStart), usageFrom = time(row.ChargePeriodStart), to = time(row.ChargePeriodEnd);
-    if (from > usageFrom || usageFrom >= to || to > started || from < started - 32 * day) throw unavailable();
-    diagnostic.stage = 'integrity'; diagnostic.reason = 'duplicate_or_invalid_amount';
-    const identity = JSON.stringify([row.SubscriptionId, row.ServiceName, row.ChargeDescription, row.ZoneId, row.PricingUnit, usageFrom, to]);
-    if (cfSeen.has(identity)) throw unavailable(); cfSeen.add(identity);
-    const key = row.SubscriptionId + ':' + row.ServiceName + ':' + from;
-    const item = periods.get(key) ?? { start: from, end: to, cost: 0 };
-    item.end = Math.max(item.end, to); item.cost += positive(row.ContractedCost); periods.set(key, item);
-    diagnostic.addCloudflare(row.ServiceName, positive(row.ContractedCost));
-  }
-  let cloudflare = 0, covered = end;
-  diagnostic.stage = 'freshness'; diagnostic.reason = 'short_or_stale_period';
-  for (const period of periods.values()) {
-    if (period.end - period.start < day || period.end < started - 2 * day) throw unavailable();
-    covered = Math.min(covered, period.end);
-    cloudflare += period.cost * 31 * day / (period.end - period.start);
-  }
-  diagnostic.awsMonthlyUsd = aws * 31 / 30; diagnostic.cloudflareMonthlyUsd = cloudflare;
-  return { collectedAt: now(), awsMonthlyUsd: aws * 31 / 30, cloudflareMonthlyUsd: cloudflare,
-    awsPages: pages, oldestCoveredAt: covered, includesEntireAccounts: true };
+  const cloudflare = cloudflareCosts(cf, env.COST_CLOUDFLARE_ACCOUNT_ID!, started, diagnostic);
+  diagnostic.awsMonthlyUsd = aws * 31 / 30; diagnostic.cloudflareMonthlyUsd = cloudflare.monthlyUsd;
+  return { collectedAt: now(), awsMonthlyUsd: aws * 31 / 30, cloudflareMonthlyUsd: cloudflare.monthlyUsd,
+    awsPages: pages, oldestCoveredAt: Math.min(end, cloudflare.coveredAt), includesEntireAccounts: true };
 }

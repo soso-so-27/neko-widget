@@ -1,11 +1,14 @@
 import { expect, it } from 'vitest';
 import { collectCosts, type CostFetch } from '../src/intake-cost-provider';
+import type { CostDiagnosticEvent } from '../src/intake-cost-diagnostic';
 const now=Date.parse('2026-11-04T06:00:00Z'),day=86400000;
 const config={COST_AWS_ACCOUNT_ID:'123456789012',COST_AWS_ACCESS_KEY_ID:'synthetic',COST_AWS_SECRET_ACCESS_KEY:'synthetic',
   COST_CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),COST_CLOUDFLARE_TOKEN:'synthetic'};
-const end=Math.floor(now/day)*day;
-const periods=()=>Array.from({length:30},(_,i)=>({TimePeriod:{Start:new Date(end-(30-i)*day).toISOString().slice(0,10),End:new Date(end-(29-i)*day).toISOString().slice(0,10)},
+const periods=(at=now)=>{
+ const end=Math.floor(at/day)*day;
+ return Array.from({length:30},(_,i)=>({TimePeriod:{Start:new Date(end-(30-i)*day).toISOString().slice(0,10),End:new Date(end-(29-i)*day).toISOString().slice(0,10)},
   Estimated:true,Groups:[{Keys:['Amazon Simple Storage Service'],Metrics:{UnblendedCost:{Amount:'0.01',Unit:'USD'}}}]}));
+};
 const cf=()=>({success:true,errors:[],messages:[],result:[{BillingAccountId:config.COST_CLOUDFLARE_ACCOUNT_ID,BillingCurrency:'USD',
   ChargeCategory:'Usage',ServiceName:'Workers Standard',SubscriptionId:'test-subscription',BillingPeriodStart:'2026-11-01T00:00:00Z',
   ChargePeriodStart:'2026-11-01T00:00:00Z',ChargePeriodEnd:'2026-11-04T00:00:00Z',ContractedCost:0.01}]});
@@ -66,6 +69,71 @@ it('never interprets forbidden, empty, foreign-account, stale or future Cloudfla
   await expect(collectCosts(config,()=>now,fetcher)).rejects.toThrow();
  }
 });
+
+function acrossCloudflareBoundary() {
+ const data = cf();
+ const row = data.result[0]!;
+ data.result.push({...row, BillingPeriodStart:'2026-10-01T00:00:00Z',
+  ChargePeriodStart:'2026-10-01T00:00:00Z', ChargePeriodEnd:row.BillingPeriodStart, ContractedCost:31});
+ return data;
+}
+
+function withCloudflare(data: ReturnType<typeof cf>): CostFetch {
+ return async input => Response.json(String(input).includes('amazonaws.com') ? {ResultsByTime:periods()} : data);
+}
+
+it('uses the larger monthly estimate per subscription and counts only current charges in the cycle total', async () => {
+ const data = acrossCloudflareBoundary();
+ data.result.push({...data.result[0]!, SubscriptionId:'different-subscription',
+  BillingPeriodStart:'2026-11-02T00:00:00Z', ChargePeriodStart:'2026-11-02T00:00:00Z', ContractedCost:2});
+ const events: CostDiagnosticEvent[] = [];
+ const result = await collectCosts(config,()=>now,withCloudflare(data),event=>events.push(event));
+ expect(result.cloudflareMonthlyUsd).toBe(62);
+ expect(events[0]?.costs?.cloudflareCycleUsd.workers).toBeCloseTo(2.01);
+
+ data.result[0]!.ContractedCost = 6;
+ const higherCurrent = await collectCosts(config,()=>now,withCloudflare(data));
+ expect(higherCurrent.cloudflareMonthlyUsd).toBe(93);
+});
+
+it('rejects missing recurring aggregates, coverage gaps, and charges crossing the next billing start', async () => {
+ for (const failure of ['missing-series','gap','prior-gap','crossing']) {
+  const data = acrossCloudflareBoundary();
+  const [current, previous] = data.result;
+  if (failure === 'missing-series') data.result.push({...previous!, ServiceName:'R2'});
+  if (failure === 'gap') current!.ChargePeriodStart = '2026-11-02T00:00:00Z';
+  if (failure === 'prior-gap') previous!.ChargePeriodEnd = '2026-10-31T00:00:00Z';
+  if (failure === 'crossing') previous!.ChargePeriodEnd = '2026-11-02T00:00:00Z';
+  await expect(collectCosts(config,()=>now,withCloudflare(data))).rejects.toMatchObject({code:'COST_EVIDENCE_UNAVAILABLE'});
+ }
+});
+
+it('rejects a missing new cycle even if the completed cycle is less than 48 hours old', async () => {
+ const data = acrossCloudflareBoundary();
+ data.result.shift();
+ const at = Date.parse('2026-11-02T06:00:00Z');
+ const fetcher: CostFetch = async input => Response.json(String(input).includes('amazonaws.com') ? {ResultsByTime:periods(at)} : data);
+ const events: CostDiagnosticEvent[] = [];
+ await expect(collectCosts(config,()=>at,fetcher,event=>events.push(event))).rejects.toMatchObject({code:'COST_EVIDENCE_UNAVAILABLE'});
+ expect(events[0]).toMatchObject({provider:'cloudflare',stage:'coverage',reason:'missing_days_or_services'});
+});
+
+it('keeps a month-end billing anchor after a shorter month', async () => {
+ const data = acrossCloudflareBoundary();
+ const [current, previous] = data.result;
+ previous!.BillingPeriodStart = previous!.ChargePeriodStart = '2026-01-31T00:00:00Z';
+ previous!.ChargePeriodEnd = current!.BillingPeriodStart = current!.ChargePeriodStart = '2026-02-28T00:00:00Z';
+ current!.ChargePeriodEnd = '2026-03-28T00:00:00Z';
+ const collectAt = (dayOfMonth: number) => {
+  const at = Date.UTC(2026, 2, dayOfMonth, 6);
+  return collectCosts(config,()=>at,async input => Response.json(
+   String(input).includes('amazonaws.com') ? {ResultsByTime:periods(at)} : data));
+ };
+ await expect(collectAt(28)).resolves.toHaveProperty('cloudflareMonthlyUsd');
+ current!.ChargePeriodEnd = '2026-03-31T00:00:00Z';
+ await expect(collectAt(31)).rejects.toMatchObject({code:'COST_EVIDENCE_UNAVAILABLE'});
+});
+
 it('missing credentials make no provider requests',async()=>{
  let calls=0;await expect(collectCosts({},()=>now,async()=>{calls++;throw Error();})).rejects.toThrow();expect(calls).toBe(0);
 });
