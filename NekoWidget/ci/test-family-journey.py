@@ -252,7 +252,7 @@ class PurchaseWaitAndFamilyPause1115Tests(unittest.TestCase):
         self.assertIn("if !restoreNearMessage && !purchaseRestores { restoreButton }", footer)
         # One 「購入を復元」 on the screen, the sheet's own (it finishes the sheet).
         self.assertEqual(OFFER_VIEW.count("restoreButton\n"), 1)
-        self.assertEqual(OFFER_VIEW.count("if !restoreNearMessage { restoreButton }"), 1)
+        self.assertEqual(OFFER_VIEW.count("if !restoreNearMessage && !purchaseRestores { restoreButton }"), 1)
         self.assertNotIn("MembershipRestoreButton(", OFFER_VIEW)
 
     def test_family_is_read_again_after_plus_and_never_says_found_while_stopped(self):
