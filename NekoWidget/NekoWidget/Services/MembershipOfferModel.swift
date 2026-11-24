@@ -1374,6 +1374,8 @@ struct PlusCancelNoteGate<Content: View>: View {
 
 struct PlusSettingsSection<Rows: View>: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    /// 11/25: 自動保存's view of the same Plus (the save server's answer).
+    @ObservedObject private var saving = AppRecordPersistence.shared
     /// 11/24: 自動保存 (a Plus feature) sits in this section, after Plus's own rows.
     private let rows: Rows
     @State private var showsOffer = false
@@ -1404,12 +1406,19 @@ struct PlusSettingsSection<Rows: View>: View {
         if let fixtureStatus { return fixtureStatus }
 #endif
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
+        // 11/25: a working 自動保存's Plus (the save server's answer) settles an
+        // open question as Plus; 「購入を確かめられません」 stood next to it.
         return Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
                     firstCheck: purchases.entitlementState == .checking,
                     answerMissing: purchases.entitlementState.cannotBeConfirmed,
-                    purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation)
+                    purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation,
+                    linkedPlusOnSave: ManagedPreservationConfiguration.current.isEnabled
+                        && saving.linkedPlusSeenAt != nil)
     }
 
+    /// 11/25: every state is ordinary rows of one grouped section (no clear
+    /// rows, no pill outside a row: their separators floated on the owner's
+    /// iPhone). One status, at most one line, one button.
     var body: some View {
         Section {
             switch status {
@@ -1419,21 +1428,14 @@ struct PlusSettingsSection<Rows: View>: View {
                 SettingsActionRow("サブスクリプションを管理", systemImage: "creditcard") { showsManagement = true }
                     .accessibilityIdentifier("settings-membership-billing-manage")
             case .notMember:
-                Button {
-                    showsOffer = true
-                } label: {
-                    Label(PlusOfferContext.settings.entryTitle, systemImage: "sparkles")
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                }
-                .buttonStyle(.borderedProminent)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
-                .accessibilityIdentifier("settings-membership-offer")
+                SettingsActionRow(PlusOfferContext.settings.entryTitle, systemImage: "sparkles") { showsOffer = true }
+                    .accessibilityIdentifier("settings-membership-offer")
             case .member:
                 SettingsActionRow("サブスクリプションを管理", systemImage: "checkmark.seal") { showsManagement = true }
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
-                // One button for the re-check and the App Store restore (11/5).
+                // One button for the re-check and the App Store restore (11/5);
+                // its one line sits inside the same row.
                 MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")
             case .checking:
                 HStack(spacing: 10) {
@@ -1445,9 +1447,10 @@ struct PlusSettingsSection<Rows: View>: View {
             }
             // Restore stays reachable while checking: a check that never ends
             // must not leave a member without a way back (App Review requires it).
-            // The unknown state already shows it as its one row.
+            // The unknown state already shows it as its one row. An ordinary
+            // row, like the one above it.
             if status == .notMember || status == .checking {
-                MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")
+                MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")
             }
             rows
         } header: {
@@ -1477,6 +1480,12 @@ struct PlusSettingsSection<Rows: View>: View {
                 // 11/16: opening Settings re-reads whether Plus renews, its
                 // end and the price from StoreKit (no billing call).
                 .task { await purchases.refreshForDisplay() }
+                // 11/25: while this iPhone's own answer is open, the save
+                // server's (one observing read, only while 自動保存 is on).
+                .task(id: liveStatus) {
+                    guard liveStatus != .member, ManagedPreservationConfiguration.current.isEnabled else { return }
+                    await saving.refreshLinkedPlus()
+                }
         }
     }
 
@@ -1775,9 +1784,21 @@ struct MembershipOfferFixture: View {
                 BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
             } else if CommandLine.arguments.contains("--membership-settings-section") {
                 // 11/24: 設定's Plus section while the purchase cannot be confirmed.
+                // 11/25: and its other states (a working 自動保存's Plus is `.member`).
+                let arguments = CommandLine.arguments
+                let state: PlusSettingsRowStatus = arguments.contains("--membership-settings-member") ? .member
+                    : arguments.contains("--membership-settings-not-member") ? .notMember
+                    : arguments.contains("--membership-settings-checking") ? .checking : .unknown
                 Form {
-                    PlusSettingsSection(fixtureStatus: .unknown) {
-                        LabeledContent { Text("オフ") } label: { Label("自動保存", systemImage: "icloud") }
+                    PlusSettingsSection(fixtureStatus: state) {
+                        NavigationLink {} label: {
+                            LabeledContent { Text(state == .member ? "オン・今日 8:35" : "オフ") } label: {
+                                Label("自動保存", systemImage: "icloud")
+                            }
+                        }
+                    }
+                    Section {
+                        NavigationLink {} label: { Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled") }
                     }
                 }
                 .navigationTitle("設定")

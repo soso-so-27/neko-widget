@@ -267,6 +267,41 @@ struct MembershipRestoreButton: View {
 
 
     var body: some View {
+        if look == .settingsRow {
+            // 11/25: one ordinary row; its line (or the result) inside it, never
+            // a clear row of its own (their separators floated in 設定).
+            Button { restore() } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label { workingLabel } icon: { Image(systemName: "arrow.clockwise") }
+                    if let rowLine {
+                        Text(rowLine)
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(found ? "membership-restore-found" : "membership-restore-message")
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .disabled(running || !model.canRestore)
+            .accessibilityIdentifier(identifier)
+            .task { await model.load() }
+        } else {
+            standaloneBody
+        }
+    }
+
+    /// The row's one line: what a restore found, or the model's line when it
+    /// is about the purchase (the unknown state's, or a restore's answer); not
+    /// the Plus screen's price note.
+    private var rowLine: String? {
+        if found { return showsFound ? "Plusを確認できました。" : nil }
+        guard !running, let message = model.message, !message.isEmpty,
+              message != PlusOfferReloadPolicy.unavailableMessage else { return nil }
+        return message
+    }
+
+    @ViewBuilder private var standaloneBody: some View {
         button
             .disabled(running || !model.canRestore)
             .accessibilityIdentifier(identifier)
@@ -294,13 +329,7 @@ struct MembershipRestoreButton: View {
     @ViewBuilder private var button: some View {
         switch look {
         case .settingsRow:
-            Button { restore() } label: {
-                Label { workingLabel } icon: { Image(systemName: "arrow.clockwise") }
-                    .frame(maxWidth: .infinity, minHeight: 36)
-            }
-            .buttonStyle(.bordered)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+            EmptyView()  // drawn by `body` as one list row
         case .footnote:
             Button { restore() } label: { workingLabel }
                 .font(.footnote)
@@ -437,7 +466,12 @@ extension MembershipRestoreButton {
     /// 11/24: 設定's Plus section fixture restores as an unconfirmed purchase would.
     @MainActor fileprivate static var fixtureModel: MembershipOfferModel? {
 #if DEBUG
-        if CommandLine.arguments.contains("--membership-settings-section") { return .preview(state: .unknown) }
+        if CommandLine.arguments.contains("--membership-settings-section") {
+            // 11/25: the not-member and checking states' restore row has no line.
+            let quiet = CommandLine.arguments.contains("--membership-settings-not-member")
+                || CommandLine.arguments.contains("--membership-settings-checking")
+            return .preview(state: quiet ? .fresh : .unknown)
+        }
 #endif
         return nil
     }

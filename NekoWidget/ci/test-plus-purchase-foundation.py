@@ -466,8 +466,13 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # 11/7: the row restores where it is tapped, with the same restore().
         self.assertIn('MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")', unknown)
         self.assertIn("if status == .notMember || status == .checking {", settings)
-        self.assertIn('MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")',
+        self.assertIn('MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")',
                       section(settings, "if status == .notMember || status == .checking {", "} header: {"))
+        # 11/25: ordinary rows only; clear rows and a pill outside a row left
+        # floating separators in 設定.
+        self.assertNotIn(".listRowBackground(Color.clear)", settings)
+        self.assertNotIn(".borderedProminent", settings)
+        self.assertNotIn("look: .footnote", settings)
         in_place = section(source("NekoWidget/Services/MembershipAccessContext.swift"),
                            "struct MembershipRestoreButton: View {", "#if DEBUG")
         self.assertIn("MembershipOfferModel.live(presentsOffer: false)", in_place)
