@@ -131,12 +131,21 @@ class InvitationLifetimeTests(unittest.TestCase):
         self.assertIn('static let invitationLifetimeCaption = "24時間使えます。"', SETUP)
 
     def test_caption_sits_under_each_invite_button(self):
-        invite = section(SETUP, "private func invitationSection(_ window: GroupWindow) -> some View {",
-                         "private func renewAndShareInvitation() {")
-        self.assertEqual(invite.count("GroupWindowPresentation.invitationLifetimeCaption"), 2)
-        self.assertLess(invite.index('"group-window-share-invitation"'), invite.index("invitationLifetimeCaption"))
-        renew = section(invite, '"group-window-renew-invitation"', '} else if let earlier')
-        self.assertLess(renew.index("invitationLifetimeCaption"), renew.index("前に送ったリンクは使えなくなります。"))
+        # 11/24 (M8・M9): 「＋ 招待する」 is a seat among the faces; while a
+        # link is live, one small line under them says how long it lasts.
+        members = section(SETUP, "private func membersSection(_ window: GroupWindow) -> some View {",
+                          "private func face(")
+        self.assertLess(members.index("inviteSeat"), members.index("invitationLine(window)"))
+        line = section(SETUP, "private func invitationLine(_ window: GroupWindow) -> some View {",
+                       "private func inviteFooter(")
+        self.assertEqual(line.count("GroupWindowPresentation.invitationLifetimeCaption"), 1)
+        self.assertLess(line.index("model.activeInvitation != nil"), line.index("invitationLifetimeCaption"))
+        self.assertLess(line.index("invitationLifetimeCaption"), line.index('"group-window-revoke-invitation"'))
+        seat = section(SETUP, "private var inviteSeat: some View {", "private func shareInvitation() {")
+        self.assertIn('"group-window-share-invitation"', seat)
+        share = section(SETUP, "private func shareInvitation() {", "private func invitationLine(")
+        self.assertIn("await model.invitationToShare()", share)
+        self.assertNotIn("招待リンクを作る", SETUP)
         family = section(NOTEBOOK, "struct FamilyNotebookInviteView: View {", "enum FamilyInviteSendTap")
         self.assertLess(family.index('"family-notebook-send-invitation"'), family.index("invitationLifetimeCaption"))
 

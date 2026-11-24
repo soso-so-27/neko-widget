@@ -3313,14 +3313,14 @@ class GroupWindowUITests(unittest.TestCase):
 
         # The invitation link travels only through the share sheet; it is
         # never drawn on screen or logged.
-        invitation = section(view, "private func invitationSection(", "private func leaveSection(")
+        invitation = section(view, "private func showsInviteSeat(", "private func leaveSection(")
         self.assertIn("item: invitation.shareText", invitation)
         self.assertEqual(view.count("shareText"), 1)
 
         # 1030q: admission is automatic after the adapter verifies the invitation
         # signature and current owner/window/limits. UI exposes results, never a manual approval.
         self.assertNotIn("verificationPhrase", view)
-        request_row = section(view, "private func requestRow(", "private func invitationSection(")
+        request_row = section(view, "private func requestRow(", "private func showsInviteSeat(")
         self.assertNotIn("model.approve(request)", request_row)
         self.assertIn("client.reconcileAdmissions()", view)
         self.assertIn("admissionResults", view)
@@ -4347,7 +4347,7 @@ class OwnerDecisions1108Tests(unittest.TestCase):
         for gone in ("知らない人なら断れます。", "参加したあとでも外せます。", "リンクから「参加する」を押した人は"):
             self.assertNotIn(gone, setup)
         # 17: the invitation's message and expiry are not drawn; the message still travels in the share sheet.
-        invitation = section(setup, "private func invitationSection(_ window: GroupWindow) -> some View {", "private func renewAndShareInvitation()")
+        invitation = section(setup, "private func showsInviteSeat(", "private func invitationShareSheet(")
         self.assertNotIn('"有効期限"', invitation)
         self.assertNotIn("GroupWindowPresentation.inviteMessage(", invitation)
         sheet = section(setup, "private func invitationShareSheet(", "private func manageSection(")
@@ -5363,7 +5363,7 @@ class GroupWindowUsabilityTests(unittest.TestCase):
         # Removing a member has a visible button and a VoiceOver action, not only a swipe.
         self.assertIn('"group-window-remove-member"', setup)
         # 11/14: the action is offered only for someone who can be removed.
-        self.assertIn('if canRemove {\n                Button("外す")', setup)
+        self.assertIn('if canRemove {\n                    Button("外す")', setup)
         self.assertNotIn('.accessibilityAction(named: Text("外す"))', setup)
         # Photo tiles open as buttons (「ママからの写真、3日前」); the heart
         # says whether this person sent one (11/14).
@@ -5411,7 +5411,7 @@ class WorkingFeedbackTests(unittest.TestCase):
             "NekoWidget/Views/GroupWindowView.swift": (
                 'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)',
                 'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: reloading)',
-                'workingTitle: "追加しています…"',
+                'model.addingFavoriteID == entry.id ? "追加しています…" : "自分のお気に入りに追加"',
                 'WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)',
                 '"解除しています…" : "表示しています…"',
                 'WorkingLabel(title: "もう一度送る", workingTitle: "送っています…", working: running == record.id)',
@@ -5423,7 +5423,7 @@ class WorkingFeedbackTests(unittest.TestCase):
                 'workingTitle: "終わりにしています…"',
                 'workingTitle: "抜けています…"',
                 'WorkingLabel(title: "断る", workingTitle: "断っています…"',
-                'WorkingLabel(title: "招待リンクを作る", workingTitle: "作っています…"',
+                '.accessibilityLabel(preparingInvitation ? "招待を用意しています" : "招待する")',
                 'WorkingLabel(title: "参加をやめる", workingTitle: "やめています…"',
             ),
             "NekoWidget/Views/FamilyNotebookView.swift": (
@@ -6147,8 +6147,11 @@ class Build269FeedbackTests(unittest.TestCase):
                      "NekoWidget/Views/EvacuationPreparationView.swift"):
             self.assertIn("importBirthdays(profiles)", source(path), path)
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("let shown = !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)", window)
-        self.assertIn("if shown && !entry.isOwn {", window)
+        # 11/24 (V2): own photos show the hearts they got; お気に入り stays
+        # for someone else's photo only.
+        self.assertIn("!entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)", window)
+        self.assertIn("if isShown(entry) && !entry.isOwn { favoriteButton(entry) }", window)
+        self.assertIn("isShown(entry) && !entry.isOwn && !model.isFormer && model.acceptsHearts(entry.id)", window)
 
 
 class TwoPersonWindowHiddenTests(unittest.TestCase):
@@ -8282,9 +8285,15 @@ class DesignPolish1111Tests(unittest.TestCase):
         entry = section(store, "struct Entry: Codable", "\n    }\n")
         self.assertNotIn("aspect", entry.lower())
         self.assertNotIn("UserDefaults", shape)
-        # The list's heart is filled only for this iPhone's own heart.
-        self.assertIn('Image(systemName: mine ? "heart.fill" : "heart")', body)
+        # 11/24 (F2): filled for this person's own heart, or on their own
+        # photo with hearts; red outline when only others sent one.
+        self.assertIn('Image(systemName: look.isFilled ? "heart.fill" : "heart")', body)
         self.assertNotIn("|| heartCount > 0 ? \"heart.fill\"", body)
+        look = section(screen, "enum GroupHeartLook: Equatable {", "\n}\n")
+        for rule in ("self = count > 0 ? .filled : .hidden", "} else if mine {\n            self = .filled",
+                     "} else if count > 0 {\n            self = .othersOnly", "self = canHeart ? .empty : .hidden",
+                     "var color: Color { self == .empty ? Color.secondary : Color.red }"):
+            self.assertIn(rule, look)
 
     def test_photo_tab_cards_keep_the_screen_margin(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
@@ -8885,8 +8894,13 @@ class MainTabsLook1112Tests(unittest.TestCase):
 
     def test_received_photo_row_is_a_gift(self) -> None:
         tile = section(self.window, "private struct GroupPhotoTile: View {", "\n}\n")
-        self.assertIn('GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)', tile)
-        self.assertIn(".font(.body.weight(.semibold))", tile)
+        # 11/24 (F4): the circle takes the name 「メンバー」 shows, own photos too.
+        self.assertIn("model.memberName(entry.senderParticipantID, fallback: entry.senderDisplayName)", tile)
+        self.assertNotIn('GroupMemberAvatar(name: entry.isOwn ? "あなた"', tile)
+        row = section(self.window, "struct GroupSenderRow<Trailing: View>: View {", "\n}\n")
+        self.assertIn("GroupMemberAvatar(name: avatarName, size: 30)", row)
+        self.assertIn(".font(.body.weight(.semibold))", row)
+        self.assertIn("GroupSenderRow(avatarName: avatarName, name: shownName,", tile)
         self.assertIn("GroupPhotoTileDate.text(entry.createdAt)", tile)
         self.assertIn(".font(.title3.weight(.semibold))", tile)
         self.assertIn(".frame(minWidth: 44, minHeight: 44)", tile)
@@ -9647,7 +9661,9 @@ class MadoBugFixes1120Tests(unittest.TestCase):
         self.assertIn("heartablePhotoIDs = listed", sync)
         tile = section(self.window, "private struct GroupPhotoTile: View {", "private var tileAspectRatio")
         self.assertIn("model.acceptsHearts(entry.id)", tile)
-        self.assertIn(".disabled(!model.acceptsHearts(entry.id))", self.window)
+        # 11/24: a heart the relay no longer takes is shown, not offered.
+        self.assertIn("isShown(entry) && !entry.isOwn && !model.isFormer && model.acceptsHearts(entry.id)", self.window)
+        self.assertIn("if canHeart {\n            Button(action: toggleHeart)", tile + section(self.window, "private var heartButton: some View {", "\n}\n"))
         heart = section(self.window, "func toggleHeart(_ photoID: String) async {", "private func applyMyHeart(")
         self.assertIn("== .deliveryExpired", heart)
 
@@ -9704,7 +9720,7 @@ class MadoBugFixes1120Tests(unittest.TestCase):
         shown = section(self.window, "func shownHearts(_ photoID: String)", "func acceptsHearts(")
         self.assertIn("!hiddenPeople.contains($0.participantID)", shown)
         self.assertIn("private var heartCount: Int { model.shownHearts(entry.id).count }", self.window)
-        self.assertIn("model.shownHearts(entry.id).map(\\.displayName)", self.window)
+        self.assertIn("let givers = model.shownHearts(entry.id).sorted { $0.updatedAt < $1.updatedAt }", self.window)
 
     def test_join_name_has_the_same_limit_as_create(self) -> None:
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")

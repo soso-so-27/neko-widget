@@ -28,6 +28,12 @@ actor GroupWindowFixture: GroupWindowClient {
             mother.devices += (2...3).map { .init(id: "fixture-b\($0)", displayName: "iPhone \($0)", isThisDevice: false) }
         }
         var members = [owner, mother]
+        // 11/24: a third person for the hearts captures (two givers at once).
+        if CommandLine.arguments.contains("--group-window-hearts-fixture") {
+            members.append(GroupMember(id: "fixture-grandmother", personID: "fixture-person-g", displayName: "おばあちゃん",
+                role: .member, state: .active,
+                devices: [.init(id: "fixture-g1", displayName: "iPhone", isThisDevice: false)]))
+        }
         if scenario == .sixPeople {
             members += (3...6).map { i in
                 GroupMember(id: "fixture-member-\(i)", personID: "fixture-person-\(i)", displayName: "家族\(i)",

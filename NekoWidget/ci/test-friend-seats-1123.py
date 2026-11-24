@@ -77,8 +77,9 @@ class YoungWindowRowTests(unittest.TestCase):
         self.assertIn('identifier: "group-window-seats-row"', screen)
         # The approved App Store screenshots stay as they are.
         self.assertIn("CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument)", screen)
-        # Inviting stays on 「メンバー」.
-        self.assertIn('"group-window-create-invitation"', SETUP)
+        # Inviting stays on 「メンバー」 (11/24: its 「＋ 招待する」 seat).
+        self.assertIn('"group-window-share-invitation"', SETUP)
+        self.assertIn("private var inviteSeat: some View {", SETUP)
 
 
 class FirstPhotoWhileWaitingTests(unittest.TestCase):

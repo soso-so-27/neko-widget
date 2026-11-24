@@ -120,10 +120,14 @@ class WindowTiles(unittest.TestCase):
         self.assertIn('.accessibilityIdentifier("group-photo-tile-heart")', heart)
 
     def test_large_text_gives_the_name_its_own_line(self):
+        # 11/24: the tile and the opened photo share one sender row.
         tile = block(WINDOW, "private struct GroupPhotoTile: View {")
-        self.assertIn("if typeSize.isAccessibilitySize {", tile)
-        self.assertIn("senderName.lineLimit(2)", tile)
-        self.assertIn("senderName.lineLimit(1)", tile)
+        self.assertIn("GroupSenderRow(avatarName: avatarName, name: shownName,", tile)
+        row = block(WINDOW, "struct GroupSenderRow<Trailing: View>: View {")
+        self.assertIn("if typeSize.isAccessibilitySize {", row)
+        self.assertIn("senderName.lineLimit(2)", row)
+        self.assertIn("senderName.lineLimit(1)", row)
+        self.assertIn("GroupSenderRow(", block(WINDOW, "private func details(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {"))
 
 
 class PassingLines(unittest.TestCase):
@@ -135,7 +139,7 @@ class PassingLines(unittest.TestCase):
 
 class Members(unittest.TestCase):
     def test_remove_is_offered_only_when_possible(self):
-        self.assertIn('if canRemove {\n                Button("外す")', SETUP)
+        self.assertIn('if canRemove {\n                    Button("外す")', SETUP)
         self.assertNotIn('.accessibilityAction(named: Text("外す"))', SETUP)
 
 
