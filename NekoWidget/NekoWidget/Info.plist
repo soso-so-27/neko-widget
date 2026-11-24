@@ -137,7 +137,7 @@
 	<key>RootSyncKeychainAccessGroup</key>
 	<string>$(AppIdentifierPrefix)$(APP_BUNDLE_IDENTIFIER)</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>機種変更で、このiPhoneの本人情報を同期する前に本人を確認します。</string>
+	<string>機種変更で、このiPhoneの情報を送り直す前に、持ち主か確かめます。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

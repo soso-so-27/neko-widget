@@ -62,7 +62,7 @@ struct MembershipOfferView: View {
         (SeasonalMovieRelease.isAvailable ? "月の作品、季節のムービー" : "月の作品、1年の作品", "rectangle.stack"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
         ("家族の手帳を作って、家族と一緒に書く", "book.closed"),
-        ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
+        ("\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せる", "icloud"),
     ]
     /// 11/22 (④): with no work to open yet (a kitten just met), the works'
     /// row goes last, after what Plus already does today. Same rows, same words.

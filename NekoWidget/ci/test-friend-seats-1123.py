@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """11/23 猫友のまど「席をとっておく」: the seats screen after 「作る」, the
 on-device invite message, a young まど's one row, the first photo chosen
-while waiting, 設定's 「まどに招待する」 and the join page. Source pins."""
+while waiting, 設定 without 「まどに招待する」 (11/24) and the join page. Source pins."""
 import pathlib
 import re
 import unittest
@@ -67,7 +67,7 @@ class YoungWindowRowTests(unittest.TestCase):
     def test_row_only_for_a_young_window_with_open_seats(self):
         self.assertIn("static let youngMemberLimit = 3", PRESENTATION)
         self.assertIn("static let youngPhotoLimit = 10", PRESENTATION)
-        rule = section(PRESENTATION, "static func offersSeatsRow(", "static func windowWithOpenSeats(")
+        rule = section(PRESENTATION, "static func offersSeatsRow(", "static func memberCountText(")
         for needle in ("window.canManage", "window.state == .active", "!isPaused(window)", "openSeats(window) > 0",
                        "window.memberCount < youngMemberLimit", "photoCount < youngPhotoLimit"):
             self.assertIn(needle, rule)
@@ -105,15 +105,18 @@ class FirstPhotoWhileWaitingTests(unittest.TestCase):
 
 
 class SettingsInviteTests(unittest.TestCase):
-    def test_settings_invites_to_a_made_window_with_open_seats_else_recommends(self):
-        self.assertLess(SETTINGS.index('identifier: "settings-invite-friends"'),
-                        SETTINGS.index("} else if let url = AppStoreListing.pageURL {"))
-        self.assertIn('Text(preparing ? "用意しています…" : "まどに招待する")', SETTINGS)
+    def test_settings_only_recommends_and_inviting_stays_on_the_window(self):
+        # 11/24 (owner): 設定 has no 「まどに招待する」; inviting is the まど's own 「招待する」.
+        self.assertNotIn("まどに招待する", SETTINGS)
+        self.assertNotIn('"settings-invite-friends"', SETTINGS)
+        self.assertNotIn("GroupSeatsInviteButton(", SETTINGS)
+        self.assertNotIn("windowWithOpenSeats", SETTINGS)
+        self.assertNotIn("static func windowWithOpenSeats(", PRESENTATION)
         self.assertNotIn('猫友を招く', SETTINGS)
+        self.assertIn("if let url = AppStoreListing.pageURL {", SETTINGS)
         self.assertIn('Text("ねこのまどを紹介する").foregroundStyle(Color.primary)', SETTINGS)
-        rule = section(PRESENTATION, "static func windowWithOpenSeats(", "\n    }\n")
-        self.assertIn("isMyWindow($0)", rule)
-        self.assertIn("openSeats($0) > 0", rule)
+        self.assertIn('.accessibilityIdentifier("settings-recommend-app")', SETTINGS)
+        self.assertIn("GroupSeatsInviteButton(client: model.client, windowID: model.windowID", WINDOW)
 
 
 class JoinPageTests(unittest.TestCase):

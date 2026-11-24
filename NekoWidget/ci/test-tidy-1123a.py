@@ -80,7 +80,7 @@ class CatCareTests(unittest.TestCase):
 
 class AutosaveOffTests(unittest.TestCase):
     def test_export_and_account_wait_for_something_saved(self):
-        sections = section(SAVE, "@ViewBuilder private var settingsSections: some View {", "if let profileTransfer {")
+        sections = section(SAVE, "@ViewBuilder private var settingsSections: some View {", "if let profileTransfer,")
         self.assertIn("authentication.accountDeletionState == nil && hasSavedSomething {", sections)
         self.assertIn("if (authentication.isSignedIn && hasSavedSomething) || authentication.accountDeletionState != nil {",
                       sections)

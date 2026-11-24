@@ -31,7 +31,7 @@ struct AccountDeletionChoicesView: View {
             if ManagedPreservationConfiguration.current.isEnabled {
                 Section {
                     NavigationLink { ManagedPreservationView(deletesAccount: true) } label: {
-                        Label("自動保存のアカウント", systemImage: "icloud.slash")
+                        Label("自動保存のアカウントを消す", systemImage: "icloud.slash")
                     }
                     .accessibilityIdentifier("account-deletion-preservation")
                 } footer: {
@@ -39,11 +39,14 @@ struct AccountDeletionChoicesView: View {
                 }
             }
             // 11/8 (29): said once in the deletion flow, here, not on each screen.
-            Section {
-                Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
-                    .accessibilityIdentifier("account-deletion-subscriptions")
-            } footer: {
-                Text("Plusは、ここで消しても解約されません。解約はApp Storeのサブスクリプションからです。")
+            // 11/24 (B2): only to someone who has Plus or whose Plus is not confirmed yet.
+            PlusCancelNoteGate {
+                Section {
+                    Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+                        .accessibilityIdentifier("account-deletion-subscriptions")
+                } footer: {
+                    Text("Plusは、ここで消しても解約されません。解約はApp Storeのサブスクリプションからです。")
+                }
             }
         }
         .navigationTitle("アカウントとデータを消す")
@@ -81,12 +84,16 @@ struct SettingsSheetHost<Content: View>: View {
 @MainActor
 struct SettingsGearIcon: View {
     @ObservedObject private var persistence = AppRecordPersistence.shared
+    /// 11/24 (F2): written by 自動保存 when it was opened after Plus ended.
+    @AppStorage(AppRecordPersistence.planEndSeenKey) private var planEndSeen = false
     private var stopped: Bool {
         guard ManagedPreservationConfiguration.current.isEnabled else { return false }
         // 11/20: settings that cannot be read as they are (P01–P03) leave
         // `enabled` unknown and saving stopped: the same dot, never silence.
+        // 11/24 (F2): an ended Plus marks the gear until 自動保存 was opened;
+        // the row keeps saying 「止まっています」.
         return persistence.settingsUnusable != nil
-            || (persistence.enabled && (persistence.planEnded || persistence.needsAttention))
+            || (persistence.enabled && ((persistence.planEnded && !planEndSeen) || persistence.needsAttention))
     }
     var body: some View {
         Image(systemName: "gearshape")
@@ -174,6 +181,8 @@ struct SettingsView: View {
     @State private var showsFamilyNotebook = false
     /// 11/19: 機種変更, only once the relay's gate answered open (GroupRecoveryAvailability).
     @State private var deviceChangeOpen = false
+    /// 11/24 (B3): 「ブロックした人」 only once someone is blocked (read from this iPhone).
+    @State private var hasHiddenMembers = false
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @ObservedObject private var familySharing = FamilyNotebookSharing.shared
 #if DEBUG || INTERNAL_PRESENTATION
@@ -192,6 +201,7 @@ struct SettingsView: View {
     /// 11/19: 機種変更 linked the notebook on this iPhone (FamilyNotebookServiceFactory).
     @State private var notebookRecoveryLinked = false
     private var showsFamilyNotebookRow: Bool { familyNotebook.hasFamily || awaitsFamilyApproval || awaitsRecoveredNotebook }
+    private var showsBlockedRow: Bool { GroupWindowClientProvider.ui != nil && hasHiddenMembers }
     /// 11/19: the notebook's key has not reached this iPhone yet, or 機種変更
     /// linked it and its copy has not arrived (the app installed again).
     private var awaitsRecoveredNotebook: Bool {
@@ -315,7 +325,7 @@ struct SettingsView: View {
             // Cats are added and opened from the ツール tab's row of faces only
             // (11/7: 猫のプロフィール here was a second door). The notebook and
             // the people hidden in まど are the two things shared with others.
-            if showsFamilyNotebookRow || GroupWindowClientProvider.ui != nil || deviceChangeOpen {
+            if showsFamilyNotebookRow || showsBlockedRow || deviceChangeOpen {
                 Section {
                     if showsFamilyNotebookRow {
                         // The notebook from 設定 too, where leaving it is looked for (11/7).
@@ -346,7 +356,7 @@ struct SettingsView: View {
                         }
                         .accessibilityIdentifier("settings-family-notebook")
                     }
-                    if GroupWindowClientProvider.ui != nil {
+                    if showsBlockedRow {
                         // 11/8: 「表示しない」 was folded into ブロック; un-blocking stays here.
                         NavigationLink { GroupHiddenMembersView() } label: {
                             Label("ブロックした人", systemImage: "hand.raised")
@@ -392,17 +402,8 @@ struct SettingsView: View {
                 }
                 // Telling a friend, from where people look for the app's own
                 // things (11/6). Hidden until the App Store page exists.
-                // 11/23: with a まど this iPhone made that has an open seat,
-                // the row invites to that まど instead.
-                if let client = GroupWindowClientProvider.ui,
-                   let seatWindow = GroupWindowPresentation.windowWithOpenSeats(GroupWindowListNavigation.shared.lastListed) {
-                    GroupSeatsInviteButton(client: client, windowID: seatWindow.id, windowName: seatWindow.name,
-                                           identifier: "settings-invite-friends") { preparing in
-                        Label { Text(preparing ? "用意しています…" : "まどに招待する").foregroundStyle(Color.primary) } icon: {
-                            Image(systemName: "person.badge.plus")
-                        }
-                    }
-                } else if let url = AppStoreListing.pageURL {
+                // 11/24: always this row; inviting to a まど is the まど's own 「招待する」 only.
+                if let url = AppStoreListing.pageURL {
                     ShareLink(item: url, message: Text(AppStoreListing.recommendMessage)) {
                         Label { Text("ねこのまどを紹介する").foregroundStyle(Color.primary) } icon: {
                             Image(systemName: "square.and.arrow.up")
@@ -520,6 +521,10 @@ struct SettingsView: View {
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
         // 11/19: nothing while 機種変更 is closed at the relay or not known.
         .task { deviceChangeOpen = await GroupRecoveryAvailability.isOpen() }
+        // Read again each time 設定 shows, so un-blocking the last person removes the row.
+        .task {
+            hasHiddenMembers = GroupHiddenMembersView.hasHiddenMembers(await GroupWindowLocalPhotoStore.shared.knownWindows())
+        }
         .task(id: familySharing.state) { notebookRecoveryLinked = FamilyNotebookServiceFactory.hasRecoveryLink() }
 #if DEBUG || INTERNAL_PRESENTATION
         .sheet(isPresented: $showsMembershipPreview) {
@@ -737,12 +742,6 @@ struct SettingsView: View {
                 Text("困ったとき")
             }
 
-            if isSaving {
-                Section {
-                    Label("変更を保存しています…", systemImage: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .navigationTitle("写真の表示と整理")
         .navigationBarTitleDisplayMode(.inline)

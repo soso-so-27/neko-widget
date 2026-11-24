@@ -3629,12 +3629,12 @@ final class SoloMemoriesUITests: XCTestCase {
         tap("preservation-account-delete")
         tap("preservation-account-delete-confirm")
         XCTAssertTrue(app.buttons["届いたか確かめる"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.staticTexts["自動保存のアカウントを削除しました"].exists)
+        XCTAssertFalse(app.staticTexts["自動保存のアカウントを消しました"].exists)
         capture("preservation-account-delete-response-lost")
         tap("届いたか確かめる")
-        XCTAssertTrue(app.staticTexts["アカウントを削除しています"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["アカウントを消しています"].waitForExistence(timeout: 8))
         tap("削除状況を確認")
-        XCTAssertTrue(app.staticTexts["自動保存のアカウントを削除しました"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["自動保存のアカウントを消しました"].waitForExistence(timeout: 8))
         XCTAssertFalse(app.buttons["preservation-account-delete"].exists)
         capture("preservation-account-delete-completed")
         app.terminate()
@@ -4014,7 +4014,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(values.label.contains("写真に新しいメモを書く"), "A new memo is free (11/13)")
             for line in ["月の作品、季節のムービー",
                          "まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
-                         "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
+                         "この子のこととメモを保存して、新しいiPhoneに戻せる"] {
                 XCTAssertTrue(values.label.contains(line), "Missing value: \(line)")
             }
             let reassurance = app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch
