@@ -47,6 +47,19 @@ function coveredThrough(start: number, intervals: Interval[]): number {
   return end;
 }
 
+function nextBillingStart(start: number, previousStart: number | undefined): number {
+  const next = new Date(start);
+  const thisMonthEnd = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  let anchorDay = next.getUTCDate();
+  if (anchorDay === thisMonthEnd && previousStart !== undefined) {
+    anchorDay = Math.max(anchorDay, new Date(previousStart).getUTCDate());
+  }
+  next.setUTCDate(1);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  return next.setUTCDate(Math.min(anchorDay, lastDay));
+}
+
 function cloudflareCosts(cf: any, account: string, started: number, diagnostic: CostDiagnostic) {
   if (cf.success !== true || (cf.errors?.length ?? 0) > 0 || (cf.messages?.length ?? 0) > 0
       || !Array.isArray(cf.result) || !cf.result.length || cf.result_info) throw unavailable();
@@ -76,6 +89,13 @@ function cloudflareCosts(cf: any, account: string, started: number, diagnostic: 
   let monthlyUsd = 0, coveredAt = started;
   for (const cycles of subscriptions.values()) {
     const starts = [...cycles.keys()].sort((a, b) => a - b);
+    const currentStart = starts.at(-1)!;
+    const previousStart = starts.at(-2);
+    // A previous cycle can still be fresh for 48 hours after it closes.
+    // Its freshness cannot substitute for evidence of the new monthly cycle.
+    diagnostic.stage = 'coverage'; diagnostic.reason = 'missing_days_or_services';
+    if (started >= nextBillingStart(currentStart, previousStart)) throw unavailable();
+
     for (const [index, start] of starts.entries()) {
       const next = starts[index + 1] ?? started;
       for (const series of cycles.get(start)!.values()) {
@@ -91,10 +111,8 @@ function cloudflareCosts(cf: any, account: string, started: number, diagnostic: 
       }
     }
 
-    const currentStart = starts.at(-1)!;
     const current = cycles.get(currentStart)!;
     diagnostic.stage = 'freshness'; diagnostic.reason = 'short_or_stale_period';
-    if (currentStart < started - 32 * day) throw unavailable();
     let currentForecast = 0, latest = currentStart;
     for (const series of current.values()) {
       const end = series.intervals.at(-1)!.to;
@@ -110,7 +128,6 @@ function cloudflareCosts(cf: any, account: string, started: number, diagnostic: 
     if (coveredThrough(currentStart, currentIntervals) !== latest) throw unavailable();
 
     let previousForecast = 0;
-    const previousStart = starts.at(-2);
     if (previousStart !== undefined) {
       const previous = cycles.get(previousStart)!;
       const previousIntervals = [...previous.values()].flatMap(series => series.intervals);
