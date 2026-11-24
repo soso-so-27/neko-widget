@@ -591,6 +591,9 @@ class ReviewScreenshotWorkflowTests(unittest.TestCase):
         captured = set(re.findall(r'shot\("([A-Za-z0-9_]+)"', self.ui_test))
         if 'shot("29_widget_guide_\\(page)"' in self.ui_test:
             captured |= {f"29_widget_guide_{page}" for page in range(2, 6)}
+        # variantShot("<name>", large, ...): the standard size and `<name>_ax5`.
+        for base in re.findall(r'variantShot\("([A-Za-z0-9_]+)"', self.ui_test):
+            captured |= {base, base + "_ax5"}
         self.assertEqual(captured, set(self.collector.FULL_SCREENS))
         self.assertEqual(len(self.collector.FULL_SCREENS), len(set(self.collector.FULL_SCREENS)))
         se_block = self.ui_test.split("static let seScreens: Set<String> = [", 1)[1].split("]", 1)[0]
