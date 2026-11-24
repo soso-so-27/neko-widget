@@ -233,12 +233,25 @@ export class S3RecoveryCopy {
   async listOwnerVersionsPage(ownerId: string,
     cursor?: RecoveryVersionCursor): Promise<RecoveryVersionPage> {
     if (!ownerPattern.test(ownerId)) throw unavailable();
-    const prefix = `recovery/v1/${ownerId}/`;
+    return this.listVersionsPage(`recovery/v1/${ownerId}/`, 1000, cursor);
+  }
+
+  /** The record eraser drains only the first small page of one exact key.
+   * It re-lists from the start after deletion, so removing the cursor version
+   * cannot strand older versions. An unexpected prefix match fails closed. */
+  async listRecordKeyVersionsPage(ownerId: string, key: string): Promise<RecoveryVersionPage> {
+    if (recoveryKeyPattern.exec(key)?.[1] !== ownerId
+      || !['photo', 'record'].includes(key.split('/')[3] ?? '')) throw unavailable();
+    return this.listVersionsPage(key, 8, undefined, key);
+  }
+
+  private async listVersionsPage(prefix: string, limit: number,
+    cursor?: RecoveryVersionCursor, exactKey?: string): Promise<RecoveryVersionPage> {
     if (cursor && (!recoveryKeyPattern.test(cursor.keyMarker)
       || !cursor.keyMarker.startsWith(prefix)
       || (cursor.versionIdMarker !== undefined &&
         (!versionPattern.test(cursor.versionIdMarker) || cursor.versionIdMarker === 'null')))) throw unavailable();
-    const params = new URLSearchParams({ prefix, 'max-keys': '1000', 'encoding-type': 'url' });
+    const params = new URLSearchParams({ prefix, 'max-keys': String(limit), 'encoding-type': 'url' });
     params.set('versions', '');
     if (cursor) {
       params.set('key-marker', cursor.keyMarker);
@@ -254,7 +267,7 @@ export class S3RecoveryCopy {
       const signed = await signer.sign();
       const send = this.fetcher;
       const response = await send(signed.url, { method: 'GET', headers: signed.headers,
-        redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+        redirect: 'manual', signal: AbortSignal.timeout(exactKey === undefined ? 30_000 : 8_000) });
       if (response.status !== 200) throw unavailable();
       const xml = new TextDecoder('utf-8', { fatal: true }).decode(
         await readBoundedBody(response.body, maxVersionListBytes, unavailable));
@@ -262,7 +275,7 @@ export class S3RecoveryCopy {
       const root = objectField(new XMLParser({ parseTagValue: false }).parse(xml).ListVersionsResult);
       if (stringField(root.Name) !== this.config.bucket
         || decodeURIComponent(stringField(root.Prefix)) !== prefix
-        || root.EncodingType !== 'url' || root.MaxKeys !== '1000'
+        || root.EncodingType !== 'url' || root.MaxKeys !== String(limit)
         || (cursor !== undefined && (root.KeyMarker === undefined || root.VersionIdMarker === undefined))
         || (root.KeyMarker !== undefined && decodeURIComponent(stringField(root.KeyMarker))
           !== (cursor?.keyMarker ?? ''))
@@ -279,7 +292,8 @@ export class S3RecoveryCopy {
           const row = objectField(item);
           const key = decodedKey(row.Key);
           const versionId = stringField(row.VersionId);
-          if (!key.startsWith(prefix) || !versionPattern.test(versionId) || versionId === 'null'
+          if (!key.startsWith(prefix) || (exactKey !== undefined && key !== exactKey)
+            || !versionPattern.test(versionId) || versionId === 'null'
             || seen.has(`${key}\0${versionId}`)) throw unavailable();
           seen.add(`${key}\0${versionId}`);
           const size = kind === 'Version' ? Number(stringField(row.Size)) : null;
@@ -288,7 +302,7 @@ export class S3RecoveryCopy {
           versions.push({ key, versionId, deleteMarker: kind === 'DeleteMarker', bytes: size });
         }
       }
-      if (versions.length > 1000) throw unavailable();
+      if (versions.length > limit) throw unavailable();
       if (truncated === 'false') {
         if ((root.NextKeyMarker !== undefined && root.NextKeyMarker !== '')
           || (root.NextVersionIdMarker !== undefined && root.NextVersionIdMarker !== '')) throw unavailable();
@@ -298,7 +312,8 @@ export class S3RecoveryCopy {
       const keyMarker = decodedKey(root.NextKeyMarker);
       const versionIdMarker = root.NextVersionIdMarker === undefined || root.NextVersionIdMarker === ''
         ? undefined : stringField(root.NextVersionIdMarker);
-      if (!keyMarker.startsWith(prefix) || (versionIdMarker !== undefined
+      if (!keyMarker.startsWith(prefix) || (exactKey !== undefined && keyMarker !== exactKey)
+        || (versionIdMarker !== undefined
         && (!versionPattern.test(versionIdMarker) || versionIdMarker === 'null'))
         || (versions.some(item => item.key === keyMarker) && versionIdMarker === undefined)
         || (cursor?.keyMarker === keyMarker && cursor.versionIdMarker === versionIdMarker)) throw unavailable();

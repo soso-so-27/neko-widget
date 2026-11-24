@@ -10,6 +10,7 @@ import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, type RecoveryVersion, type RecoveryVersionCursor, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import { OwnerArchiveRecovery } from '../src/owner-archive-recovery';
 import { RecordPhysicalDeletion, type RecordDeletionJob } from '../src/record-physical-deletion';
+import { QueuedRecordErasure } from '../src/queued-record-erasure';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { syntheticKeyAuthority } from './key-fixture';
 import worker, { route, type Services, type Env } from '../src/index';
@@ -574,7 +575,7 @@ it('resumes a committed deletion before capturing the owner inventory that requi
   }
 });
 
-it('erases only committed target payloads across all pages and confirms their absence before dequeuing', async () => {
+it('erases only the committed record keys and confirms absence before dequeuing', async () => {
   const authority = await syntheticKeyAuthority();
   const f = await fixture({ keys: envelopeKeyCustody({ enabled: true, wrapper: authority.make() }) });
   const remote = syntheticRecovery(f.options.keys);
@@ -591,16 +592,24 @@ it('erases only committed target payloads across all pages and confirms their ab
   const oldRecord = remote.references.find(ref => ref.key.includes('/record/'))!;
   const interrupted = await remote.s3.putVersioned(`recovery/v1/${ownerId}/record/${crypto.randomUUID()}`,
     await remote.s3.getVerified(oldRecord));
-  recordPayloads.add(`${interrupted.key}:${interrupted.versionId}`);
   await archive.put(f.session.token, kept, f.request());
   await archive.remove(f.session.token, id, 1);
   const job = await readJob();
   expect(job).toMatchObject({ owner_id: ownerId, record_id: id, tombstone_revision: 2 });
 
   const erased: string[] = [];
+  const listed: string[] = [];
   let providerRemoves = false;
-  const executor = new RecordPhysicalDeletion({ db: binding.DB, bucket: binding.ARCHIVE,
-    archive: recovery, records: remote.recovery, inventory: remote.s3, now: f.options.now,
+  const executor = new QueuedRecordErasure({ db: binding.DB, bucket: binding.ARCHIVE,
+    records: remote.recovery, now: f.options.now,
+    inventory: { async listRecordKeyVersionsPage(owner, key) {
+      expect(owner).toBe(ownerId);
+      listed.push(key);
+      const versions = remote.references.filter(item => item.key === key
+        && remote.objects.has(`${item.key}:${item.versionId}`))
+        .map(({ key, versionId, bytes }) => ({ key, versionId, bytes, deleteMarker: false }));
+      return { versions, nextCursor: null };
+    } },
     eraser: { async requestExactVersionDeletion(owner, item) {
       expect(owner).toBe(ownerId);
       const version = `${item.key}:${item.versionId}`;
@@ -611,24 +620,30 @@ it('erases only committed target payloads across all pages and confirms their ab
   });
   const orphan = await remote.s3.putVersioned(`recovery/v1/${ownerId}/photo/${crypto.randomUUID()}`, photo);
   const targetR2 = () => binding.ARCHIVE.list({ prefix: `personal/${ownerId}/${id}/` });
-  const before = (await targetR2()).objects.map(object => object.key);
-  await expect(executor.step(job!)).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
-  expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
-  expect(erased).toEqual([]);
-  remote.objects.delete(`${orphan.key}:${orphan.versionId}`);
-
-  expect(await readJob()).toEqual(job);
-  expect((await targetR2()).objects.map(object => object.key)).toEqual(before);
-  expect(erased).toEqual([]);
-
   expect(await executor.step(job!)).toBe('processing');
   expect(await readJob()).toEqual(job);
   expect((await targetR2()).objects).toHaveLength(0);
+
+  const original = await binding.DB.prepare(`SELECT photo_object_key FROM pa_record_recovery_versions
+    WHERE owner_id=? AND record_id=? AND revision=1`).bind(ownerId, kept).first<string>('photo_object_key');
+  const targetPhoto = remote.references.find(ref => ref.key.includes('/photo/'))!;
+  const changeKept = (key: string) => binding.DB.prepare(`UPDATE pa_record_recovery_versions SET photo_object_key=?
+    WHERE owner_id=? AND record_id=? AND revision=1`).bind(key, ownerId, kept).run();
+  await changeKept(targetPhoto.key);
+  try {
+    await expect(executor.step(job!)).rejects.toMatchObject({ code: 'RECORD_ERASURE_SCOPE_UNVERIFIED' });
+    expect(listed).toEqual([]);
+    expect(erased).toEqual([]);
+  } finally { await changeKept(original!); }
+
   expect(await executor.step(job!)).toBe('processing');
   expect(await readJob()).toEqual(job);
   providerRemoves = true;
   expect(await executor.step(job!)).toBe('complete');
   expect(new Set(erased)).toEqual(recordPayloads);
+  expect(new Set(listed)).toEqual(new Set([targetPhoto.key, oldRecord.key]));
+  expect(remote.objects.has(`${orphan.key}:${orphan.versionId}`)).toBe(true);
+  expect(remote.objects.has(`${interrupted.key}:${interrupted.versionId}`)).toBe(true);
   expect(await readJob()).toBeNull();
   expect(await archive.read(f.session.token, kept)).toMatchObject({ document, photoBase64: encodePhoto(photo) });
   expect(await recovery.assembleQuarantineCandidate(ownerId, f.options.now())).toMatchObject({
