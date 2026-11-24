@@ -134,9 +134,9 @@ struct ManagedPreservationView: View {
         } message: {
             Text("途中まで保存した内容を削除します。ツールの記録と、復元した記録は残ります。あとで、いまの内容で保存し直せます。")
         }
-        .confirmationDialog("自動保存のアカウントを削除しますか？",
+        .confirmationDialog("自動保存のアカウントを消しますか？",
                             isPresented: $confirmsAccountDeletion, titleVisibility: .visible) {
-            Button("アカウントと保存したものを削除", role: .destructive) { coordinator.deleteServiceAccount() }
+            Button("アカウントと保存したものを消す", role: .destructive) { coordinator.deleteServiceAccount() }
                 .accessibilityIdentifier("preservation-account-delete-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
@@ -255,7 +255,7 @@ struct ManagedPreservationView: View {
         } else if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
             Section {
                 Text("保存したものとアカウントを消します。")
-                Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
+                Button("アカウントを消す", role: .destructive) { confirmsAccountDeletion = true }
                     .disabled(coordinator.hasUnsecuredMemo)
                     .accessibilityIdentifier("preservation-account-delete")
             }
@@ -272,15 +272,15 @@ struct ManagedPreservationView: View {
                     Button("もう一度削除を依頼する", role: .destructive) { coordinator.deleteServiceAccount() }
                 }
             case .processing:
-                Text("アカウントを削除しています")
+                Text("アカウントを消しています")
                 Text("この画面を閉じても、削除は続きます。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("削除状況を確認") { coordinator.checkAccountDeletion() }
             case .completed:
-                Label("自動保存のアカウントを削除しました", systemImage: "checkmark.circle")
+                Label("自動保存のアカウントを消しました", systemImage: "checkmark.circle")
                 Button("閉じる") { returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion() }
             case .requestedElsewhere:
-                Text("ほかのiPhoneでアカウントを削除しています")
+                Text("ほかのiPhoneでアカウントを消しています")
                 Text("削除を依頼したiPhoneで、状況を確かめてください。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("閉じる") { returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion() }
@@ -653,7 +653,10 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-retention-check")
         } header: { Text("Plusが終わったあと") }
         footer: {
-            Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")
+            // 11/24 (B5): 自動保存 already says this above アカウント.
+            if !isAccountEntry {
+                Text("Plusをやめたあとも、12か月のあいだは読み出しと書き出しができます。このiPhoneの記録は残ります。")
+            }
         }
     }
 

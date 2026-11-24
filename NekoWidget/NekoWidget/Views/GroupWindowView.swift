@@ -3774,6 +3774,11 @@ struct GroupHiddenMembersView: View {
         }
     }
 
+    /// 11/24 (B3): whether 設定 shows 「ブロックした人」 at all.
+    static func hasHiddenMembers(_ windows: [GroupWindowLocalPhotoStore.KnownWindow]) -> Bool {
+        windows.contains { !($0.hiddenMembers ?? []).isEmpty }
+    }
+
     private func restore(_ item: Row) async {
         _ = await Self.restore(item.member, windowID: item.window.id)
         windows = await GroupWindowLocalPhotoStore.shared.knownWindows()

@@ -395,7 +395,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
                         throw ManagedPreservationError.deletionNotReceived
                     }
                 }
-                return
+                // 11/24 (D4): 自動保存 does not keep saying 「消しています」 after
+                // the deletion finished; the finished record is cleared here and
+                // the screen goes on as signed out. The deleting screen still
+                // shows 「消しました」 until its own 「閉じる」.
+                guard self.purpose == .account, self.accountDeletionState == .completed else { return }
+                try await self.client.dismissCompletedDeletion()
+                try self.check(ticket)
+                self.accountDeletionState = nil
             }
             // A launch-time renewal may finish between the two observations.
             // Re-read only: opening settings must never rotate a save's credential.

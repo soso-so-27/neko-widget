@@ -939,7 +939,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertEqual(re.findall(r'\("([^"]+)", "[^"]+"\)', values), [
             "まどを作って、家族と写真を届け合う",
             "家族の手帳を作って、家族と一緒に書く",
-            "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる",
+            "\\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せる",
         ])
         self.assertIn('"解約しても、このiPhoneの写真・メモ・まどの写真は消えません",', view)
         # No memo-originated Plus entry remains (offer, usage name, auto-open key).
@@ -1005,7 +1005,9 @@ class RemainingBugs1120Tests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         gear = section(settings, "struct SettingsGearIcon: View {", "struct AutoSaveSettingsRow: View {")
         self.assertIn("return persistence.settingsUnusable != nil\n"
-                      "            || (persistence.enabled && (persistence.planEnded || persistence.needsAttention))", gear)
+                      "            || (persistence.enabled && ((persistence.planEnded && !planEndSeen) || persistence.needsAttention))", gear)
+        # 11/24 (F2): an ended Plus marks the gear until 自動保存 was opened after it.
+        self.assertIn("@AppStorage(AppRecordPersistence.planEndSeenKey) private var planEndSeen = false", gear)
         self.assertIn('.accessibilityValue(stopped ? "自動保存が止まっています" : "")', gear)
         row = section(settings, "struct AutoSaveSettingsRow: View {", "struct SettingsView: View {")
         self.assertIn('Text(persistence.settingsUnusable != nil ? "保存できていません"', row)

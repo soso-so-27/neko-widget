@@ -181,12 +181,6 @@ enum GroupWindowPresentation {
             && window.memberCount < youngMemberLimit && photoCount < youngPhotoLimit
     }
 
-    /// 11/23: 設定's 「まどに招待する」: the first まど this iPhone made that has
-    /// an open seat, from the まど list read in this run.
-    static func windowWithOpenSeats(_ windows: [GroupWindow]) -> GroupWindow? {
-        windows.first { isMyWindow($0) && $0.canManage && $0.state == .active && !isPaused($0) && openSeats($0) > 0 }
-    }
-
     static func memberCountText(_ window: GroupWindow) -> String {
         "メンバー\(window.memberCount)人（\(memberLimit)人まで）"
     }

@@ -7066,7 +7066,9 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
         self.assertNotIn("プロフィールの引き継ぎはいりません", settings)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        transfer = section(saving, "if let profileTransfer {", '"app-record-cat-profile-transfer"')
+        transfer = section(saving, "if let profileTransfer, AppRecordSettingsRules.offersProfileTransfer(", '"app-record-cat-profile-transfer"')
+        self.assertIn("(hasPlusHere: hasPlusHere,", transfer)
+        self.assertIn("enabled: persistence.enabled) {", transfer)
         self.assertIn('Label("Plusなしで猫の名前と日付だけ移す"', transfer)
         self.assertIn("CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)", transfer)
 
@@ -7099,7 +7101,7 @@ class OnePlaceSettingsTests(unittest.TestCase):
         # The delete button and its confirmation exist only on the deletion entry.
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
         self.assertEqual(view.count('"preservation-account-delete"'), 1)
-        self.assertIn('Button("アカウントと保存したものを削除", role: .destructive) { coordinator.deleteServiceAccount() }', view)
+        self.assertIn('Button("アカウントと保存したものを消す", role: .destructive) { coordinator.deleteServiceAccount() }', view)
         # 11/8 (28): the deletion entry is one sentence and the button, not the account screen again.
         self.assertIn("if deletesAccount { deletionContent }", view)
         deletion = section(view, "@ViewBuilder private var deletionContent: some View {", "private func accountDeletionSection(")
@@ -8146,7 +8148,7 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         values = section(offer, "static let values = [", "    ]\n")
         rows = ['("まどを作って、家族と写真を届け合う", "person.2")',
                 '("家族の手帳を作って、家族と一緒に書く", "book.closed")',
-                '("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud")']
+                '("\\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せる", "icloud")']
         for row in rows:
             self.assertIn(row, values)
         # 11/11: the daily Widget photo is free; 11/13: a new memo too. Exactly these four rows.
@@ -8155,7 +8157,17 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         self.assertEqual(
             re.findall(r'\("([^"]+)", "[^"]+"\)', values),
             ["まどを作って、家族と写真を届け合う", "家族の手帳を作って、家族と一緒に書く",
-             "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"])
+             "\\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せる"])
+        # 11/24 (A1): one wording for what 自動保存 keeps, in every place that names it.
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertIn('static let contents = "この子のこととメモ"', saving)
+        self.assertIn('Text("\\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneに戻せます。")', saving)
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        self.assertIn('case .preservation: "\\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"', model)
+        self.assertIn('Text("\\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneでも戻せます。")', model)
+        for old in ("猫のこと・メモ・ツールの記録", "猫のこと、メモ、ツールに書いたこと", "この子のこと、メモ、ツールの記録"):
+            for text in (offer, saving, model):
+                self.assertNotIn(old, text)
         self.assertLess(values.index(rows[0]), values.index(rows[1]))
         self.assertLess(values.index(rows[1]), values.index(rows[2]))
 
@@ -8488,7 +8500,7 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
                      '"季節のムービーができています。Plusで見られます。"',
                      '"まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"',
                      '"お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"',
-                     '"猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せます。"'):
+                     '"\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"'):
             self.assertIn(line, reasons)
         for gone in ("写真やメモの保存", "は無料です", "trialPeriod", "メモを書くのはPlus"):
             self.assertNotIn(gone, reasons)
@@ -8929,7 +8941,7 @@ class MainTabsLook1112Tests(unittest.TestCase):
         records = source("NekoWidget/Services/AppRecordPersistence.swift")
         start = section(records, "@ViewBuilder private var startAction: some View {",
                         "@ViewBuilder private var signedOutSections")
-        self.assertIn('Text("保存を始める")', start)
+        self.assertIn('mainButton("保存を始める") { start() }', start)
         self.assertIn(".buttonStyle(.borderedProminent)", start)
         self.assertIn('.accessibilityIdentifier("app-record-enable")', start)
         view = section(records, "struct AppRecordSettingsView: View {", "@ViewBuilder private var settingsSections")
@@ -9372,15 +9384,17 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # FamilyJourneyTests (C1FA3A11…, the 11/14 family journey), then
         # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words), then
         # LaunchWorkTests (4C570000…, the light first seconds after launch), then
-        # AccessibilitySpeechTests (C1A55E50…, the 11/14 VoiceOver review).
+        # AccessibilitySpeechTests (C1A55E50…, the 11/14 VoiceOver review), then
+        # SettingsRulesTests (C1B24C24…, the 11/24 設定 and 自動保存 row rules).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
                       "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,"
-                      "C1A55E500000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1A55E500000000000000002,C1B24C240000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
                       "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,"
-                      "C1A55E500000000000000001,);", self.project)
+                      "C1A55E500000000000000001,C1B24C240000000000000001,);", self.project)
+        self.assertIn("path = SettingsRulesTests.swift;", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:

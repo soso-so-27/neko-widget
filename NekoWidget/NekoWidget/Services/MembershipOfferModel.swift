@@ -64,7 +64,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .createFamily: "お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
-        case .preservation: "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せます。"
+        case .preservation: "\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"
         }
     }
 
@@ -974,7 +974,7 @@ private struct AutoSaveOfferAlert: ViewModifier {
             Button("保存を始める", action: start)
             Button("あとで", role: .cancel, action: later)
         } message: {
-            Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneでも戻せます。")
+            Text("\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneでも戻せます。")
         }
     }
 }
@@ -1323,6 +1323,23 @@ struct PlusOfferPrompt: View {
 /// restores right on the row (11/7: it opened a screen with the same button).
 /// Hidden entirely (by the caller) while the product is not configured.
 @MainActor
+/// 11/24 (B2): 「アカウントとデータを消す」's Plus note only to someone who has
+/// Plus, or whose Plus cannot be confirmed yet; never to someone without it.
+enum PlusCancelNote {
+    static func isShown(_ state: PlusEntitlementState) -> Bool {
+        state.permitsPersonalPlus || state.cannotBeConfirmed || state == .checking
+    }
+}
+
+struct PlusCancelNoteGate<Content: View>: View {
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    private let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+        if PlusCancelNote.isShown(purchases.entitlementState) { content }
+    }
+}
+
 struct PlusSettingsSection: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @State private var showsOffer = false
