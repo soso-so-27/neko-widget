@@ -2608,7 +2608,8 @@ private struct GroupPhotoDetail: View {
             .foregroundStyle(look.color)
             .contentTransition(.symbolEffect(.replace))
             .symbolEffect(.bounce, value: look.isFilled)
-            .frame(minWidth: 44, minHeight: 44)
+            // Starts at the left edge, under the sender's circle; still 44pt to press.
+            .frame(width: 44, height: 44, alignment: .leading)
             .contentShape(Rectangle())
     }
 
