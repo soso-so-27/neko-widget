@@ -126,7 +126,7 @@ private func check(_ condition: Bool, _ message: String) throws {
             == "Plus（11月8日まで）", "cancelled trial keeps until header")
         try check(PlusRenewalPresentation.settingsHeader(willAutoRenew: true, expiration: now,
             now: end, calendar: calendar, trialEndsAt: end, displayPrice: "¥980")
-            == "Plus（利用中）", "finished trial no longer advertised")
+            == "Plus（12月10日に更新）", "finished trial no longer advertised; the next renewal shows (11/24)")
         print("PASS retained works: expired/trial/reinstall/refund/family/upgrade/date boundaries; trial dates and headers")
     }
 
