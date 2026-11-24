@@ -2301,6 +2301,8 @@ enum AppRecordSettingsRules {
         if !membership.linked, hasPlusHere { return .link }
         // Plus that ended still lets this account's saved copy come back (11/21).
         if membership.canSave || (membership.linked && !enabled) { return .enable }
+        // Saving on with Plus ended: the screen's own 「Plusを再開する」 says it.
+        if membership.linked { return .stop }
         if plusChecking { return .wait }
         return offersPlus && !plusOffered ? .offerPlus : .stop
     }
