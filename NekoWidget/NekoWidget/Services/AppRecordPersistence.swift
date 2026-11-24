@@ -1011,6 +1011,14 @@ final class AppRecordPersistence: ObservableObject {
     /// 11/24 (F2): the 自動保存 screen was opened after Plus ended; the gear's
     /// mark then goes. Cleared when saving is allowed again.
     static let planEndSeenKey = "autoSave.planEndSeen.v1"
+    /// 11/24: when a save last reached the save server, for 設定's 「オン・今日 8:02」.
+    /// Written once per published save (never while scrolling); read once at launch.
+    static let lastSavedKey = "autoSave.lastSavedAt.v1"
+    @Published private(set) var lastSavedAt: Date? = UserDefaults.standard.object(forKey: AppRecordPersistence.lastSavedKey) as? Date
+    private func noteSaved(now: Date = Date()) {
+        lastSavedAt = now
+        UserDefaults.standard.set(now, forKey: Self.lastSavedKey)
+    }
     private func forgetPlanEndSeen() {
         guard UserDefaults.standard.bool(forKey: Self.planEndSeenKey) else { return }
         UserDefaults.standard.removeObject(forKey: Self.planEndSeenKey)
@@ -1840,7 +1848,7 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
                 value.filteredNotebookSnapshotID = previous.snapshotID
                 try write(value, intent: intent)
-                showSaved(value); transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
+                showSaved(value); noteSaved(); transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
                 enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
                 return
             }
@@ -1925,7 +1933,7 @@ final class AppRecordPersistence: ObservableObject {
             releaseUploadedPayload(saved.id, owner: value.owner)
             let isSaved = await stillSaved(accepted)
             try saveIntent.require(intent)
-            if isSaved { showSaved(value) } else { title = "保存待ちの変更があります"; detail = nil }
+            if isSaved { showSaved(value); noteSaved() } else { title = "保存待ちの変更があります"; detail = nil }
             transientFailures = 0; rateLimitedQuietPasses = 0; failureStreak = AppRecordFailureStreak()
             if !isSaved { requested = true }
             // The already validated immutable index belongs to this exact CAS.

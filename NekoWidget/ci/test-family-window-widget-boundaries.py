@@ -6051,8 +6051,10 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         # 11/8: Plus and 保存 first; one-row sections grouped; the app's own pages together.
-        order = ["PlusSettingsSection()", 'Text("保存")', 'Text("写真とウィジェット")',
-                 'Text("家族とまど")', '"settings-support-page"', '"settings-privacy-policy"',
+        # 11/24: 自動保存 is in the Plus section (保存 only where the Plus offer is not
+        # configured); the documents are one row, 「規約とポリシー」.
+        order = ["PlusSettingsSection { saveRow }", 'Section { saveRow } header: { Text("保存") }',
+                 'Text("写真とウィジェット")', 'Text("家族とまど")', '"settings-support-page"', '"settings-policies"',
                  '"settings-recommend-app"', 'Text("ねこのまどについて")', '"settings-app-version"',
                  '"settings-account-deletion"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
@@ -7062,7 +7064,12 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertIn(".foregroundStyle(Color(uiColor: .tertiaryLabel))", family)
         self.assertNotIn('"settings-cat-profiles"', body)
         # 保存 is one row: 自動保存 holds the profile file; without 自動保存 the file row stands alone.
-        save = section(body, "if ManagedPreservationConfiguration.current.isEnabled {", 'Text("保存")')
+        save = section(settings, "@ViewBuilder private var saveRow: some View {", "\n    }\n")
+        self.assertIn("if ManagedPreservationConfiguration.current.isEnabled {", save)
+        plus = section(source("NekoWidget/Services/MembershipOfferModel.swift"),
+                       "struct PlusSettingsSection<Rows: View>: View {", "private func refreshMembership()")
+        self.assertIn("init(@ViewBuilder rows: () -> Rows) { self.rows = rows() }", plus)
+        self.assertIn("            rows\n        } header: {", plus)
         self.assertIn("AppRecordSettingsView(profileTransfer: (actions: catProfilesActions,", save)
         self.assertLess(save.index('"settings-managed-preservation"'), save.index("} else {"))
         self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
@@ -7111,6 +7118,12 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertEqual(deletion.count("Text("), 1)
         for other in ("noticeContactSection", "retentionSection", "usageSection", "membershipSection", "サインアウト"):
             self.assertNotIn(other, deletion)
+        # 11/24: signed out, one sentence says why to sign in; no address note or forgetting.
+        self.assertEqual(deletion.count("authenticationSection(forDeletion: true)"), 2)
+        sign_in = section(view, "private func authenticationSection(forDeletion: Bool = false) -> some View {",
+                          "/// The \"保存\" entry of the one Plus screen")
+        self.assertIn('if forDeletion { Text("消すには、保存に使ったApple Accountでサインインします。") }', sign_in)
+        self.assertIn("            if !forDeletion {\n                VStack(alignment: .leading, spacing: 12) {", sign_in)
         sign_out = section(view, "if !deletesAccount && coordinator.isSignedIn && coordinator.accountDeletionState == nil {",
                            "private var deletionContent")
         self.assertIn('Button("サインアウト", role: .destructive)', sign_out)
@@ -8456,7 +8469,7 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         self.assertLess(step.index("月の作品を開く"), step.index('"まどを作る"'))
         self.assertIn(".environment(\\.plusStartedNextStep, plusStartedNextStepSource)", tab)
         # The album's work opens once Plus is confirmed: a purchase never closes the gate.
-        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection<Rows: View>: View {")
         self.assertIn("finishedWithPlus = result == .completed", prompt)
         self.assertIn("if !finishedWithPlus { onDeclined?() }", prompt)
 
@@ -8523,7 +8536,7 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         self.assertNotIn("Plusで書けます", photos)
         self.assertNotIn(".createPersonalMemo", photos)
         self.assertIn('identifier: "photo-memory-note-open") {', photos)
-        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        prompt = section(self.model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection<Rows: View>: View {")
         once = section(prompt, "private func openByItselfIfDue() {", "\n    }\n")
         self.assertNotIn("newMemoAutoOpenedKey", self.model)
         self.assertIn("showsOffer = true", once)
@@ -8531,7 +8544,7 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         self.assertIn('"Plusで\\(month)月の作品を見る"', self.model)
 
     def test_billing_issue_has_its_own_settings_state(self) -> None:
-        settings = section(self.model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        settings = section(self.model, "struct PlusSettingsSection<Rows: View>: View {", "#if DEBUG || INTERNAL_PRESENTATION")
         self.assertIn("private var billingIssue: Bool { status == .notMember && purchases.hasBillingIssue }", settings)
         self.assertIn('billingIssue ? "Plus（お支払いの確認が必要です）" : "Plus"', settings)
         issue = section(settings, "case .notMember where billingIssue:", "case .notMember:")

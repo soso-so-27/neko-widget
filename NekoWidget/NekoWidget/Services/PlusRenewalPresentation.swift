@@ -20,8 +20,9 @@ struct PlusRenewalSnapshot: Equatable, Sendable {
 
 /// The words for a member whose Plus was cancelled but is still usable:
 /// 「Plus（11月9日まで）」 in Settings and 「11月9日まで使えます」 on the Plus
-/// screen. While it renews, or when the end is unknown or past, the usual
-/// 「Plus（利用中）」 / 「Plusを利用中です」 stay.
+/// screen. While it renews, Settings says 「Plus（12月24日に更新）」 (11/24);
+/// when the date is unknown or past, the usual 「Plus（利用中）」 /
+/// 「Plusを利用中です」 stay.
 enum PlusRenewalPresentation {
     static let renewingSettingsHeader = "Plus（利用中）"
     static let renewingOfferTitle = "Plusを利用中です"
@@ -42,8 +43,21 @@ enum PlusRenewalPresentation {
         if willAutoRenew == true, let trialEndsAt, trialEndsAt > now, let displayPrice {
             return "Plus（お試し中・\(monthDay(trialEndsAt, calendar: calendar))から月額\(displayPrice)）"
         }
-        return endDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
-            .map { "Plus（\($0)まで）" } ?? renewingSettingsHeader
+        if let ending = endDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
+            .map({ "Plus（\($0)まで）" }) { return ending }
+        // 11/24: while it renews, the next renewal day when StoreKit has it.
+        return renewalDateText(willAutoRenew: willAutoRenew, expiration: expiration, now: now, calendar: calendar)
+            .map { "Plus（\($0)に更新）" } ?? renewingSettingsHeader
+    }
+
+    /// 「12月24日」 (or with the year) for a renewing Plus; nil when unknown or past.
+    static func renewalDateText(willAutoRenew: Bool?, expiration: Date?, now: Date,
+                                calendar: Calendar) -> String? {
+        guard willAutoRenew == true, let expiration, expiration > now else { return nil }
+        let next = calendar.dateComponents([.year, .month, .day], from: expiration)
+        guard let year = next.year, let month = next.month, let day = next.day else { return nil }
+        let monthDay = "\(month)月\(day)日"
+        return year == calendar.component(.year, from: now) ? monthDay : "\(year)年\(monthDay)"
     }
 
     static func monthDay(_ date: Date, calendar: Calendar) -> String {

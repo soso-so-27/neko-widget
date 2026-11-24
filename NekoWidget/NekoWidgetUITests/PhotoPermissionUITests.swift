@@ -1363,6 +1363,14 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         settingsButton.tap()
 
+        // 11/24: 設定 → 使い方 → ウィジェットの置き方.
+        let settingsGuide = app.buttons["settings-guide"]
+        guard settingsGuide.waitForExistence(timeout: 15) else {
+            fail("Settings did not expose 使い方.", app: app)
+            return
+        }
+        for _ in 0..<8 where !settingsGuide.isHittable { app.swipeUp() }
+        settingsGuide.tap()
         let settingsWidgetGuide = app.buttons["settings-widget-placement-guide"]
         guard settingsWidgetGuide.waitForExistence(timeout: 15) else {
             fail(

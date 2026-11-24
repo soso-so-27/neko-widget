@@ -60,6 +60,23 @@ final class SettingsRulesTests: XCTestCase {
         XCTAssertTrue(PlusCancelNote.isShown(.indeterminate(lastServerConfirmed: nil)))
     }
 
+    // 11/24: 「オン・今日 8:02」 on the 自動保存 row; just 「オン」 without a known time.
+    func testAutoSaveRowShowsWhenItLastSaved() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        func date(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int) -> Date {
+            calendar.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+        }
+        let now = date(2026, 11, 24, 12, 0)
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: nil, now: now, calendar: calendar), "オン")
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: date(2026, 11, 24, 8, 2), now: now, calendar: calendar), "オン・今日 8:02")
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: date(2026, 11, 23, 21, 10), now: now, calendar: calendar), "オン・昨日 21:10")
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: date(2026, 11, 20, 9, 0), now: now, calendar: calendar), "オン・11月20日")
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: date(2025, 12, 31, 9, 0), now: now, calendar: calendar), "オン・2025年12月31日")
+        // A clock set back never shows a time in the future.
+        XCTAssertEqual(AutoSaveRowWords.on(lastSaved: date(2026, 11, 25, 9, 0), now: now, calendar: calendar), "オン")
+    }
+
     // A1: one wording for what 自動保存 keeps.
     func testSavedContentsWording() {
         XCTAssertEqual(AutoSaveWording.contents, "この子のこととメモ")

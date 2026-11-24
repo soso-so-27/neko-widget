@@ -126,7 +126,7 @@ private func check(_ condition: Bool, _ message: String) throws {
             == "Plus（11月8日まで）", "cancelled trial keeps until header")
         try check(PlusRenewalPresentation.settingsHeader(willAutoRenew: true, expiration: now,
             now: end, calendar: calendar, trialEndsAt: end, displayPrice: "¥980")
-            == "Plus（利用中）", "finished trial no longer advertised")
+            == "Plus（12月10日に更新）", "finished trial no longer advertised; the next renewal shows (11/24)")
         print("PASS retained works: expired/trial/reinstall/refund/family/upgrade/date boundaries; trial dates and headers")
     }
 
@@ -146,7 +146,10 @@ private func check(_ condition: Bool, _ message: String) throws {
         func line(_ renews: Bool?, _ expiration: Date?) -> String? {
             P.offerEndLine(willAutoRenew: renews, expiration: expiration, now: now, calendar: calendar)
         }
-        try check(header(true, end) == "Plus（利用中）", "renewing stays 利用中")
+        try check(header(true, end) == "Plus（11月9日に更新）", "renewing shows its next renewal day (11/24)")
+        try check(header(true, date(2027, 1, 9)) == "Plus（2027年1月9日に更新）", "renewal next year names the year")
+        try check(header(true, end, at: end) == "Plus（利用中）", "a past renewal day never shows")
+        try check(header(true, nil) == "Plus（利用中）", "renewing with no known day stays 利用中")
         try check(line(true, end) == nil, "renewing keeps 「Plusを利用中です」")
         try check(header(false, end) == "Plus（11月9日まで）", "cancelled shows its end date")
         try check(line(false, end) == "11月9日まで使えます", "cancelled offer line")

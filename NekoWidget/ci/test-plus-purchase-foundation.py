@@ -430,7 +430,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         # 11/8: the prompt's identifier on a plain stack replaced its button's
         # (plus-offer-entry-*), so closing the Plus screen showed no button to UI tests.
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        prompt = section(model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection: View {")
+        prompt = section(model, "struct PlusOfferPrompt: View {", "struct PlusSettingsSection<Rows: View>: View {")
         self.assertIn(r'.accessibilityIdentifier("plus-offer-entry-\(context.identifier)")', prompt)
         before = prompt[:prompt.index('.accessibilityIdentifier("plus-offer-prompt")')].rstrip()
         self.assertTrue(before.endswith(".accessibilityElement(children: .contain)"))
@@ -455,7 +455,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("await model.restore()", section(model, "static func restoreForAnotherScreen()", "    private func apply("))
         # Settings: the unknown state's one row is the restore, and restore
         # stays reachable while launch is still checking.
-        settings = section(model, "struct PlusSettingsSection: View {", "private func refreshMembership()")
+        settings = section(model, "struct PlusSettingsSection<Rows: View>: View {", "private func refreshMembership()")
         unknown = section(settings, "case .unknown:", "case .checking:")
         # 11/7: the row restores where it is tapped, with the same restore().
         self.assertIn('MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")', unknown)
@@ -649,7 +649,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("} else if entitlementState == .checking {\n", gate)
         self.assertIn("markServerConfirmationIndeterminate()", gate)
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        settings = section(model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        settings = section(model, "struct PlusSettingsSection<Rows: View>: View {", "#if DEBUG || INTERNAL_PRESENTATION")
         self.assertIn(".task { await purchases.refreshForDisplay() }", settings)
         self.assertIn("answerMissing: purchases.entitlementState.cannotBeConfirmed", settings)
         # The price is the current Product's displayPrice, never a saved one.
@@ -739,7 +739,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("await self?.refreshRenewal()", updates)
 
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        settings = section(model, "struct PlusSettingsSection: View {", "#if DEBUG || INTERNAL_PRESENTATION")
+        settings = section(model, "struct PlusSettingsSection<Rows: View>: View {", "#if DEBUG || INTERNAL_PRESENTATION")
         self.assertNotIn('"Plus（利用中）"', model)
         self.assertIn("Text(status == .member ? memberHeader :", settings)
         self.assertIn("PlusRenewalPresentation.settingsHeader(willAutoRenew: purchases.renewal?.willAutoRenew,", settings)
@@ -817,7 +817,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn(".task { await model.load() }", sheet)
         self.assertIn("guard !hasLoaded else { return }", load)
         # Settings keeps its last answer while re-checking, so the sheet on its header stays.
-        settings = section(model, "struct PlusSettingsSection: View {", "private func refreshMembership()")
+        settings = section(model, "struct PlusSettingsSection<Rows: View>: View {", "private func refreshMembership()")
         self.assertIn("private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }", settings)
         self.assertIn(".onChange(of: liveStatus, initial: true) { _, answer in", settings)
         self.assertIn("if answer != .checking { lastAnswer = answer }", settings)

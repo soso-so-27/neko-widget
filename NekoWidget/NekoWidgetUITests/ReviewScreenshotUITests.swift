@@ -529,9 +529,13 @@ final class ReviewScreenshotUITests: XCTestCase {
         }
         if app.navigationBars["写真の表示と整理"].exists { back(app) }
         let guide = app.buttons["settings-widget-placement-guide"]
+        let guidePage = app.buttons["settings-guide"]
         let steps = app.descendants(matching: .any)["widget-placement-steps"].firstMatch
         shot("29_widget_guide_1", app) {
-            guard reveal(guide, app, maximumSwipes: 14) else { return "widget guide row not found" }
+            // 11/24: 設定 → 使い方 → ウィジェットの置き方.
+            guard reveal(guidePage, app, maximumSwipes: 14) else { return "使い方 row not found" }
+            guidePage.tap()
+            guard guide.waitForExistence(timeout: 10) else { return "widget guide row not found" }
             guide.tap()
             guard app.buttons["widget-placement-close"].waitForExistence(timeout: 15) else { return "widget guide did not open" }
             settle(1.5)
@@ -1107,9 +1111,13 @@ final class ReviewScreenshotUITests: XCTestCase {
         if photosTitle.exists { back(app) }
 
         let guide = app.buttons["settings-widget-placement-guide"]
+        let guidePage = app.buttons["settings-guide"]
         variantShot("64_settings_widget_guide", large, app) {
             guard title.exists else { return "settings not shown" }
-            guard reveal(guide, app, maximumSwipes: 16) else { return "widget guide row not found" }
+            // 11/24: 設定 → 使い方 → ウィジェットの置き方.
+            guard reveal(guidePage, app, maximumSwipes: 16) else { return "使い方 row not found" }
+            guidePage.tap()
+            guard guide.waitForExistence(timeout: 10) else { return "widget guide row not found" }
             guide.tap()
             guard app.buttons["widget-placement-close"].waitForExistence(timeout: 15) else { return "widget guide did not open" }
             settle(1.5)
