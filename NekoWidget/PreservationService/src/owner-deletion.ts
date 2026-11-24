@@ -6,6 +6,13 @@ import { requestManifestPhotoDeletion } from './r2-photo-purge';
 import type { S3RecoveryCopy } from './s3-recovery-copy';
 import type { S3VersionPurge } from './s3-version-purge';
 
+// The explicit request still needs the existing erasing authority, including
+// verified empty cloud storage. Release the purchase before the remaining D1
+// rows so its holder can restore it during that cleanup.
+const requestedD1DeleteOrder = [
+  'pa_membership_links', ...ownerD1DeleteOrder.filter(table => table !== 'pa_membership_links'),
+] as const;
+
 const unavailable = () => new ServiceError('OWNER_DELETION_UNAVAILABLE', 503);
 const canonical = (inventory: OwnerCloudInventory): string => JSON.stringify({
   ownerId: inventory.ownerId,
@@ -186,7 +193,7 @@ export class OwnerDeletionExecutor {
         AND ${authority}`).bind(`personal/${ownerId}/`, `personal/${ownerId}0`, ownerId, r.requestId).run();
       return 'processing';
     }
-    for (const table of ownerD1DeleteOrder) {
+    for (const table of requestedD1DeleteOrder) {
       if (table === 'pa_purge_fences' || !residue.content[table]) continue;
       await db.prepare(`DELETE FROM ${table} WHERE rowid IN
         (SELECT rowid FROM ${table} WHERE owner_id=? LIMIT 128) AND ${authority}`)
