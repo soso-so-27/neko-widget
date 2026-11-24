@@ -314,7 +314,7 @@ final class MembershipOfferModel: ObservableObject {
     }
     static let restoreTitle = "購入を復元"
     /// 11/24: the one line while the main button restores.
-    static let restoreLine = "購入を確かめられません。購入し直さずに「購入を復元」を押してください。"
+    static let restoreLine = "購入を確かめられません。買い直す必要はありません。"
 
     /// 11/15 (TestFlight 378): the line on screen tells the person to press
     /// 「購入を復元」, so the screen's one 「購入を復元」 stands right under it

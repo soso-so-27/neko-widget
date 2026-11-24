@@ -4400,7 +4400,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertEqual(purchase.label, "購入を復元")
                 XCTAssertTrue(purchase.isEnabled, "Unknown restores from the main button: " + app.debugDescription)
                 XCTAssertEqual(app.staticTexts["membership-offer-message"].label,
-                               "購入を確かめられません。購入し直さずに「購入を復元」を押してください。")
+                               "購入を確かめられません。買い直す必要はありません。")
                 XCTAssertFalse(app.buttons["membership-offer-restore"].exists, app.debugDescription)
                 XCTAssertFalse(app.buttons["membership-offer-manage"].exists, app.debugDescription)
                 let attachment = XCTAttachment(screenshot: app.screenshot())

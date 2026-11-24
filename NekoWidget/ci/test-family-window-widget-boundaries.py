@@ -8247,7 +8247,7 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         self.assertIn('もう一度購入せずに、「購入を復元」を押してください。"', state)
         # 11/24: unknown keeps the button's name and says what to do once.
         self.assertIn("purchaseTitle = Self.restoreTitle\n            message = Self.restoreLine", checking)
-        self.assertIn('static let restoreLine = "購入を確かめられません。購入し直さずに「購入を復元」を押してください。"', model)
+        self.assertIn('static let restoreLine = "購入を確かめられません。買い直す必要はありません。"', model)
         self.assertEqual(model.count(auto), 3)
 
     def test_showcase_without_recommendation_offers_picking(self) -> None:
