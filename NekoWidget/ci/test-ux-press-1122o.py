@@ -101,8 +101,14 @@ class HeartBurst(unittest.TestCase):
 
     def test_detail_heart_shows_it_over_the_photo(self):
         self.assertIn(".overlay { GroupHeartBurst(trigger: heartBursts) }", self.detail)
-        self.assertIn("if model.acceptsHearts(entry.id) && !model.myHeartIsActive(entry.id) { heartBursts &+= 1 }",
+        # 11/24: the ♥ is offered only where the relay takes it (canHeart),
+        # and a double-tap on the photo sends one too, as on the feed.
+        self.assertIn("if heartable {\n                    Button {\n                        // 11/22: a heart sent (not taken back) shows on the photo.\n                        if !mine { heartBursts &+= 1 }",
                       self.detail)
+        tap = section(self.detail, "private func doubleTapHeart() {", "\n    }\n")
+        self.assertIn("guard let current, canHeart(current) else { return }", tap)
+        self.assertIn("if !model.myHeartIsActive(current.id) { heartBursts &+= 1 }", tap)
+        self.assertIn(".onTapGesture(count: 2) { doubleTapHeart() }", self.detail)
         self.assertIn(".sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }", self.detail)
 
 

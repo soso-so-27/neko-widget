@@ -53,6 +53,14 @@ RECOVERY_SCREENS = (
 )
 # 家族の手帳の「通報への返答」 on sample answers (test20FamilyReportReplies): light and dark.
 FAMILY_REPORT_SCREENS = ("92p_family_report_replies",)
+# まどの中 (test22MadoScreens): hearts, ひとこと and 「メンバー」 on the screen
+# fixture; light and dark.
+MADO_SCREENS = (
+    "50_mado_feed_hearts_top", "50b_mado_feed_hearts_scrolled", "50c_mado_feed_hearts_end",
+    "51_mado_photo_hearts_one", "51b_mado_photo_hearts_mine", "51c_mado_photo_hearts_own_two",
+    "51d_mado_photo_hearts_own_one", "52_mado_members_pending", "52b_mado_member_menu",
+    "52c_mado_members_bottom", "53_mado_members_admitted",
+)
 # 設定とその下の画面 (test21SettingsTree): each at the standard text size and,
 # as `<name>_ax5`, at the largest accessibility size; light and dark.
 SETTINGS_TREE_BASES = (
@@ -85,7 +93,8 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS
+) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS \
+    + MADO_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",

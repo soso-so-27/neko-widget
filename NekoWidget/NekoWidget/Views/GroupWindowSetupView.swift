@@ -185,6 +185,21 @@ enum GroupWindowPresentation {
         "メンバー\(window.memberCount)人（\(memberLimit)人まで）"
     }
 
+    /// 11/24: the members screen's heading, 「メンバー 2 / 6」 (the まど's
+    /// own name is the screen before; its count is the faces below).
+    static func memberSeatsText(_ window: GroupWindow) -> String {
+        "メンバー \(window.memberCount) / \(memberLimit)"
+    }
+
+    /// 11/24 (F6): the young まど's row says what a press does first:
+    /// 「招待する」, then 「あと4人」.
+    static func openSeatsShortText(_ count: Int) -> String { "あと\(count)人" }
+
+    /// 11/24 (M3): one sentence, without 「違っていたら…」.
+    static func admittedText(_ names: [String]) -> String {
+        names.map(GroupDisplayName.withSan).joined(separator: "、") + "が参加しました"
+    }
+
     /// 「あなた · まどを作った人 · iPhone 2台」, or 「参加しました」.
     static func memberDetail(_ member: GroupMember, in window: GroupWindow) -> String {
         var parts: [String] = []
@@ -278,9 +293,9 @@ final class GroupWindowMembersModel: ObservableObject {
     }
 
     private func read(reportsFailure: Bool) async {
+        let results = (try? await client.reconcileAdmissions()) ?? []
+        admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
         do {
-            let results = (try? await client.reconcileAdmissions()) ?? []
-            admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
             var latest = transform(try await client.window(id: windowID))
             if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
@@ -293,14 +308,15 @@ final class GroupWindowMembersModel: ObservableObject {
                     if let fresh = try? await client.window(id: windowID) { latest = transform(fresh) }
                 } catch {}
             }
-            var requests: [GroupJoinRequest] = []
-            if latest.canManage {
-                requests = try await client.pendingRequests(windowID: windowID)
-            }
             window = latest
-            pendingRequests = requests
-            if latest.canManage { invitation = try await client.reusableInvitation(windowID: windowID) }
             loadFailureMessage = nil
+            // 11/24 (M1): the まど itself was read, so it is not 「使えません」.
+            // The people waiting and the invitation are read on their own:
+            // a failure keeps what was shown, and the next pass reads again.
+            if latest.canManage {
+                if let requests = try? await client.pendingRequests(windowID: windowID) { pendingRequests = requests }
+                do { invitation = try await client.reusableInvitation(windowID: windowID) } catch {}
+            }
         } catch {
             // Keep the last known window and requests. Only say that the
             // latest could not be checked; never clear a list on a failure.
@@ -519,7 +535,8 @@ struct GroupWindowMembersView: View {
     /// 11/7 (W3): the invitation handed to the share sheet, and a renewal
     /// (old link revoked, new one made) on its way there.
     @State private var sharingInvitation: GroupInvitation?
-    @State private var renewingInvitation = false
+    /// 11/24 (M9): 「＋ 招待する」 is making or renewing the link on its way to the sheet.
+    @State private var preparingInvitation = false
     /// 11/7 (W10): people this iPhone hides or blocks in this window, and
     /// the one whose 「表示しない」/「ブロック中」 was pressed.
     @State private var hiddenMembers: [GroupWindowLocalPhotoStore.HiddenMember] = []
@@ -547,18 +564,16 @@ struct GroupWindowMembersView: View {
                     pausedSection(window)
                 }
                 statusSection(window)
-                windowSection(window)
+                // 11/24: who is here first, as faces; the rest as quiet rows.
                 membersSection(window)
-                if capabilities.invitations, window.canManage {
-                    invitationSection(window)
-                }
+                rowsSection(window)
+                safetySection
                 if capabilities.invitations, model.canManageWindow {
                     manageSection(window)
                 }
                 if capabilities.leave {
                     leaveSection(window)
                 }
-                safetySection
             } else if let message = model.loadFailureMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle")
@@ -719,175 +734,209 @@ struct GroupWindowMembersView: View {
         }
     }
 
+    /// 11/24 (M2): one line at a time, the one that matters most: a failed
+    /// action, a read that failed, the key renewal, the end of the まど, then
+    /// good news. Success and failure are never shown together.
+    private enum StatusLine {
+        case actionError(String), loadFailure(String), rotationPending, closed, completed(String), admitted(String)
+    }
+
+    private func statusLine(_ window: GroupWindow) -> StatusLine? {
+        if let message = model.actionErrorMessage { return .actionError(message) }
+        if let message = model.loadFailureMessage { return .loadFailure(message) }
+        if window.state == .rotationRequired { return .rotationPending }
+        if window.state == .closed { return .closed }
+        if let message = model.actionCompletionMessage { return .completed(message) }
+        // Who this iPhone let in by itself since the creator last looked.
+        if !newAdmissions.isEmpty { return .admitted(GroupWindowPresentation.admittedText(newAdmissions.map(\.displayName))) }
+        return nil
+    }
+
     @ViewBuilder
     private func statusSection(_ window: GroupWindow) -> some View {
-        if window.state != .active
-            || model.loadFailureMessage != nil
-            || model.actionErrorMessage != nil
-            || model.actionCompletionMessage != nil
-            || !newAdmissions.isEmpty {
+        if let line = statusLine(window) {
             Section {
-                // Who this iPhone let in by itself since the creator last looked.
-                ForEach(newAdmissions) { admission in
-                    Label(
-                        "\(GroupDisplayName.withSan(admission.displayName))が参加しました。違っていたら、メンバーから外せます。",
-                        systemImage: "person.crop.circle.badge.checkmark"
-                    )
-                    .foregroundStyle(.green)
-                    .accessibilityIdentifier("group-window-admitted")
-                }
-                if window.state == .rotationRequired {
+                switch line {
+                case .actionError(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("group-window-action-error")
+                        .announcesWhenShown(model.actionErrorMessage)
+                case .loadFailure(let message):
+                    Label(message, systemImage: "wifi.exclamationmark")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("group-window-load-failure")
+                        .announcesWhenShown(model.loadFailureMessage)
+                case .rotationPending:
                     Label(
                         GroupWindowPresentation.message(for: GroupClientError.rotationPending),
                         systemImage: "key"
                     )
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("group-window-rotation-pending")
-                } else if window.state == .closed {
+                case .closed:
                     Label("このまどは終わりました。", systemImage: "person.2.slash")
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("group-window-closed")
-                }
-                if let message = model.loadFailureMessage {
-                    Label(message, systemImage: "wifi.exclamationmark")
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("group-window-load-failure")
-                        .announcesWhenShown(model.loadFailureMessage)
-                }
-                if let message = model.actionErrorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("group-window-action-error")
-                        .announcesWhenShown(model.actionErrorMessage)
-                }
-                if let message = model.actionCompletionMessage {
-                    Label(message, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                case .completed(let message):
+                    // 11/24: good news is a small mark and ordinary text, not green words.
+                    goodNews(message, systemImage: "checkmark.circle.fill")
                         .accessibilityIdentifier("group-window-action-completed")
+                case .admitted(let message):
+                    goodNews(message, systemImage: "person.crop.circle.badge.checkmark")
+                        .accessibilityIdentifier("group-window-admitted")
                 }
             }
         }
     }
 
-    private func windowSection(_ window: GroupWindow) -> some View {
-        Section("まど") {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(window.name)
-                    .font(.headline)
-                    .accessibilityIdentifier("group-window-name")
-                Text(GroupWindowPresentation.memberCountText(window))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minHeight: 44)
-            if offersWidgetPlacement, window.state != .closed {
-                Button {
-                    GroupWidgetCache.offerForPlacement(windowID: window.id, windowName: window.name)
-                    showsWidgetGuide = true
-                } label: {
-                    Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
-                }
-                .accessibilityIdentifier("group-window-place-widget")
-            }
+    private func goodNews(_ message: String, systemImage: String) -> some View {
+        Label {
+            Text(message)
+        } icon: {
+            Image(systemName: systemImage).foregroundStyle(.green)
         }
+        .font(.subheadline)
     }
 
+    /// 11/24 (M7): the quiet rows under the faces. 「ホーム画面に置く」 stays
+    /// (the only way to it for a まど's creator) and 「名前を変える」 joins it.
     @ViewBuilder
-    private func membersSection(_ window: GroupWindow) -> some View {
-        if !model.pendingRequests.isEmpty {
-            // People waiting come first, on a yellow card: that is what the creator opened this for.
+    private func rowsSection(_ window: GroupWindow) -> some View {
+        let places = offersWidgetPlacement && window.state != .closed
+        let renames = capabilities.invitations && model.canManageWindow
+        if places || renames {
             Section {
-                ForEach(model.pendingRequests) { request in
-                    requestRow(request, window: window)
-                        .listRowBackground(Color.yellow.opacity(0.18))
+                if places {
+                    Button {
+                        GroupWidgetCache.offerForPlacement(windowID: window.id, windowName: window.name)
+                        showsWidgetGuide = true
+                    } label: {
+                        Label(GroupWindowPresentation.placeOnHomeScreenAction, systemImage: "square.grid.2x2")
+                    }
+                    .accessibilityIdentifier("group-window-place-widget")
                 }
-            } header: {
-                Text("これから参加する人")
+                if renames {
+                    Button { showsRename = true } label: {
+                        Label("名前を変える", systemImage: "pencil")
+                    }
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("group-window-rename")
+                }
             }
         }
+    }
+
+    /// 11/24 (M4・M5・M8・M9): everyone as a face in one grid: the members,
+    /// the people about to join (faded), and an empty seat 「＋ 招待する」.
+    /// The rare actions (外す・断る・ブロックの解除) are in the menu a face opens.
+    private func membersSection(_ window: GroupWindow) -> some View {
         Section {
-            // Faces in a row, not a list of sentences.
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 14) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4),
+                      alignment: .center, spacing: 14) {
                 ForEach(window.activeMembers) { member in
                     memberRow(member, window: window)
                 }
+                ForEach(model.pendingRequests) { request in
+                    requestRow(request, window: window)
+                }
+                if showsInviteSeat(window) {
+                    inviteSeat
+                }
             }
             .padding(.vertical, 6)
+            invitationLine(window)
         } header: {
-            Text("メンバー")
+            Text(GroupWindowPresentation.memberSeatsText(window))
+                .accessibilityLabel("メンバー\(window.memberCount)人、\(GroupWindowPresentation.memberLimit)人まで")
+                .accessibilityIdentifier("group-window-member-count")
+        } footer: {
+            inviteFooter(window)
         }
     }
 
+    /// The face, the name, and one short line under it, the same height in
+    /// every seat so the faces line up (M6).
+    private func face(name: String, shownName: String, caption: String?, captionColor: Color = .secondary,
+                      faded: Bool = false) -> some View {
+        VStack(spacing: 6) {
+            GroupMemberAvatar(name: name, size: 52)
+                .opacity(faded ? 0.4 : 1)
+            Text(shownName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(faded ? Color.secondary : Color.primary)
+                .lineLimit(1)
+            Text(caption ?? " ")
+                .font(.caption2)
+                .foregroundStyle(captionColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
     private func memberRow(_ member: GroupMember, window: GroupWindow) -> some View {
         let canRemove = capabilities.removal
             && window.canManage
             && member.role != .owner
             && member.id != window.myParticipantID
         let hidden = hiddenMembers.first { $0.id == member.id && member.id != window.myParticipantID }
-        return VStack(spacing: 6) {
-            GroupMemberAvatar(name: member.displayName, size: 52)
-            Text(member.id == window.myParticipantID ? "あなた" : member.displayName)
-                .font(.footnote.weight(.semibold))
-                .lineLimit(1)
-            if canRemove {
-                // Removal stays a visible button, small, under the face.
-                Button {
-                    removalTarget = member
-                    showsRemoval = true
-                } label: {
-                    WorkingLabel(title: "外す", workingTitle: "外しています…", working: running == "外す:\(member.id)")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+        let caption: String? = running == "外す:\(member.id)" ? "外しています…"
+            : hidden.map { $0.blocked == true ? "ブロック中" : "表示しない" }
+            ?? (member.role == .owner ? "作った人" : nil)
+        let shown = face(name: member.displayName,
+                         shownName: member.id == window.myParticipantID ? "あなた" : member.displayName,
+                         caption: caption, captionColor: hidden != nil ? .orange : .secondary)
+        let label = "\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
+            + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? "")
+        if canRemove || hidden != nil {
+            Menu {
+                if let hidden {
+                    // 11/7 (W10): who is hidden or blocked here is shown again from here, not only from 設定.
+                    Button(hidden.blocked == true ? "ブロックを解除" : "表示する", systemImage: "eye") { restoreTarget = hidden }
+                        .accessibilityIdentifier("group-window-member-hidden")
                 }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .frame(minWidth: 44, minHeight: 44)
-                .disabled(model.isWorking)
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("group-window-remove-member")
-            } else {
-                Text(member.role == .owner ? "作った人" : " ")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            if let hidden {
-                // 11/7 (W10): who is hidden or blocked here shows it, and is
-                // shown again from here, not only from 設定.
-                // 11/7: the same button shape as 「外す」, so it reads as one to press.
-                Button { restoreTarget = hidden } label: {
-                    Text(hidden.blocked == true ? "ブロック中" : "表示しない")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                if canRemove {
+                    Button(role: .destructive) {
+                        removalTarget = member
+                        showsRemoval = true
+                    } label: {
+                        WorkingLabel(title: "外す", workingTitle: "外しています…", working: running == "外す:\(member.id)")
+                    }
+                    .accessibilityIdentifier("group-window-remove-member")
                 }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.orange)
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityHidden(true)
-                .accessibilityIdentifier("group-window-member-hidden")
+            } label: {
+                shown
             }
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .disabled(model.isWorking)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityHint("操作を選べます")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityActions {
+                // 11/14: only for someone who can be removed (it did nothing for the others).
+                if canRemove {
+                    Button("外す") {
+                        guard !model.isWorking else { return }
+                        removalTarget = member
+                        showsRemoval = true
+                    }
+                }
+                if let hidden {
+                    Button(hidden.blocked == true ? "ブロックを解除" : "表示する") { restoreTarget = hidden }
+                }
+            }
+            .accessibilityIdentifier("group-window-member")
+        } else {
+            shown
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label)
+                .accessibilityIdentifier("group-window-member")
         }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
-                            + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? ""))
-        .accessibilityActions {
-            // 11/14: only for someone who can be removed (it did nothing for the others).
-            if canRemove {
-                Button("外す") {
-                    guard !model.isWorking else { return }
-                    removalTarget = member
-                    showsRemoval = true
-                }
-            }
-            if let hidden {
-                Button(hidden.blocked == true ? "ブロックを解除" : "表示する") { restoreTarget = hidden }
-            }
-        }
-        .accessibilityIdentifier("group-window-member")
     }
 
     // Kept out of the body chain so the type checker stays fast.
@@ -900,140 +949,143 @@ struct GroupWindowMembersView: View {
         Button("キャンセル", role: .cancel) {}
     }
 
+    /// 11/24 (M4): someone about to join is a faded face with 「参加中…」.
+    /// Joining goes through by itself on the creator's iPhone, so 「断る」
+    /// is in the face's menu, not a button on a yellow card.
+    @ViewBuilder
     private func requestRow(_ request: GroupJoinRequest, window: GroupWindow) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                GroupMemberAvatar(name: request.displayName)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(request.displayName)
-                        .font(.body.weight(.semibold))
-                    Text(request.admissionPaused == true ? "いまは参加できません" : "まもなく参加します")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        let caption = running == "断る:\(request.id)" ? "断っています…"
+            : request.admissionPaused == true ? "いまは参加できません" : "参加中…"
+        let shown = face(name: request.displayName, shownName: request.displayName, caption: caption, faded: true)
+        if window.canManage {
+            Menu {
+                Button(role: .destructive) {
+                    rejectionTarget = request
+                } label: {
+                    WorkingLabel(title: "断る", workingTitle: "断っています…", working: running == "断る:\(request.id)")
                 }
-                Spacer(minLength: 0)
+                .accessibilityIdentifier("group-window-reject")
+            } label: {
+                shown
             }
-            if window.canManage {
-                HStack(spacing: 12) {
-                    Spacer(minLength: 0)
-                    Button {
-                        rejectionTarget = request
-                    } label: {
-                        WorkingLabel(title: "断る", workingTitle: "断っています…", working: running == "断る:\(request.id)")
-                            .frame(minWidth: 64, minHeight: 44)
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
+            .disabled(model.isWorking)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(request.displayName)、\(caption)")
+            .accessibilityHint("操作を選べます")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityActions {
+                Button("断る") { if !model.isWorking { rejectionTarget = request } }
+            }
+            .accessibilityIdentifier("group-window-request")
+        } else {
+            shown
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(request.displayName)、\(caption)")
+                .accessibilityIdentifier("group-window-request")
+        }
+    }
+
+    private func showsInviteSeat(_ window: GroupWindow) -> Bool {
+        capabilities.invitations && window.canManage && model.canInvite
+    }
+
+    /// 11/24 (M8・M9): an empty seat, the same as right after 「作る」. One
+    /// press makes the link when needed (an older one is revoked first) and
+    /// opens the share sheet.
+    private var inviteSeat: some View {
+        Button(action: shareInvitation) {
+            VStack(spacing: 6) {
+                Circle()
+                    .strokeBorder(Color.accentColor.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        if preparingInvitation {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "plus").font(.title3.weight(.semibold)).foregroundStyle(Color.accentColor)
+                        }
                     }
-                    .buttonStyle(.bordered)
+                Text("招待する")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .lineLimit(1)
+                Text(" ").font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(model.isWorking || preparingInvitation)
+        .accessibilityLabel(preparingInvitation ? "招待を用意しています" : "招待する")
+        .accessibilityIdentifier("group-window-share-invitation")
+    }
+
+    private func shareInvitation() {
+        preparingInvitation = true
+        Task {
+            defer { preparingInvitation = false }
+            // The members screen's own steps, as on the seats screen (11/7, W3).
+            guard let invitation = await model.invitationToShare() else { return }
+            sharingInvitation = invitation
+        }
+    }
+
+    /// While a link is live: how long it lasts, and 「招待を取り消す」, small.
+    @ViewBuilder
+    private func invitationLine(_ window: GroupWindow) -> some View {
+        if capabilities.invitations, window.canManage {
+            if model.activeInvitation != nil {
+                // The link itself is never drawn; it travels only through the share sheet.
+                HStack(spacing: 8) {
+                    Text("招待リンクは" + GroupWindowPresentation.invitationLifetimeCaption)
+                        .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("group-window-invitation-lifetime")
+                    Spacer(minLength: 8)
+                    Button(role: .destructive) {
+                        showsRevokeConfirmation = true
+                    } label: {
+                        WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
+                    }
+                    .font(.footnote)
+                    .buttonStyle(.borderless)
                     .disabled(model.isWorking)
-                    .accessibilityIdentifier("group-window-reject")
+                    .accessibilityIdentifier("group-window-revoke-invitation")
+                }
+            } else if let earlier = model.earlierInvitation, !model.canInvite {
+                // No new link now (paused or full): the old one can still be revoked.
+                HStack(spacing: 8) {
+                    Text("前に作った招待：" + earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button(role: .destructive) {
+                        showsRevokeConfirmation = true
+                    } label: {
+                        WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
+                    }
+                    .font(.footnote)
+                    .buttonStyle(.borderless)
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("group-window-revoke-earlier-invitation")
                 }
             }
         }
-        .padding(.vertical, 4)
-        .accessibilityIdentifier("group-window-request")
     }
 
-    private func invitationSection(_ window: GroupWindow) -> some View {
-        Section {
-            if let invitation = model.activeInvitation {
-                // The link itself is never drawn; it travels only through
-                // the share sheet, so a screenshot cannot leak it. 11/8 (17):
-                // the message it carries is not shown here; 11/14 (A4): how
-                // long it lasts is, in one short line (no date and time).
-                Button { sharingInvitation = invitation } label: {
-                    Label("招待リンクを送る", systemImage: "square.and.arrow.up")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("group-window-share-invitation")
-                Text(GroupWindowPresentation.invitationLifetimeCaption)
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("group-window-invitation-lifetime")
-                Button(role: .destructive) {
-                    showsRevokeConfirmation = true
-                } label: {
-                    WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
-                }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("group-window-revoke-invitation")
-            } else if model.earlierInvitation != nil, model.canInvite {
-                // 11/7 (W3): one press instead of revoke, confirm, make, send.
-                // The old link is revoked first, then a new one is made and shared.
-                Button { renewAndShareInvitation() } label: {
-                    Group {
-                        if renewingInvitation {
-                            WorkingLabel(title: "招待リンクを送る", workingTitle: "用意しています…", working: true)
-                        } else {
-                            Label("招待リンクを送る", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.isWorking || renewingInvitation)
-                .accessibilityIdentifier("group-window-renew-invitation")
-                Text(GroupWindowPresentation.invitationLifetimeCaption)
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("group-window-invitation-lifetime")
-                Text("前に送ったリンクは使えなくなります。")
-                    .font(.footnote).foregroundStyle(.secondary)
-            } else if let earlier = model.earlierInvitation {
-                // No new link now (paused or full): the old one can still be revoked.
-                LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
-                Button(role: .destructive) {
-                    showsRevokeConfirmation = true
-                } label: {
-                    WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
-                }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("group-window-revoke-earlier-invitation")
-            } else if model.canInvite {
-                Button {
-                    running = "招待リンクを作る"
-                    Task { await model.createInvitation() }
-                } label: {
-                    Group {
-                        if running == "招待リンクを作る" {
-                            WorkingLabel(title: "招待リンクを作る", workingTitle: "作っています…", working: true)
-                        } else {
-                            Label("招待リンクを作る", systemImage: "link.badge.plus")
-                        }
-                    }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("group-window-create-invitation")
-            } else if GroupWindowPresentation.isPaused(window) {
+    /// Why there is no 「＋」 seat, for the creator, in one line.
+    @ViewBuilder
+    private func inviteFooter(_ window: GroupWindow) -> some View {
+        if capabilities.invitations, window.canManage, !model.canInvite {
+            if GroupWindowPresentation.isPaused(window) {
                 Text("止まっている間は招待できません。")
-                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("group-window-invite-paused")
             } else if window.memberCount >= GroupWindowPresentation.memberLimit {
                 Text(GroupWindowPresentation.message(for: GroupClientError.memberLimit))
-                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("group-window-member-limit")
-            } else {
+            } else if window.state != .closed {
                 Text("いまは招待できません。")
-                    .foregroundStyle(.secondary)
             }
-        } header: {
-            Text("招待")
-        }
-    }
-
-    /// The existing two steps in their existing order: revoke the old link,
-    /// then make a new one; the share sheet opens only when both worked (11/7).
-    private func renewAndShareInvitation() {
-        renewingInvitation = true
-        Task {
-            defer { renewingInvitation = false }
-            await model.revokeInvitation()
-            guard model.actionErrorMessage == nil else { return }
-            await model.createInvitation()
-            guard model.actionErrorMessage == nil, let made = model.activeInvitation else { return }
-            sharingInvitation = made
         }
     }
 
@@ -1047,12 +1099,9 @@ struct GroupWindowMembersView: View {
         .ignoresSafeArea()
     }
 
-    /// The creator's own changes to the window: its name, and closing it.
+    /// The creator's closing of the window (its name is in the rows above).
     private func manageSection(_ window: GroupWindow) -> some View {
         Section {
-            Button("名前を変える") { showsRename = true }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("group-window-rename")
             Button(role: .destructive) { showsCloseConfirmation = true } label: {
                 WorkingLabel(title: "このまどを終わりにする", workingTitle: "終わりにしています…", working: running == "終わりにする")
             }

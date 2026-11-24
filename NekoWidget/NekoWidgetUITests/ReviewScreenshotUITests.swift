@@ -1033,6 +1033,115 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - まどの中（11/24: ハート・ひとこと・メンバー）
+
+    /// One まど on the screen fixture with three people and each kind of ♡
+    /// (`--group-window-hearts-fixture`): none, from others only, this
+    /// person's own, and on this person's photos from one and two people;
+    /// ひとこと of several lengths. Then 「メンバー」 with someone about to
+    /// join, a face's menu, and (on a second launch) right after someone
+    /// joined (`--group-window-admitted-fixture`).
+    @MainActor
+    func test22MadoScreens() {
+        let base = fixture + ["--group-window-screens-fixture", "--group-window-hearts-fixture",
+                              "--group-window-caption-fixture"]
+        var app = launch(base)
+        let tiles = app.descendants(matching: .any).matching(identifier: "group-photo-tile-photo")
+        shot("50_mado_feed_hearts_top", app) {
+            guard openFixtureWindow(app) else { return "「実家のまど」 did not open" }
+            guard tiles.firstMatch.waitForExistence(timeout: 15) else { return "no photo tiles" }
+            _ = waitForAnyFixturePhoto(app, [1, 2])
+            settle(1.5)
+            return nil
+        }
+        shot("50b_mado_feed_hearts_scrolled", app) {
+            guard tiles.firstMatch.exists else { return "feed not shown" }
+            app.swipeUp(velocity: .slow)
+            settle(1.2)
+            return nil
+        }
+        shot("50c_mado_feed_hearts_end", app) {
+            guard tiles.firstMatch.exists else { return "feed not shown" }
+            scrollToEnd(app)
+            return nil
+        }
+        for _ in 0..<6 { app.swipeDown() }
+        settle(0.8)
+        // The opened photo, swiped through: 1 (one other), 2 (this person's),
+        // 3 (own, two people), then 6 (own, one person).
+        let close = app.buttons["閉じる"].firstMatch
+        shot("51_mado_photo_hearts_one", app) {
+            let first = tiles.firstMatch
+            guard first.waitForExistence(timeout: 10), first.isHittable else { return "first tile not hittable" }
+            first.tap()
+            guard close.waitForExistence(timeout: 10) else { return "photo did not open" }
+            settle(1.5)
+            return nil
+        }
+        func nextPhoto(_ swipes: Int) -> String? {
+            guard close.exists else { return "photo screen not shown" }
+            for _ in 0..<swipes { app.swipeLeft(); settle(0.8) }
+            settle(1)
+            return nil
+        }
+        shot("51b_mado_photo_hearts_mine", app) { nextPhoto(1) }
+        shot("51c_mado_photo_hearts_own_two", app) { nextPhoto(1) }
+        shot("51d_mado_photo_hearts_own_one", app) { nextPhoto(3) }
+        if close.exists { close.tap(); settle(1) }
+        let members = app.buttons["group-window-open-members"]
+        shot("52_mado_members_pending", app) {
+            guard members.waitForExistence(timeout: 10) else { return "メンバー button not found" }
+            members.tap()
+            let pending = app.descendants(matching: .any)["group-window-request"].firstMatch
+            guard pending.waitForExistence(timeout: 15) else { return "pending face not shown" }
+            settle(1.5)
+            return nil
+        }
+        shot("52b_mado_member_menu", app) {
+            let face = app.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier == %@ AND label BEGINSWITH %@", "group-window-member", "お母さん")).firstMatch
+            guard face.waitForExistence(timeout: 10) else { return "お母さん's face not found" }
+            face.tap()
+            guard app.buttons["group-window-remove-member"].waitForExistence(timeout: 5)
+                    || app.buttons["外す"].waitForExistence(timeout: 3) else { return "face menu did not open" }
+            settle(0.8)
+            return nil
+        }
+        shot("52c_mado_members_bottom", app) {
+            // Closes the face's menu with a tap on the title, away from any row.
+            if app.buttons["group-window-remove-member"].exists {
+                app.navigationBars["メンバー"].staticTexts["メンバー"].firstMatch.tap()
+            }
+            settle(0.8)
+            guard app.navigationBars["メンバー"].exists else { return "members screen not shown" }
+            scrollToEnd(app)
+            return nil
+        }
+        app.terminate()
+
+        app = launch(base + ["--group-window-admitted-fixture"])
+        shot("53_mado_members_admitted", app) {
+            guard openFixtureWindow(app) else { return "「実家のまど」 did not open" }
+            let open = app.buttons["group-window-open-members"]
+            guard open.waitForExistence(timeout: 15) else { return "メンバー button not found" }
+            open.tap()
+            let banner = app.descendants(matching: .any)["group-window-admitted"].firstMatch
+            guard banner.waitForExistence(timeout: 15) else { return "「参加しました」 not shown" }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    private func openFixtureWindow(_ app: XCUIApplication) -> Bool {
+        guard tapTab(app, "main-tab-windows", "まど") else { return false }
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        guard room.waitForExistence(timeout: 20) else { return false }
+        room.tap()
+        return app.buttons["group-window-open-members"].waitForExistence(timeout: 15)
+    }
+
     // MARK: - 設定とその下の画面（11/24: 標準の文字といちばん大きい文字）
 
     /// 設定 and every screen below it that the capture build can reach, each

@@ -253,6 +253,25 @@ final class GroupWindowScreenModel: ObservableObject {
         (hearts[photoID] ?? []).filter { $0.active && !hiddenPeople.contains($0.participantID) }
     }
 
+    /// 11/24 (F4): a person's name as 「メンバー」 shows it (the まど's own
+    /// list), so their circle has the same letter and colour everywhere.
+    /// Someone no longer listed keeps the name the photo or heart carried.
+    func memberName(_ participantID: String, fallback: String) -> String {
+        shownWindow?.members.first { $0.id == participantID }?.displayName ?? fallback
+    }
+
+    /// 11/24 (V3): who sent a heart, as the opened photo shows them: this
+    /// iPhone's person is 「あなた」; someone who left has no name (nil).
+    func heartGiver(_ heart: GroupHeart) -> (avatarName: String, shownName: String?) {
+        if let me, heart.participantID == me {
+            return (memberName(me, fallback: heart.displayName), "あなた")
+        }
+        let name = memberName(heart.participantID, fallback: heart.displayName)
+        let left = shownWindow?.members.contains { $0.id == heart.participantID } == false
+            && heart.displayName == GroupHeartGivers.formerMemberName
+        return left ? ("", nil) : (name, name)
+    }
+
     /// Whether the relay still takes a heart for this photo (11/20): it
     /// does for the photos it lists for this iPhone, 7 days after arrival.
     func acceptsHearts(_ photoID: String) -> Bool {
@@ -1246,6 +1265,9 @@ struct GroupWindowScreen: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(model.shownName ?? "まど")
         .navigationBarTitleDisplayMode(.inline)
+        // 11/24 (F5): inside a まど, 「写真を届ける」 is the one bar at the
+        // bottom; the tabs come back with the list (as お気に入り・月のまど).
+        .toolbar(.hidden, for: .tabBar)
         // 11/12 (review 13): the name stays readable over a light photo, as
         // on the official window's page.
         .toolbarBackground(Color(uiColor: .systemGroupedBackground), for: .navigationBar)
@@ -1379,10 +1401,12 @@ struct GroupWindowScreen: View {
         GroupSeatsInviteButton(client: model.client, windowID: model.windowID, windowName: window.name,
                                identifier: "group-window-seats-row") { preparing in
             HStack(spacing: 8) {
-                if preparing { ProgressView() }
-                Text(GroupWindowPresentation.openSeatsText(GroupWindowPresentation.openSeats(window)))
+                if preparing { ProgressView() } else { Image(systemName: "person.badge.plus") }
+                Text("招待する")
                 Spacer(minLength: 8)
-                Image(systemName: "plus")
+                Text(GroupWindowPresentation.openSeatsShortText(GroupWindowPresentation.openSeats(window)))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.accentColor)
@@ -1391,7 +1415,7 @@ struct GroupWindowScreen: View {
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
     }
 
     /// 11/23: the photo chosen while waiting for approval, offered once with
@@ -1637,6 +1661,111 @@ enum GroupPhotoTileSpeech {
     static func heart(mine: Bool, canHeart: Bool) -> String {
         mine ? "ハートを送りました" : canHeart ? "ハートを送る" : "ハート"
     }
+
+    /// 11/24: a heart that is only shown, not pressed: on this person's own
+    /// photo (「もらったハート」), or after the days for hearts are over.
+    static func shownHearts(isOwn: Bool, mine: Bool) -> String {
+        isOwn ? "もらったハート" : heart(mine: mine, canHeart: false)
+    }
+
+    /// 11/24 (V3): who sent the hearts, read after the heart itself.
+    static func givers(_ names: [String]) -> String {
+        names.isEmpty ? "" : "ハートを送った人：" + names.joined(separator: "、")
+    }
+}
+
+/// 11/24 (F2・F3・F8): one rule for every ♡ in a まど. Colour says the
+/// photo has hearts; filled says they concern this person: they sent one,
+/// or the photo is theirs. A heart that cannot be sent and has none is not
+/// shown at all.
+enum GroupHeartLook: Equatable {
+    case hidden, empty, othersOnly, filled
+
+    init(count: Int, mine: Bool, isOwn: Bool, canHeart: Bool) {
+        if isOwn {
+            self = count > 0 ? .filled : .hidden
+        } else if mine {
+            self = .filled
+        } else if count > 0 {
+            self = .othersOnly
+        } else {
+            self = canHeart ? .empty : .hidden
+        }
+    }
+
+    var isFilled: Bool { self == .filled }
+    var color: Color { self == .empty ? Color.secondary : Color.red }
+}
+
+enum GroupHeartGivers {
+    /// The relay's word for someone no longer in the まど
+    /// (ProductionGroupWindowClient): shown as a plain person circle.
+    static let formerMemberName = "以前のメンバー"
+}
+
+/// 11/24 (D): who sent a photo and when, the same on the feed and on the
+/// opened photo: the circle with their first letter, the name, the day,
+/// then whatever the screen puts at the end. The circle, name and day are
+/// read by the photo's own label (feed) or by `spokenLabel` (opened photo).
+/// At the accessibility text sizes the name has a line of its own (11/14).
+struct GroupSenderRow<Trailing: View>: View {
+    let avatarName: String
+    let name: String
+    let day: String
+    var spokenLabel: String? = nil
+    @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                spoken(HStack(spacing: 10) {
+                    avatar
+                    senderName.lineLimit(2)
+                })
+                HStack(spacing: 10) {
+                    dayText.accessibilityHidden(true)
+                    Spacer(minLength: 8)
+                    trailing()
+                }
+            }
+        } else {
+            HStack(spacing: 10) {
+                spoken(HStack(spacing: 10) {
+                    avatar
+                    senderName.lineLimit(1)
+                    dayText
+                })
+                Spacer(minLength: 8)
+                trailing()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func spoken(_ content: some View) -> some View {
+        if let spokenLabel {
+            content.accessibilityElement(children: .ignore).accessibilityLabel(spokenLabel)
+        } else {
+            content.accessibilityHidden(true)
+        }
+    }
+
+    private var avatar: some View {
+        GroupMemberAvatar(name: avatarName, size: 30)
+    }
+
+    private var senderName: some View {
+        Text(name)
+            .font(.body.weight(.semibold))
+    }
+
+    private var dayText: some View {
+        Text(day)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
 }
 
 private struct GroupPhotoTile: View {
@@ -1645,7 +1774,6 @@ private struct GroupPhotoTile: View {
     let open: () -> Void
     @State private var image: UIImage?
     @ObservedObject private var safety = GroupSafety.shared
-    @Environment(\.dynamicTypeSize) private var typeSize
     /// Hearts sent from this tile (not removed): one light haptic each, as
     /// the photo's own page gives. The page's taps do not count here.
     @State private var heartsSentHere = 0
@@ -1704,33 +1832,24 @@ private struct GroupPhotoTile: View {
                 .accessibilityIdentifier("group-photo-tile-photo")
             // 11/12 (review 12): who sent it is the gift, so the name is a
             // size up and the circle carries its first letter; the day reads
-            // as 「3日前」 for the first week.
-            // 11/14: at the accessibility text sizes the name has a line of
-            // its own, the day and the heart under it.
-            if typeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 10) {
-                        avatar
-                        senderName.lineLimit(2)
-                    }
-                    HStack(spacing: 10) {
-                        day
-                        Spacer(minLength: 8)
-                        heartButton
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-            } else {
-                HStack(spacing: 10) {
-                    avatar
-                    senderName.lineLimit(1)
-                    day
-                    Spacer(minLength: 8)
-                    heartButton
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+            // as 「3日前」 for the first week. 11/24: the same row as on the
+            // opened photo (GroupSenderRow).
+            GroupSenderRow(avatarName: avatarName, name: shownName,
+                           day: GroupPhotoTileDate.text(entry.createdAt)) {
+                heartButton
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            // 11/24 (F1): the ひとこと reaches the feed, two lines at most;
+            // the rest is read on the opened photo.
+            if let caption, !caption.isEmpty {
+                Text(caption)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                    .accessibilityIdentifier("group-photo-tile-caption")
             }
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground))
@@ -1751,23 +1870,15 @@ private struct GroupPhotoTile: View {
         }
     }
 
-    private var avatar: some View {
-        GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 30)
-            .accessibilityHidden(true)
+    /// 11/24 (F4): the circle from the name 「メンバー」 shows, own photos too.
+    private var avatarName: String {
+        model.memberName(entry.senderParticipantID, fallback: entry.senderDisplayName)
     }
 
-    private var senderName: some View {
-        Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
-            .font(.body.weight(.semibold))
-            .accessibilityHidden(true)
-    }
+    private var shownName: String { entry.isOwn ? "あなた" : entry.senderDisplayName }
 
-    private var day: some View {
-        Text(GroupPhotoTileDate.text(entry.createdAt))
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .accessibilityHidden(true)
+    private var caption: String? {
+        entry.isHidden || reported ? nil : entry.caption
     }
 
     private func toggleHeart() {
@@ -1784,32 +1895,49 @@ private struct GroupPhotoTile: View {
         if sends { heartBursts &+= 1 }
     }
 
-    private var heartButton: some View {
-        Button(action: toggleHeart) {
-            let mine = model.myHeartIsActive(entry.id)
-            HStack(spacing: 5) {
-                Image(systemName: mine ? "heart.fill" : "heart")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(mine ? Color.red : Color.secondary)
-                    .symbolEffect(.bounce, value: mine)
-                    .symbolEffect(.bounce, value: arrivedHeartBounces)
-                if heartCount > 0 {
-                    Text(heartCount.formatted())
-                        .foregroundStyle(.secondary)
-                }
+    /// 11/24 (F2・F3・F8): colour says there are hearts; filled says they
+    /// concern this person (sent by them, or given to their photo). A heart
+    /// that cannot be sent is only shown, and not at all when there are none.
+    private var heartLook: GroupHeartLook {
+        GroupHeartLook(count: heartCount, mine: model.myHeartIsActive(entry.id), isOwn: entry.isOwn, canHeart: canHeart)
+    }
+
+    private func heartMark(_ look: GroupHeartLook) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: look.isFilled ? "heart.fill" : "heart")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(look.color)
+                .symbolEffect(.bounce, value: model.myHeartIsActive(entry.id))
+                .symbolEffect(.bounce, value: arrivedHeartBounces)
+            if heartCount > 0 {
+                Text(heartCount.formatted())
+                    .foregroundStyle(look.color)
             }
-            .font(.subheadline.weight(.semibold).monospacedDigit())
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .disabled(!canHeart)
-        .sensoryFeedback(.impact(weight: .light), trigger: heartsSentHere)
-        // 11/14: as on the photo's own page, it says whether this
-        // person sent one (not only by its red).
-        .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
-        .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
-        .accessibilityIdentifier("group-photo-tile-heart")
+        .font(.subheadline.weight(.semibold).monospacedDigit())
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var heartButton: some View {
+        let look = heartLook
+        if canHeart {
+            Button(action: toggleHeart) { heartMark(look) }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.impact(weight: .light), trigger: heartsSentHere)
+                // 11/14: as on the photo's own page, it says whether this
+                // person sent one (not only by its red).
+                .accessibilityLabel(GroupPhotoTileSpeech.heart(mine: model.myHeartIsActive(entry.id), canHeart: canHeart))
+                .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
+                .accessibilityIdentifier("group-photo-tile-heart")
+        } else if look != .hidden {
+            heartMark(look)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(GroupPhotoTileSpeech.shownHearts(isOwn: entry.isOwn, mine: model.myHeartIsActive(entry.id)))
+                .accessibilityValue("\(heartCount)")
+                .accessibilityIdentifier("group-photo-tile-heart")
+        }
     }
 }
 
@@ -2253,8 +2381,19 @@ private struct GroupPhotoDetail: View {
         model.entries.first { $0.id == selection }
     }
 
-    private func reactors(_ entry: GroupWindowLocalPhotoStore.Entry) -> [String] {
-        model.shownHearts(entry.id).map(\.displayName)
+    private func isShown(_ entry: GroupWindowLocalPhotoStore.Entry) -> Bool {
+        !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)
+    }
+
+    private func canHeart(_ entry: GroupWindowLocalPhotoStore.Entry) -> Bool {
+        isShown(entry) && !entry.isOwn && !model.isFormer && model.acceptsHearts(entry.id)
+    }
+
+    /// 11/24 (V5): a double-tap on the photo sends a heart, as on the feed.
+    private func doubleTapHeart() {
+        guard let current, canHeart(current) else { return }
+        if !model.myHeartIsActive(current.id) { heartBursts &+= 1 }
+        Task { await model.toggleHeart(current.id) }
     }
 
     var body: some View {
@@ -2268,17 +2407,21 @@ private struct GroupPhotoDetail: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .overlay { GroupHeartBurst(trigger: heartBursts) }
+                .onTapGesture(count: 2) { doubleTapHeart() }
+                // 11/24 (V1): under the photo, everything starts at the left:
+                // the ひとこと, who and when (the feed's row), then the hearts.
                 if let current {
-                    details(current)
-                    if let caption = current.caption, !current.isHidden,
-                       !safety.hasReported(current.id, in: model.windowID) {
-                        Text(caption)
-                            .font(.body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .accessibilityIdentifier("group-photo-caption")
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let caption = current.caption, isShown(current) {
+                            Text(caption)
+                                .font(.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("group-photo-caption")
+                        }
+                        details(current)
+                        heartsRow(current)
                     }
-                    actions(current)
+                    .padding(.horizontal, 16)
                 }
                 if let message = model.actionMessage {
                     Text(message)
@@ -2291,7 +2434,7 @@ private struct GroupPhotoDetail: View {
             }
             .padding(.bottom, 12)
             .background(.black)
-            .navigationTitle(model.shownName ?? "まど")
+            // 11/24 (V6): no name over the photo; × and … only.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -2402,90 +2545,123 @@ private struct GroupPhotoDetail: View {
         return index > 0 ? model.entries[index - 1].id : nil
     }
 
-    /// Who, when, and who sent a heart (as their coloured circles). No
-    /// sentence, no page count; the spoken label keeps the full sentence.
+    /// Who and when: the feed's own row (the same circle and 「今日」), with
+    /// お気に入り at its end on someone else's photo.
     private func details(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
-        let day = entry.createdAt.formatted(.dateTime.month().day())
-        let names = reactors(entry)
+        let day = GroupPhotoTileDate.text(entry.createdAt)
         let spokenDay = entry.isOwn ? "\(day)に届けました" : "\(day)に届きました"
-        // One line: who and when. The hearts live on the ♥ button below; who
-        // sent them is in its spoken value.
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(entry.isOwn ? "あなた" : GroupDisplayName.plain(entry.senderDisplayName))
-                .font(.subheadline.weight(.semibold))
-            Text(day).font(.subheadline).foregroundStyle(.secondary)
+        return GroupSenderRow(
+            avatarName: model.memberName(entry.senderParticipantID, fallback: entry.senderDisplayName),
+            name: entry.isOwn ? "あなた" : GroupDisplayName.plain(entry.senderDisplayName),
+            day: day,
+            spokenLabel: entry.isOwn ? "あなたの写真、\(spokenDay)"
+                : "\(GroupDisplayName.from(entry.senderDisplayName))、\(spokenDay)"
+        ) {
+            if isShown(entry) && !entry.isOwn { favoriteButton(entry) }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel((entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.from(entry.senderDisplayName))、\(spokenDay)")
-                            + (names.isEmpty ? "" : "。ハートを送った人：\(names.joined(separator: "、"))"))
     }
 
-    /// Under the photo: ♥ with its count, and お気に入り. Words only as captions.
+    /// 11/24 (V2・V3): ♥ and the circles of who sent one; with one person,
+    /// their name too. Shown on this person's own photos as well (the hearts
+    /// they got); the ♥ is pressed only on someone else's photo.
     @ViewBuilder
-    private func actions(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
-        let heartCount = reactors(entry).count
+    private func heartsRow(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
+        let givers = model.shownHearts(entry.id).sorted { $0.updatedAt < $1.updatedAt }
         let mine = model.myHeartIsActive(entry.id)
-        let shown = !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)
-        HStack(spacing: 0) {
-            if shown && !entry.isOwn && !model.isFormer {
-                Button {
-                    // 11/22: a heart sent (not taken back) shows on the photo.
-                    if model.acceptsHearts(entry.id) && !model.myHeartIsActive(entry.id) { heartBursts &+= 1 }
-                    Task { await model.toggleHeart(entry.id) }
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: mine ? "heart.fill" : "heart").font(.title2)
-                            .contentTransition(.symbolEffect(.replace))
-                            .symbolEffect(.bounce, value: mine)
-                        Text(heartCount > 0 ? heartCount.formatted() : "ハート").font(.caption2.monospacedDigit())
-                            .contentTransition(.numericText())
-                            .animation(.snappy, value: heartCount)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .foregroundStyle(mine ? Color.red : Color.secondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                // 11/20: shown, not offered, once the relay no longer takes hearts for it.
-                .disabled(!model.acceptsHearts(entry.id))
-                .sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }
-                .accessibilityLabel(mine ? "ハートを送りました" : "ハートを送る")
-                .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
-                .accessibilityIdentifier("group-photo-heart")
-            }
-            if shown && !entry.isOwn {
-                if entry.favoriteLocalIdentifier != nil {
-                    VStack(spacing: 3) {
-                        Image(systemName: "bookmark.fill").font(.title2)
-                        Text("お気に入り").font(.caption2)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .foregroundStyle(Color.accentColor)
-                    .accessibilityLabel("お気に入りに追加済み")
-                    .accessibilityIdentifier("group-photo-favorite-done")
-                } else {
+        let heartable = canHeart(entry)
+        let look = GroupHeartLook(count: givers.count, mine: mine, isOwn: entry.isOwn, canHeart: heartable)
+        let people = givers.map { model.heartGiver($0) }
+        let spoken = GroupPhotoTileSpeech.givers(people.map { $0.shownName ?? GroupHeartGivers.formerMemberName })
+        if isShown(entry) && look != .hidden {
+            HStack(spacing: 10) {
+                if heartable {
                     Button {
-                        showsFavoriteConfirmation = true
+                        // 11/22: a heart sent (not taken back) shows on the photo.
+                        if !mine { heartBursts &+= 1 }
+                        Task { await model.toggleHeart(entry.id) }
                     } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: "bookmark").font(.title2)
-                            WorkingLabel(title: "お気に入り", workingTitle: "追加しています…",
-                                         working: model.addingFavoriteID == entry.id)
-                                .font(.caption2)
-                                .controlSize(.small)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .foregroundStyle(Color.secondary)
-                        .contentShape(Rectangle())
+                        heartIcon(look)
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.addingFavoriteID != nil)
-                    .accessibilityLabel("自分のお気に入りに追加")
-                    .accessibilityIdentifier("group-photo-favorite")
+                    .sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }
+                    .accessibilityLabel(mine ? "ハートを送りました" : "ハートを送る")
+                    .accessibilityValue(spoken)
+                    .accessibilityIdentifier("group-photo-heart")
+                } else {
+                    heartIcon(look)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(GroupPhotoTileSpeech.shownHearts(isOwn: entry.isOwn, mine: mine))
+                        .accessibilityValue(spoken)
+                        .accessibilityIdentifier("group-photo-heart")
                 }
+                GroupHeartGiverCircles(people: people)
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
+            }
+            .animation(.snappy, value: givers.count)
+        }
+    }
+
+    private func heartIcon(_ look: GroupHeartLook) -> some View {
+        Image(systemName: look.isFilled ? "heart.fill" : "heart")
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(look.color)
+            .contentTransition(.symbolEffect(.replace))
+            .symbolEffect(.bounce, value: look.isFilled)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+    }
+
+    /// お気に入り, as an icon at the end of the who-and-when row.
+    @ViewBuilder
+    private func favoriteButton(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
+        if entry.favoriteLocalIdentifier != nil {
+            Image(systemName: "bookmark.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("お気に入りに追加済み")
+                .accessibilityIdentifier("group-photo-favorite-done")
+        } else {
+            Button {
+                showsFavoriteConfirmation = true
+            } label: {
+                Group {
+                    if model.addingFavoriteID == entry.id {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "bookmark").font(.title3)
+                    }
+                }
+                .foregroundStyle(Color.secondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.addingFavoriteID != nil)
+            .accessibilityLabel(model.addingFavoriteID == entry.id ? "追加しています…" : "自分のお気に入りに追加")
+            .accessibilityIdentifier("group-photo-favorite")
+        }
+    }
+}
+
+/// 11/24 (V3): the circles of who sent a heart, in the order they sent it;
+/// with one person, their name after the circle. Someone who left the まど
+/// is a plain person circle with no name. At most 5 in a 6-person まど.
+private struct GroupHeartGiverCircles: View {
+    let people: [(avatarName: String, shownName: String?)]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(people.indices, id: \.self) { index in
+                GroupMemberAvatar(name: people[index].avatarName, size: 26)
+            }
+            if people.count == 1, let name = people[0].shownName {
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
             }
         }
-        .padding(.horizontal, 16)
     }
 }
 
@@ -2551,6 +2727,8 @@ struct GroupWindowMembersScreen: View {
             onLeft: onLeft,
             offersWidgetPlacement: offersWidgetPlacement
         )
+        // 11/24 (M11): no tab bar over the last rows, as in the まど itself.
+        .toolbar(.hidden, for: .tabBar)
     }
 }
 
@@ -3956,12 +4134,49 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
                               senderDisplayName: sender?.displayName ?? "自分",
                               createdAt: now.addingTimeInterval(Double(-index) * 86_400),
                               fixtureAssetName: "app-store-screenshot-fixture-\(index)",
-                              hearts: hearts[id] ?? (index == 1 ? [GroupHeart(participantID: others.first?.id ?? "",
+                              hearts: hearts[id] ?? (Self.showsHearts
+                                  ? fixtureHearts(index, window: window, others: others)
+                                  : index == 1 ? [GroupHeart(participantID: others.first?.id ?? "",
                                   displayName: others.first?.displayName ?? "", active: true, updatedAt: now)] : []),
                               caption: CommandLine.arguments.contains("--group-window-caption-fixture")
                                 ? Self.captionExamples[(index - 1) % Self.captionExamples.count] : nil)
         }
         return sent + fixed
+    }
+
+    /// `--group-window-hearts-fixture` (11/24): each kind of ♡ once. Photo
+    /// 1 (someone else's): hearts from others only; 2: this person's heart;
+    /// 3 (own): two people; 4: none; 5: this person and another; 6 (own): one.
+    static var showsHearts: Bool { CommandLine.arguments.contains("--group-window-hearts-fixture") }
+
+    private func fixtureHearts(_ index: Int, window: GroupWindow, others: [GroupMember]) -> [GroupHeart] {
+        let now = GroupWindowUIFixture.fixtureNow
+        let me = window.members.first { $0.id == window.myParticipantID }
+        let first = others.first
+        let second = others.dropFirst().first
+        let people: [GroupMember?]
+        switch index {
+        case 1: people = [second]
+        case 2: people = [me]
+        case 3: people = [first, second]
+        case 5: people = [second, me]
+        case 6: people = [first]
+        default: people = []
+        }
+        return people.compactMap { $0 }.enumerated().map { order, member in
+            GroupHeart(participantID: member.id, displayName: member.displayName, active: true,
+                       updatedAt: now.addingTimeInterval(Double(order) * 60))
+        }
+    }
+
+    /// `--group-window-admitted-fixture` (11/24): someone this iPhone let
+    /// in by itself, for the members screen's 「〇〇さんが参加しました」.
+    func reconcileAdmissions() async throws -> [GroupAdmissionResult] {
+        guard CommandLine.arguments.contains("--group-window-admitted-fixture") else { return [] }
+        let window = try await members.window(id: "fixture-window")
+        guard let newest = window.members.last(where: { $0.id != window.myParticipantID }) else { return [] }
+        return [GroupAdmissionResult(id: "fixture-admitted-" + newest.id, windowID: window.id,
+                                     displayName: newest.displayName, joinedLocally: false)]
     }
 
     func windows() async throws -> [GroupWindow] { try await members.windows() }
