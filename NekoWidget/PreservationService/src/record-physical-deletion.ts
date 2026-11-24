@@ -24,32 +24,12 @@ type Dependencies = {
 };
 const unavailable = () => new ServiceError('RECORD_ERASURE_SCOPE_UNVERIFIED', 503);
 const versionID = (ref: RecoveryObject | RecoveryVersion) => `${ref.key}\0${ref.versionId}`;
-const attemptLimit = 16;
 const reviewRecords = 13;
 const reviewUnmatchedVersions = 755;
 const dayMs = 86_400_000;
 
 export class RecordPhysicalDeletion {
   constructor(private readonly d: Dependencies) {}
-
-  private async requireCurrent(job: RecordDeletionJob, generation?: number): Promise<number> {
-    const active = await this.d.db.prepare(`SELECT g.generation
-      FROM pa_record_physical_delete_queue q JOIN pa_record_physical_delete_candidates c
-      USING(owner_id,record_id,tombstone_revision,requested_at)
-      JOIN pa_owners o ON o.owner_id=q.owner_id
-      JOIN pa_owner_recovery_generations g ON g.owner_id=q.owner_id
-      WHERE q.owner_id=? AND q.record_id=? AND q.tombstone_revision=? AND q.requested_at=?
-      AND o.disabled=0 AND o.purge_fence_id IS NULL
-      AND NOT EXISTS(SELECT 1 FROM pa_owner_deletion_requests d WHERE d.owner_id=q.owner_id)
-      AND NOT EXISTS(SELECT 1 FROM pa_uploads u WHERE u.owner_id=q.owner_id AND u.record_id=q.record_id)
-      AND NOT EXISTS(SELECT 1 FROM pa_recovery_write_leases w WHERE w.owner_id=q.owner_id)
-      AND NOT EXISTS(SELECT 1 FROM pa_owner_delta_work w WHERE w.owner_id=q.owner_id)
-      AND NOT EXISTS(SELECT 1 FROM pa_owner_delta_nodes n WHERE n.owner_id=q.owner_id)
-      AND NOT EXISTS(SELECT 1 FROM pa_owner_recovery_builds b WHERE b.owner_id=q.owner_id)`)
-      .bind(job.owner_id, job.record_id, job.tombstone_revision, job.requested_at).first<{ generation: number }>();
-    if (!active || (generation !== undefined && active.generation !== generation)) throw unavailable();
-    return active.generation;
-  }
 
   private async reviewScope(expected: string) {
     // Use the existing deletion backlog. The read-only check must also work before
@@ -276,41 +256,6 @@ export class RecordPhysicalDeletion {
     } catch { retainedReadable = false; }
     return { ...summary, totalDurationMs:this.d.now()-started, requestsConfirmed, r2Removed, s3Removed, orphanVersionsRemoved,
       retainedReadable, targetsRemaining:proof.r2.length+s3.length-r2Removed-s3Removed };
-  }
-
-  async step(job: RecordDeletionJob): Promise<'processing' | 'complete'> {
-    const eraser = this.d.eraser;
-    if (!eraser) throw unavailable();
-    const generation = await this.requireCurrent(job);
-    const selected = await this.scan([job], generation);
-    await this.requireCurrent(job, generation);
-    if (selected.unresolvedVersions) throw unavailable();
-    const yieldAt = this.d.now() + 5000;
-    for (const item of selected.r2.slice(0, attemptLimit)) {
-      await this.requireCurrent(job, generation);
-      await requestManifestPhotoDeletion(this.d.bucket, job.owner_id, item);
-      if (this.d.now() >= yieldAt) break;
-    }
-    if (selected.r2.length === 0) {
-      for (const item of selected.s3.slice(0, attemptLimit)) {
-        await this.requireCurrent(job, generation);
-        await eraser.requestExactVersionDeletion(job.owner_id, item);
-        if (this.d.now() >= yieldAt) break;
-      }
-    }
-    // A successful provider delete is a request, not proof of absence.
-    const remaining = await inventoryOwnerCloudStorage(this.d.bucket, this.d.inventory, job.owner_id);
-    await this.requireCurrent(job, generation);
-    const r2Pending = this.stillPresent(selected.physical.r2Objects, selected.r2, remaining.r2Objects, r2Id);
-    const s3Pending = this.stillPresent(selected.physical.s3Versions, selected.s3, remaining.s3Versions, s3Id);
-    if (r2Pending || s3Pending) return 'processing';
-    const closed = await this.d.db.prepare(`DELETE FROM pa_record_physical_delete_queue
-      WHERE owner_id=? AND record_id=? AND tombstone_revision=? AND requested_at=?
-      AND EXISTS(SELECT 1 FROM pa_owner_recovery_generations g
-        WHERE g.owner_id=pa_record_physical_delete_queue.owner_id AND g.generation=?)`)
-      .bind(job.owner_id, job.record_id, job.tombstone_revision, job.requested_at, generation).run();
-    if (closed.meta.changes !== 1) throw unavailable();
-    return 'complete';
   }
 
   private stillPresent<T>(prior: T[], targets: T[], after: T[], identity: (item: T) => string): boolean {

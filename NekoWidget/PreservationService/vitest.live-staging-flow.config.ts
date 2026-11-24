@@ -11,8 +11,10 @@ export default defineConfig({
       NEKO_PROBE_OWNER_ID: process.env.NEKO_PROBE_OWNER_ID ?? '',
       NEKO_PROBE_AWS_ACCESS_KEY_ID: process.env.NEKO_PROBE_AWS_ACCESS_KEY_ID ?? '',
       NEKO_PROBE_AWS_SECRET_ACCESS_KEY: process.env.NEKO_PROBE_AWS_SECRET_ACCESS_KEY ?? '',
+      NEKO_PROBE_ERASER_KEY_ID: process.env.NEKO_PROBE_ERASER_KEY_ID ?? '',
+      NEKO_PROBE_ERASER_SECRET: process.env.NEKO_PROBE_ERASER_SECRET ?? '',
     } },
   })],
-  test: { include: ['test/live-staging-flow.integration.test.ts'],
+  test: { include: ['test/live-staging-flow.integration.test.ts', 'test/live-staging-record-erasure.integration.test.ts'],
     setupFiles: ['./test/setup.ts'], testTimeout: 120_000 },
 });

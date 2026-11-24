@@ -5,6 +5,7 @@ import { RecordRecoveryCopy } from './record-recovery-copy';
 import { OwnerRecoveryCopy } from './owner-recovery-copy';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { RecordPhysicalDeletion, type RecordDeletionJob } from './record-physical-deletion';
+import { QueuedRecordErasure } from './queued-record-erasure';
 import { S3RecoveryCopy } from './s3-recovery-copy';
 import { S3VersionPurge } from './s3-version-purge';
 import { ServiceError } from './contracts';
@@ -62,15 +63,16 @@ export default {
     const keys = envelopeKeyCustody({ enabled: true,
       wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
     const records = new RecordRecoveryCopy(keys, s3);
-    const owners = new OwnerRecoveryCopy(keys, s3, env.IDENTITY_INDEX_SECRET);
-    const executor = new RecordPhysicalDeletion({ db: env.DB, bucket: env.ARCHIVE, records,
-      archive: new OwnerArchiveRecovery(s3, owners, records), inventory: s3, now: Date.now,
-      ...(enabled ? { eraser: new S3VersionPurge({ enabled: 'YES', region: env.RECOVERY_S3_REGION ?? '',
+    const eraser = enabled ? new S3VersionPurge({ enabled: 'YES', region: env.RECOVERY_S3_REGION ?? '',
         bucket: env.RECOVERY_S3_BUCKET ?? '', expectedAccountId: env.RECOVERY_S3_ACCOUNT_ID ?? '',
         accessKeyId: env.ERASER_S3_ACCESS_KEY_ID ?? '', secretAccessKey: env.ERASER_S3_SECRET_ACCESS_KEY ?? '',
-        ...(env.ERASER_S3_SESSION_TOKEN ? { sessionToken: env.ERASER_S3_SESSION_TOKEN } : {}) }) } : {}),
-    });
+        ...(env.ERASER_S3_SESSION_TOKEN ? { sessionToken: env.ERASER_S3_SESSION_TOKEN } : {}) }) : undefined;
     if (review !== undefined) {
+      const owners = new OwnerRecoveryCopy(keys, s3, env.IDENTITY_INDEX_SECRET);
+      const executor = new RecordPhysicalDeletion({ db: env.DB, bucket: env.ARCHIVE, records,
+        archive: new OwnerArchiveRecovery(s3, owners, records), inventory: s3, now: Date.now,
+        ...(eraser ? { eraser } : {}),
+      });
       try {
         if (apply) {
           const result = await executor.eraseReviewed(review,expiresAt);
@@ -86,6 +88,9 @@ export default {
       }
       return;
     }
+    if (!eraser) throw unavailable();
+    const executor = new QueuedRecordErasure({ db: env.DB, bucket: env.ARCHIVE, records,
+      inventory: s3, eraser, now: Date.now });
     const now = Date.now();
     const job = await env.DB.prepare(`UPDATE pa_record_physical_delete_queue SET next_attempt_at=?
       WHERE rowid=(SELECT rowid FROM pa_record_physical_delete_queue WHERE next_attempt_at<=?
@@ -97,7 +102,7 @@ export default {
     let status: string = 'blocked';
     try { status = await executor.step(job); }
     finally {
-      const event = JSON.stringify({ event: 'preservation_record_erasure_v1', status,
+      const event = JSON.stringify({ event: 'preservation_record_erasure_v1', status, durationMs: Date.now()-now,
         ageSeconds: Math.floor(age/1000), targetExceeded: age>=7*dayMs, deadlineExceeded: age>=30*dayMs });
       if (status === 'blocked' || age>=7*dayMs) console.warn(event); else console.info(event);
     }
