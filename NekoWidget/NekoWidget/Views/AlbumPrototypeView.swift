@@ -1595,10 +1595,14 @@ enum AlbumArrivalNotice {
     /// notice. Nothing happens when nothing waits or the answer is known.
     /// Never in the same launch as the first Plus offer (or the review
     /// prompt): if one was shown, the request waits for a later launch (11/12).
+    /// Never in the opening that ended the first run (11/24): the person
+    /// meets the album before a second permission alert covers it.
     @MainActor
     static func askIfNeeded() async {
         guard let waiting = waitingForPermission,
               !FirstPlusOfferPolicy.promptedThisLaunch else { return }
+        if let firstRunEnded = FirstPlusOfferPolicy.dueSince(),
+           (FirstPlusOfferPolicy.activeSince ?? .distantPast) <= firstRunEnded { return }
         let center = UNUserNotificationCenter.current()
         guard await center.notificationSettings().authorizationStatus == .notDetermined,
               !FirstPlusOfferPolicy.promptedThisLaunch else { return }

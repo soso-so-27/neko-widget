@@ -598,7 +598,9 @@ private struct OnboardingScanPage: View {
                 } else if isFinalZero {
                     zeroBottomActions
                 } else {
-                    continueButton.buttonStyle(.borderedProminent)
+                    // 11/24: while searching, 「あとで」 stays quiet grey too;
+                    // there is no blue button until a cat is found.
+                    continueButton.buttonStyle(.plain).foregroundStyle(.secondary).font(.subheadline)
                 }
             }
             .controlSize(.large)
@@ -657,16 +659,13 @@ private struct OnboardingScanPage: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            // 11/24: no 「もう一度探す」 here; choosing photos searches again by itself.
             if isLimitedAccess {
-                VStack(spacing: 10) {
-                    Button(OnboardingPresentationCopy.scanZeroLimitedAction,
-                           systemImage: "photo.badge.plus", action: chooseMorePhotos)
-                        .buttonStyle(.borderedProminent)
-                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
-                        .buttonStyle(.bordered)
-                }
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
+                Button(OnboardingPresentationCopy.scanZeroLimitedAction,
+                       systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
             }
         }
     }

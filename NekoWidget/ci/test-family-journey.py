@@ -358,7 +358,8 @@ class FamilyJoinAfterApproval1115Tests(unittest.TestCase):
         join = section(NOTEBOOK, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {")
         field = section(join, 'Text("あなたの名前")', '.accessibilityIdentifier("family-notebook-display-name")')
         self.assertIn("TextField(", field)
-        self.assertLess(join.index('"family-notebook-display-name"'), join.index('Text("家族に表示されます。")'))
+        # 11/24: the heading and the field already say it; no third line.
+        self.assertNotIn('Text("家族に表示されます。")', join)
         self.assertIn('Text("あなたの名前")', section(SETUP, "private var applySection: some View {", "\n    }\n"))
 
 

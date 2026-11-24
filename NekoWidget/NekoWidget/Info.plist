@@ -73,7 +73,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>ワクチン証明などの書類や、病院で見せる猫の様子を撮るときに使います。書類の写真はこのiPhoneの中だけに保存し、写真アプリには追加しません。病院で見せる写真と動画は、写真アプリに保存します。</string>
+	<string>ワクチン証明などの書類や、病院で見せる猫の様子を撮るときに使います。書類の写真は、写真アプリには追加しません。病院で見せる写真と動画は、写真アプリに保存します。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>届いた写真で「自分のお気に入りに追加」を選んだときと、「病院で見せる」で撮った写真と動画を、写真アプリに保存するために使います。写真を自動で追加することはありません。</string>
 	<key>NSMicrophoneUsageDescription</key>

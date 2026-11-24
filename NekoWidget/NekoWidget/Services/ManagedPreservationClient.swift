@@ -125,7 +125,9 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .conflict: "記録が更新されています。最新の内容を読み込み直してください。"
         case .notFound: "この記録は見つからないか、削除されています。"
         case .exportUnsupported: "この書き出しには、まだ対応していません。"
-        case .unavailable: "通信できませんでした。変更できたかは、読み込み直して確かめてください。"
+        // 11/24: the app's one line for no connection. It is also what
+        // opening 自動保存 offline before signing in shows, where nothing changed.
+        case .unavailable: "接続できません。電波のあるところで、もう一度お試しください。"
         case .interrupted: "途中で止まりました。変更が保存されているかもしれないので、記録を読み込み直してください。"
         case .capacityReached: "保存できる容量か件数がいっぱいです。保存した記録はそのまま残っています。"
         case .productQuotaExceeded(.storage): "容量がいっぱいのため、保存できませんでした。保存する写真やメモを減らすと、また保存できます。元の写真と記録は残っています。"

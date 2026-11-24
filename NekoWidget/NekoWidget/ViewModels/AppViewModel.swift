@@ -4627,7 +4627,7 @@ final class AppViewModel: ObservableObject {
             }
         }
         if error is URLError {
-            return "インターネットにつながりませんでした。通信環境を確かめて、もう一度お試しください。"
+            return "接続できません。電波のあるところで、もう一度お試しください。"
         }
         return "うまくいきませんでした。もう一度お試しください。"
     }

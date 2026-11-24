@@ -341,7 +341,7 @@ enum OnboardingPresentationVerifier {
         // those words, never 「札」.
         try require(
             OnboardingPresentationCopy.widgetCloudyStep
-                == "置いたら、そのままくもりのまどです。「タップで、きょうの1枚」を押すと、きょうの写真が出ます。",
+                == "置くと、写真はくもって出ます。「タップで、きょうの1枚」を押すと晴れます。",
             "the guide's last step changed"
         )
         try require(
@@ -362,7 +362,8 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.widgetLaterAction
-                == "あとで",
+                == "あとで"
+                && OnboardingPresentationCopy.widgetLastStepAction == "写真を見る",
             "Widget guide later action changed"
         )
     }

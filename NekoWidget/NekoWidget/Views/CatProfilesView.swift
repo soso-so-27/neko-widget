@@ -782,12 +782,6 @@ private struct AddCatProfileView: View {
                             }
                         }
                         .accessibilityIdentifier("cat-profile-key-photo")
-                        if selectedPhoto != nil {
-                            Button("写真はあとで選ぶ") {
-                                draft.referencePhotoIdentifier = nil
-                            }
-                            .font(.footnote)
-                        }
                     }
                 }
 
@@ -811,7 +805,7 @@ private struct AddCatProfileView: View {
                 }
             }
             .disabled(isSaving)
-            .navigationTitle("猫を追加")
+            .navigationTitle("この子を追加")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

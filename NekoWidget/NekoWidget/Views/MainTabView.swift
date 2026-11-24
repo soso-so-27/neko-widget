@@ -3676,8 +3676,19 @@ private struct WindowListView: View {
             addedPublicWindows &+= 1
             UsageCounter.shared.count(.officialWindowStarted)  // Usage (11/7)
             startedPublicWindow = source
+            // 11/24: a failed first read is kept, as `reload()` keeps it, so
+            // the card says 「写真を読み込めませんでした」 with its 「もう一度確認」.
+            let subscriptionID = source.store.snapshot().subscriptionID
             Task {
-                try? await source.refresh()
+                do {
+                    try await source.refresh()
+                    publicRefreshFailures.removeValue(forKey: source.id)
+                } catch is CancellationError {
+                } catch {
+                    if let subscriptionID, source.store.snapshot().subscriptionID == subscriptionID {
+                        publicRefreshFailures[source.id] = subscriptionID
+                    }
+                }
                 reloadPublicStates()
                 addingPublicWindowID = nil
             }

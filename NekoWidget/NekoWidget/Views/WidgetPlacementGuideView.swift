@@ -145,7 +145,9 @@ struct WidgetPlacementGuideView: View {
                 if closeTitle == nil {
                     // 「あとで」 is quiet grey text on every first-run page (11/12).
                     // It is the only way out besides placing the Widget.
-                    Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
+                    Button(page < steps.count - 1 ? OnboardingPresentationCopy.widgetLaterAction
+                                                  : OnboardingPresentationCopy.widgetLastStepAction,
+                           action: onSkip)
                         .buttonStyle(.plain)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

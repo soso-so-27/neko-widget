@@ -165,9 +165,13 @@ enum OnboardingPresentationCopy {
     static let widgetNextAction = "つぎへ"
     static let widgetWaitingText = "ホーム画面に置くのを待っています"
     /// The last step of the guide, in the Widget's own words: its tag reads
-    /// 「タップで、きょうの1枚」 (NekoWidgetView), never 「札」.
-    static let widgetCloudyStep = "置いたら、そのままくもりのまどです。「タップで、きょうの1枚」を押すと、きょうの写真が出ます。"
+    /// 「タップで、きょうの1枚」 (NekoWidgetView), never 「札」. 11/24: what
+    /// happens, without a name (「くもりのまど」) the person has not met yet.
+    static let widgetCloudyStep = "置くと、写真はくもって出ます。「タップで、きょうの1枚」を押すと晴れます。"
     static let widgetLaterAction = "あとで"
+    /// 11/24: the last step's quiet way out. The person may have placed the
+    /// Widget already, so not 「あとで」; it goes where 「あとで」 goes.
+    static let widgetLastStepAction = "写真を見る"
 
     /// The first run's last screen once WidgetKit sees the Widget (11/10):
     /// one state, one sentence, one button. Plus is not offered here.
