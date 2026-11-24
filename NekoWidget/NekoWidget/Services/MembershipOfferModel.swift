@@ -1402,7 +1402,7 @@ struct PlusSettingsSection<Rows: View>: View {
         if let fixtureStatus { return fixtureStatus }
 #endif
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
-        Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
+        return Status.live(usableServerAnswer: purchases.entitlementState.permitsPersonalPlus,
                     firstCheck: purchases.entitlementState == .checking,
                     answerMissing: purchases.entitlementState.cannotBeConfirmed,
                     purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation)
