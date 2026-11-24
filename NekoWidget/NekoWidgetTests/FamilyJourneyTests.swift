@@ -70,7 +70,10 @@ final class FamilyJourneyTests: XCTestCase {
         // The server has not confirmed the purchase, or the state is unknown:
         // the line says 「購入を復元」, so the button moves under it.
         XCTAssertTrue(MembershipOfferModel.preview(state: .authorityPending).asksForRestore)
-        XCTAssertTrue(MembershipOfferModel.preview(state: .unknown).asksForRestore)
+        // 11/24: unknown has 「購入を復元」 as its one main button instead.
+        XCTAssertFalse(MembershipOfferModel.preview(state: .unknown).asksForRestore)
+        XCTAssertTrue(MembershipOfferModel.preview(state: .unknown).restoresInsteadOfPurchase)
+        XCTAssertTrue(MembershipOfferModel.preview(state: .storeTransaction).restoresInsteadOfPurchase)
         // Apple's own pending purchase, a member, and a fresh offer keep it
         // among the links.
         XCTAssertFalse(MembershipOfferModel.preview(state: .applePending).asksForRestore)
