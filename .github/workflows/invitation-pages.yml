@@ -8,6 +8,7 @@ on:
       - 'docs/support/**'
       - 'docs/community/**'
       - 'docs/guide/**'
+      - 'docs/tokushoho/**'
       - 'docs/join.html'
       - 'docs/family-join.html'
       - 'docs/assets/site.css'

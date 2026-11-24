@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {ageRatingPlan,checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous,approvedReviewNotes1123v} from './asc-metadata-apply.mjs';
+import {ageRatingPlan,checkPlan,errorDetails,runGroups,permissionFailure,approvedDescriptionUpdate,approvedDailyPhotoAppDescription,dailyPlusDescriptionChange,seasonalMovieAppMetadata,approvedStoreCopy1123,pickFields,storeCopy1123Previous,approvedReviewNotes1123v,approvedStoreCopy1124f,storeCopy1124fPrevious} from './asc-metadata-apply.mjs';
 
 test('age rating dry-run compares the complete questionnaire, including new Apple fields',()=>{
   const desired=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/age-rating.json',import.meta.url),'utf8'));
@@ -132,8 +132,9 @@ test("1115c permits exactly approved #1007 description changes",()=>{
  assert.equal(approvedDescriptionUpdate(before+"別の文",desired),false);
 });
 test('1123 store-copy-1123 permits only the exact previous to approved text',()=>{
-  const desiredVersion=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
-  const desiredReview=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/review-information.json',import.meta.url),'utf8'));
+  // 1124f: the repo moved on; check the 1123 step on the description and notes it had then.
+  const desiredVersion={...JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8')),description:storeCopy1124fPrevious.description};
+  const desiredReview={notes:storeCopy1124fPrevious.notes};
   const fields=['description','keywords','promotionalText'];
   const desired=pickFields(desiredVersion,fields),previous=pickFields(storeCopy1123Previous,fields);
   for(const field of fields)assert.notEqual(previous[field],desired[field]);
@@ -173,7 +174,8 @@ test('1123 store-copy-1123 permits only the exact previous to approved text',()=
   assert.equal(approvedStoreCopy1123(undefined,desired),false);
 });
 test('1123v review-notes-1123v permits only the review notes from the store-copy-1123 text to 「招待する」',()=>{
-  const desiredNotes=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/review-information.json',import.meta.url),'utf8')).notes;
+  // 1124f: the repo notes moved on; the 1123v approved notes are the 1124f previous.
+  const desiredNotes=storeCopy1124fPrevious.notes;
   const sentence='まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。';
   assert.ok(desiredNotes.includes(sentence));
   assert.ok(!desiredNotes.includes('猫友を招く'));
@@ -196,4 +198,58 @@ test('1123v review-notes-1123v permits only the review notes from the store-copy
   assert.equal(approvedReviewNotes1123v({notes:previousNotes},{description:desiredNotes}),false);
   assert.equal(approvedReviewNotes1123v(undefined,desired),false);
   assert.equal(approvedReviewNotes1123v({notes:previousNotes},undefined),false);
+});
+test('1124f store-copy-1124f moves only description and notes from the approved text to the 11/24 text',()=>{
+  const version=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/version/1.0/ja.json',import.meta.url),'utf8'));
+  const review=JSON.parse(readFileSync(new URL('./asc-metadata-1109d/review-information.json',import.meta.url),'utf8'));
+  const description={description:version.description},notes={notes:review.notes};
+  const previousDescription={description:storeCopy1124fPrevious.description},previousNotes={notes:storeCopy1124fPrevious.notes};
+  // The previous text is exactly what store-copy-1123 and review-notes-1123v approved.
+  assert.equal(approvedStoreCopy1123({description:storeCopy1123Previous.description},previousDescription),true);
+  assert.equal(approvedReviewNotes1123v({notes:previousNotes.notes.replace('「招待する」','「猫友を招く」')},previousNotes),true);
+  // The approved copy itself.
+  assert.ok(!version.description.includes(String.fromCharCode(92))&&!review.notes.includes(String.fromCharCode(92)));
+  assert.ok(version.description.includes('作品を開くのは Plus です（初めての方は 14 日間無料）。'));
+  assert.ok(version.description.includes('Plus は、初めての方は 14 日間無料で試せます。'));
+  assert.ok(!/(?<!初めての方は )14 日間無料/u.test(version.description));
+  assert.ok(version.description.includes('Plus の間に届いた作品も開けます。止まるのは、作ったまどへの写真・家族の手帳の共有・自動保存など、新しく増えるものです。'));
+  assert.ok([...version.description].length<=4000);
+  for(const sentence of ['購入画面は「この子」タブ右上の歯車（設定）→「Plusについて」です。',
+    '「まど」タブの「まどを作る」から Plus で作り',
+    '2 台目で「参加する」を押したあと、1 台目でねこのまどを開くと参加が完了します。',
+    '1 つのまどにつき 1 人 1 日 5 枚まで',
+    '家族の手帳の猫の代表写真は、その猫のページの「…」から「この写真を通報」できます。',
+    '「この子」タブで「この子を追加」（名前だけで足せます）のあと「病院」から開けます。'])assert.ok(review.notes.includes(sentence),sentence);
+  assert.ok(!review.notes.includes('みんなのまど'));
+  assert.ok(!review.notes.includes('「設定」→「Plusについて」'));
+  assert.ok([...review.notes].length<=4000);
+
+  for(const [previous,desired] of [[previousDescription,description],[previousNotes,notes]]){
+    assert.notDeepEqual(previous,desired);
+    assert.equal(approvedStoreCopy1124f(previous,desired),true);
+    assert.equal(approvedStoreCopy1124f(desired,desired),true);
+    const field=Object.keys(desired)[0];
+    // Any other current value stops, including the older approved texts.
+    assert.equal(approvedStoreCopy1124f({[field]:previous[field]+'。'},desired),false);
+    assert.equal(approvedStoreCopy1124f({[field]:undefined},desired),false);
+    assert.equal(approvedStoreCopy1124f({},desired),false);
+    // Any desired text other than the approved one stops.
+    assert.equal(approvedStoreCopy1124f(previous,{[field]:desired[field]+'追記'}),false);
+    assert.equal(approvedStoreCopy1124f(previous,previous),false);
+  }
+  assert.equal(approvedStoreCopy1124f({description:storeCopy1123Previous.description},description),false);
+  assert.equal(approvedStoreCopy1124f({notes:storeCopy1123Previous.notes},notes),false);
+  assert.equal(approvedStoreCopy1124f(previousDescription,{description:version.description.replace('980 円','990 円')}),false);
+  // One field per group, and only description or notes.
+  assert.equal(approvedStoreCopy1124f({...previousDescription,...previousNotes},{...description,...notes}),false);
+  assert.equal(approvedStoreCopy1124f({...previousDescription,keywords:version.keywords},description),false);
+  assert.equal(approvedStoreCopy1124f({keywords:version.keywords},{keywords:version.keywords}),false);
+  assert.equal(approvedStoreCopy1124f({promotionalText:version.promotionalText},{promotionalText:version.promotionalText}),false);
+  assert.equal(approvedStoreCopy1124f({notes:previousNotes.notes,demoAccountRequired:false},notes),false);
+  assert.equal(approvedStoreCopy1124f(previousNotes,{description:review.notes}),false);
+  assert.equal(approvedStoreCopy1124f(undefined,description),false);
+  assert.equal(approvedStoreCopy1124f(previousDescription,undefined),false);
+  // The workflow offers the scope.
+  const workflow=readFileSync(new URL('../../.github/workflows/asc-metadata-1109d.yml',import.meta.url),'utf8');
+  assert.match(workflow,/review-notes-1123v, store-copy-1124f, age-rating\]/u);
 });

@@ -91,6 +91,23 @@ export function approvedReviewNotes1123v(current,desired){
   if(typeof desired.notes!=='string'||sha256(desired.notes)!==reviewNotes1123vApproved)return false;
   return typeof current.notes==='string'&&(sha256(current.notes)===reviewNotes1123vPrevious||current.notes===desired.notes);
 }
+// 1124f: the 11/24 reviews. Description: 「初めての方は」 for the trial, and what
+// stops / what stays openable when Plus ends. Review notes: where 設定 is, the
+// second device's join, 「まど」 tab names, 5 per まど, the 病院 entry and the
+// family photo report. Only description and notes move, each from exactly the
+// text approved before (store-copy-1123 description, review-notes-1123v notes)
+// to exactly the SHA-256-pinned new text.
+export const storeCopy1124fPrevious={"description":"ねこのまどは、iPhone の写真から猫の写真を見つけて、アルバムとホーム画面のウィジェットに出すアプリです。\n\n■ 探さなくても、猫の写真がそろう\n写真へのアクセスを許可すると、iPhone の中の猫の写真を見つけて並べます。猫かどうかの見分けは iPhone の中で行います。元の写真を動かしたり、消したりはしません。\n\n■ ホーム画面で、ふと目が合う\nウィジェットを置くと、猫の写真がホーム画面に出ます。新しい 1 枚は、くもったまどで届きます。札をタップすると晴れて、その日の 1 枚に会えます。毎日ちがう 1 枚に入れ替わります。1年前のきょうや誕生日には、札の付いた1枚が届きます。\n\n■ 毎月 1 日に、先月の作品が届く\nその月の猫の写真から、本のように開ける「月の作品」をつくります。12 月には 1 年の作品も届きます。作品を開くのは Plus です（14 日間無料）。\n\n■ みんなのまどで、家族や猫友に届ける\nトークでは流れてしまう1枚も、まどならうもれません。\n名前を付けたまどを作って、家族や猫友を招待します（1 つのまどに 6 人まで）。写真に短いひとことを添えて届けると、相手のホーム画面のウィジェットにも出せます。ハートで「見たよ」を返せます。\n・招待した人だけのまどです。公開のタイムライン、検索、フォローはありません。\n・写真とひとことは、まどの人だけが開ける鍵で暗号化して届けます。運営者は中身を読めません。通報された写真だけは、確認用の画像を運営者が確かめます。\n・iPhone の「センシティブな内容の警告」がオンのときは、届ける前と表示する前に、iPhone の中で確かめます。困ったときは、通報やブロックができます。\n\n■ のわのまど\nねこのまどの黒猫「のわ」の写真が、毎日 1 枚届きます。だれでも無料で受け取れます。\n\n■ 家族の手帳\n猫のごはん、薬、病院、預けるときのことを、家族で一緒に書けます。だれが書いても、家族みんなの iPhone に同じ記録がそろいます。中身は家族だけが開ける鍵で暗号化して届けます。\n\n■ この子のこと（無料）\n誕生日・ワクチン・病院・体重を記録して、この子の写真と情報から、暮らしで使うものをつくれます。\n・写真を見せる：自慢の 9 枚を、人に見せたりスライドショーにしたり\n・病院で見せる：気付いたことと写真・動画・体重を、先生に見せる 1 画面に\n・預けるとき：お世話のお願いと毎日のチェック表を、PDF や文で渡せる\n・迷子のとき：チラシと SNS 用の画像、連絡したところの記録\n・避難に備える：持ち出すものと期限、見直しの時期のお知らせ、「いま避難する」画面\n\n■ ねこのまど Plus\n・まどを作って、家族や猫友を招く\n・月の作品、1年の作品\n・家族の手帳を作る\n・猫のこと・メモ・ツールの記録を保存して、新しい iPhone に戻せる（3GB・記録 3,000 件まで。お試し中は 250MB）\n\n招待されてまどや家族の手帳に入る人は、無料です。\n\nPlus は 14 日間無料で試せます。お試しが終わると、月額 980 円（税込）で自動で更新されます。更新の 24 時間前までに解約すれば、料金はかかりません。解約は iPhone の「設定」→ Apple アカウント →「サブスクリプション」からできます。やめても、この iPhone の写真・メモ・まどの写真・手帳の記録は消えません。自動保存のコピーは、やめてから 12 か月後に消えます。Apple のファミリー共有には対応していません。\n\nプライバシーポリシー：https://nekonomado.com/privacy/ \n利用規約：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/\n\niOS 17.1 以降の iPhone で使えます。","notes":"ねこのまどは、iPhone の写真から猫の写真を見つけて、アルバムとウィジェットに出すアプリです。\n\n1. 写真へのアクセスは「フルアクセス」をおすすめします。端末に猫の写真が無いと、アルバムと作品は空になります。\n\n2. Plus（jp.nekowidget.plus.monthly、月額、14 日間の無料お試し）は Sandbox の購入で試せます。審査用のコードや特別な入口はありません。購入画面は「設定」→「Plusについて」です。\n\n3. みんなのまど（招待した人と写真を届け合う機能）は、Plus でまどを作り、招待リンクを 2 台目の端末で開くと試せます。1 台でも、作る・届ける・ウィジェットまでは確認できます。写真とひとことはエンドツーエンド暗号化で届けます。写真アプリの共有シートの「ねこのまど」からも、まどに届けられます。まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。\n\n4. 不適切な写真への対応（みんなのまど）\n・公開の場はありません。招待した人だけ（1 つのまどに 6 人まで）で、公開のタイムライン・検索・フォローはありません。\n・届けられるのは 1 人 1 日 5 枚までです。\n・まどを作るとき・参加するときに、コミュニティ基準への同意を求めます。\n・まどの写真を開いた画面の「…」から「この写真を通報」と「○○さんをブロック」ができます。通報した写真はすぐに見えなくなり、通報番号を表示します。ブロックもすぐに効きます。\n・通報とブロックは、ほかの人が届けた写真にだけ出ます。1 台では見られないため、2 台で操作した動画を添付します。\n・通報は運営者が原則 48 時間以内に確認を始めます（コミュニティ基準 https://nekonomado.com/community/ ）。\n・届ける前と表示する前の iPhone の中での確かめは、iPhone の「センシティブな内容の警告」がオンのときに行い、センシティブな写真は届けず、表示もしません。オフのときは確かめずに届けるため、上の招待制・枚数の上限・同意・通報・ブロックで対応します。\n・家族の手帳では、家族の書き込みを長押しして「この書き込みを表示しない」と「運営に知らせる」（お問い合わせへの案内）が選べます。\n\n5. 削除：「設定」のいちばん下の「アカウントとデータを消す」から。まどと家族の手帳は「まどと家族の手帳のデータを消す」、自動保存は「自動保存のアカウント」。Plus の解約は App Store のサブスクリプションからです。\n\n6. 「病院で見せる」で写真や動画を撮ると、写真アプリに保存します。動画を撮るときだけマイクを使います。\n\n連絡先：support@nekonomado.com"};
+export const storeCopy1124fApproved={"description":"d305f3e2414665ddaa43f2338a1d82a400b7f93cd8e40af1d55a24fa13b7fb9b","notes":"6f4e4bd4963ce8e69879386fd3a18a2fdb5c1ebbbba0af2789b6373472185a63"};
+export function approvedStoreCopy1124f(current,desired){
+  if(!current||!desired||typeof current!=='object'||typeof desired!=='object')return false;
+  const fields=Object.keys(desired);
+  if(fields.length!==1||!Object.hasOwn(storeCopy1124fPrevious,fields[0]))return false;
+  if(Object.keys(current).some(field=>!fields.includes(field)))return false;
+  const field=fields[0];
+  return typeof desired[field]==='string'&&sha256(desired[field])===storeCopy1124fApproved[field]
+    &&(current[field]===storeCopy1124fPrevious[field]||current[field]===desired[field]);
+}
 const freePhotoHeading='■ ホーム画面で、ふと目が合う\n';
 const plusHeading='■ ねこのまど Plus\n';
 const paidDailyLine='・毎日、新しい 1 枚がホーム画面に\n';
@@ -163,7 +180,7 @@ export function permissionFailure(text){
 function main(){
   const mode=process.argv[2]; if(!['--dry-run','--apply','--validate'].includes(mode)) throw Error('STOP_MODE');
   const selection=process.env.ASC_METADATA_SCOPE||'approved-groups';
-  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123','review-notes-1123v','age-rating'].includes(selection))throw Error('STOP_SCOPE');
+  if(!['approved-groups','version-description','daily-photo-app-description','daily-photo-plus-description','seasonal-movie-app-metadata','store-copy-1123','review-notes-1123v','store-copy-1124f','age-rating'].includes(selection))throw Error('STOP_SCOPE');
   if(selection==='age-rating'&&mode==='--apply')throw Error('STOP_SCOPE');
   const env={...process.env,ASC_TELEMETRY_DISABLED:'1',DO_NOT_TRACK:'1'};
   const sensitive=[env.APP_STORE_CONNECT_KEY_ID,env.APP_STORE_CONNECT_ISSUER_ID,env.APP_STORE_CONNECT_PRIVATE_KEY_BASE64];
@@ -268,6 +285,18 @@ function main(){
     });
     for(const [scope,file,fields,desired] of groups)
       runScope(scope,[file],false,fields,before=>approvedStoreCopy1123(pickFields(before[file],fields),desired));
+    return;
+  }
+  if(selection==='store-copy-1124f'){
+    // Both groups are checked before either writes; one field in each.
+    const groups=[['localizations','version/1.0/ja.json',['description']],
+      ['review-information','review-information.json',['notes']]].map(([scope,file,fields])=>{
+      const desired=pickFields(JSON.parse(readFileSync(join(root,file),'utf8')),fields);
+      if(!approvedStoreCopy1124f(pickFields(snapshot(scope)[file],fields),desired))throw Error('STOP_SCOPE');
+      return [scope,file,fields,desired];
+    });
+    for(const [scope,file,fields,desired] of groups)
+      runScope(scope,[file],false,fields,before=>approvedStoreCopy1124f(pickFields(before[file],fields),desired));
     return;
   }
   if(selection==='review-notes-1123v'){
