@@ -296,8 +296,8 @@ final class MembershipOfferModel: ObservableObject {
 
     /// 11/24: a new purchase cannot start because the purchase state is
     /// unknown, or Apple already holds a subscription the server did not
-    /// confirm. The main button stays 「Plusを始める」 (never a greyed trial
-    /// or a state name) and restores instead of buying again.
+    /// confirm. The main button is 「購入を復元」 (never a greyed trial or a
+    /// state name): it restores instead of buying again.
     var restoresInsteadOfPurchase: Bool {
         guard !isMember, !isWaiting else { return false }
         if verificationRequired { return true }
@@ -312,6 +312,7 @@ final class MembershipOfferModel: ObservableObject {
         return false
 #endif
     }
+    static let restoreTitle = "購入を復元"
     /// 11/24: the one line while the main button restores.
     static let restoreLine = "購入を確かめられません。購入し直さずに「購入を復元」を押してください。"
 
@@ -675,8 +676,9 @@ final class MembershipOfferModel: ObservableObject {
             purchaseTitle = "お支払い方法の確認が必要です"
             message = "Appleでお支払いを確認できていません。「サブスクリプションを管理」からお支払い方法を確認してください。\nApp Store で手続きが終わると、自動で使えるようになります。"
         } else if verificationRequired || restoresInsteadOfPurchase {
-            // 11/24: the button keeps its name; the line says what to do, once.
-            purchaseTitle = MembershipOfferPresentation.startTitle
+            // 11/24: the one button is 「購入を復元」 (never a greyed trial or a
+            // state name); the line says what to do, once.
+            purchaseTitle = Self.restoreTitle
             message = Self.restoreLine
         } else {
             purchaseTitle = nil

@@ -392,10 +392,11 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("purchaseAction", refresh)
         self.assertIn("if isMember {", view)
         self.assertLess(view.index("if isMember {"), view.index("Text(offer.billingLine)"))
-        # 11/24: unknown (or a purchase Apple already holds) keeps 「Plusを始める」
-        # pressable, and it restores; a purchase still needs canPurchase and a price.
+        # 11/24: unknown (or a purchase Apple already holds): the one button is
+        # 「購入を復元」; a purchase still needs canPurchase and a price.
         self.assertIn(".disabled(isWorking || (!purchaseRestores && (!canPurchase || offer == nil)))", view)
-        self.assertIn('if purchaseRestores { running = "購入を復元"; onRestore() }\n                    else { running = "購入"; onPurchase() }', view)
+        self.assertIn("if purchaseRestores { onRestore() } else { onPurchase() }", view)
+        self.assertIn('static let restoreTitle = "購入を復元"', model)
         self.assertIn("guard canPurchase, let presentedOffer = offer else { return .unavailable }", model)
 
     def test_purchase_screen_keeps_terms_and_privacy_links(self) -> None:
@@ -407,8 +408,9 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         for identifier in ("membership-offer-terms", "membership-offer-privacy"):
             self.assertIn(f'.accessibilityIdentifier("{identifier}")', footer)
         # 11/15: the one 「購入を復元」 is among the links unless the line on
-        # screen asks for it; then it stands under that line instead.
-        self.assertIn("if !restoreNearMessage { restoreButton }", footer)
+        # screen asks for it; then it stands under that line instead. 11/24: and
+        # not while the main button itself is 「購入を復元」.
+        self.assertIn("if !restoreNearMessage && !purchaseRestores { restoreButton }", footer)
         restore = section(view, "    private var restoreButton: some View {", "\n    }\n")
         self.assertIn('.accessibilityIdentifier("membership-offer-restore")', restore)
         self.assertEqual(view.count('"membership-offer-restore"'), 1)

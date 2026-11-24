@@ -384,9 +384,9 @@ struct MembershipOfferView: View {
             // big blue button that cannot be pressed.
             if !isMember {
                 Button {
-                    // 11/24: no new purchase can start here; the button restores.
-                    if purchaseRestores { running = "購入を復元"; onRestore() }
-                    else { running = "購入"; onPurchase() }
+                    // 11/24: no new purchase can start here: the one button is 「購入を復元」.
+                    running = "購入"
+                    if purchaseRestores { onRestore() } else { onPurchase() }
                 } label: {
                     HStack(spacing: 8) {
                         if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
@@ -429,7 +429,8 @@ struct MembershipOfferView: View {
 
             // 11/15: right under the line that asks for it, in the pinned
             // bar, never also among the links (one place).
-            if restoreNearMessage {
+            // 11/24: not while the main button itself is 「購入を復元」.
+            if restoreNearMessage && !purchaseRestores {
                 restoreButton
                     .font(.subheadline.weight(.semibold))
                     .buttonStyle(.bordered)
@@ -445,7 +446,8 @@ struct MembershipOfferView: View {
             }
 
             // No separate re-check: 「購入を復元」 does both (11/5).
-            if let onManageSubscription, isMember || canRefresh {
+            // 11/24: not while the one button is 「購入を復元」 (one state, one button).
+            if let onManageSubscription, isMember || (canRefresh && !purchaseRestores) {
                 Button("サブスクリプションを管理", action: onManageSubscription)
                     .frame(minHeight: 44)
                     .disabled(isWorking)
@@ -486,7 +488,7 @@ struct MembershipOfferView: View {
     }
 
     @ViewBuilder private var footerLinkContent: some View {
-        if !restoreNearMessage { restoreButton }
+        if !restoreNearMessage && !purchaseRestores { restoreButton }
         if let cancellationHelpURL = Self.cancellationHelpURL {
             Link("解約のしかた", destination: cancellationHelpURL)
                 .frame(minHeight: 44)

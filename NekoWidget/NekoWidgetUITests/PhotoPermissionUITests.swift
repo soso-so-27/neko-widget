@@ -4395,11 +4395,24 @@ final class SoloMemoriesUITests: XCTestCase {
                 // be bought again, and 「購入を復元」 stays next to it.
                 XCTAssertTrue(purchase.isEnabled, "An expired Plus must be offered again: " + app.debugDescription)
             } else if state == "unknown" {
-                // 11/24: the button keeps its name and restores; it never buys again.
-                XCTAssertEqual(purchase.label, "Plusを始める")
+                // 11/24: one state, one line, one button: the main button is
+                // 「購入を復元」 (it never buys again); no second restore, no management.
+                XCTAssertEqual(purchase.label, "購入を復元")
                 XCTAssertTrue(purchase.isEnabled, "Unknown restores from the main button: " + app.debugDescription)
                 XCTAssertEqual(app.staticTexts["membership-offer-message"].label,
                                "購入を確かめられません。購入し直さずに「購入を復元」を押してください。")
+                XCTAssertFalse(app.buttons["membership-offer-restore"].exists, app.debugDescription)
+                XCTAssertFalse(app.buttons["membership-offer-manage"].exists, app.debugDescription)
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "membership-confirmation-required"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                purchase.tap()
+                let result = app.staticTexts["membership-preview-result"]
+                XCTAssertTrue(result.waitForExistence(timeout: 5), app.debugDescription)
+                XCTAssertTrue(result.label.contains("確認を終えて"))
+                app.terminate()
+                continue
             } else {
                 XCTAssertFalse(purchase.isEnabled, "Pending states must not invite another purchase")
                 XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
@@ -4425,15 +4438,6 @@ final class SoloMemoriesUITests: XCTestCase {
             }
             XCTAssertTrue(restore.isHittable, state + ": " + app.debugDescription)
             XCTAssertTrue(restore.isEnabled)
-            if state == "unknown" {
-                let attachment = XCTAttachment(screenshot: app.screenshot())
-                attachment.name = "membership-confirmation-required"
-                attachment.lifetime = .keepAlways
-                add(attachment)
-                checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "Plusを始める",
-                                                           expectedEnabled: true, captureName: "unknown")
-                for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
-            }
             restore.tap()
             if state == "expired" || state == "expiring" {
                 // Nothing to restore: the sheet stays, the result stays, and buying is open again.
@@ -4500,7 +4504,6 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func checkMembershipManagementPreviewKeepsState(_ app: XCUIApplication,
                                                           expectedPurchaseTitle: String?,
-                                                          expectedEnabled: Bool = false,
                                                           captureName: String) {
         let manage = app.buttons["membership-offer-manage"]
         for _ in 0..<10 where !manage.isHittable { app.swipeUp() }
@@ -4521,7 +4524,7 @@ final class SoloMemoriesUITests: XCTestCase {
         if let expectedPurchaseTitle {
             XCTAssertEqual(purchase.label, expectedPurchaseTitle,
                            "Closing management must not invent a purchase, cancellation, or grant")
-            XCTAssertEqual(purchase.isEnabled, expectedEnabled)
+            XCTAssertFalse(purchase.isEnabled)
         } else {
             // A member has no purchase button (11/7); closing management must not add one.
             XCTAssertFalse(purchase.exists, "Closing management must not invent a purchase, cancellation, or grant")

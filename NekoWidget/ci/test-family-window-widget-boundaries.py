@@ -8246,7 +8246,7 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         # The server-side check is waited out with 「購入を復元」, not automatically.
         self.assertIn('もう一度購入せずに、「購入を復元」を押してください。"', state)
         # 11/24: unknown keeps the button's name and says what to do once.
-        self.assertIn("purchaseTitle = MembershipOfferPresentation.startTitle\n            message = Self.restoreLine", checking)
+        self.assertIn("purchaseTitle = Self.restoreTitle\n            message = Self.restoreLine", checking)
         self.assertIn('static let restoreLine = "購入を確かめられません。購入し直さずに「購入を復元」を押してください。"', model)
         self.assertEqual(model.count(auto), 3)
 
@@ -8520,8 +8520,8 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         self.assertNotIn("purchaseAction", reload)
         self.assertNotIn("restoreAction", reload)
         self.assertIn("onReloadOffer: { Task { await model.reloadOffer() } },", self.sheet)
-        # 「サブスクリプションを管理」 stays with the member and the unknown states only.
-        self.assertIn("if let onManageSubscription, isMember || canRefresh {", self.view)
+        # 「サブスクリプションを管理」 stays with the member and the unknown states only; 11/24: not while the one button is 「購入を復元」.
+        self.assertIn("if let onManageSubscription, isMember || (canRefresh && !purchaseRestores) {", self.view)
 
     def test_headline_reasons_and_links(self) -> None:
         self.assertIn('static let heading = "うちの子との毎日を、もっと残す"', self.view)
