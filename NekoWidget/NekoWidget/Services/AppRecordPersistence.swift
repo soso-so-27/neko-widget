@@ -2266,6 +2266,27 @@ enum AppRecordSettingsRules {
     }
 }
 
+#if DEBUG
+/// 11/24 (autosave flow): the UI fixtures' `--autosave-state-<name>`, and
+/// whether this iPhone has Plus there. The capture build sells nothing, so
+/// the fixture stands in for the purchase store and the Plus sheet.
+enum AutoSaveFixturePlus {
+    static var state: String? {
+        guard CommandLine.arguments.contains("--app-records-ui-fixture") else { return nil }
+        return CommandLine.arguments.first { $0.hasPrefix("--autosave-state-") }
+            .map { String($0.dropFirst("--autosave-state-".count)) }
+    }
+    /// nil: the live purchase store decides.
+    static var plusHere: Bool? {
+        switch state ?? "" {
+        case "signed-out-plus", "link-conflict": true
+        case "p01", "signed-out-no-plus", "linked-after-purchase": false
+        default: nil
+        }
+    }
+}
+#endif
+
 /// 自動保存: the one place for saving (10/31). Starting is one Apple sign-in:
 /// the consent and the Plus link are stated above that button, then enabling,
 /// linking this iPhone's Plus and restoring an earlier save all follow it.
@@ -2322,7 +2343,22 @@ struct AppRecordSettingsView: View {
 #endif
     }
 
-    private var hasPlusHere: Bool { purchases.entitlementState.permitsPersonalPlus }
+#if DEBUG
+    /// 11/24 (autosave flow): the UI fixtures' Plus; a purchase there gives it.
+    @State private var fixturePlusHere: Bool? = AutoSaveFixturePlus.plusHere
+#endif
+    private var hasPlusHere: Bool {
+#if DEBUG
+        if let fixturePlusHere { return fixturePlusHere }
+#endif
+        return purchases.entitlementState.permitsPersonalPlus
+    }
+    private var offerModel: MembershipOfferModel {
+#if DEBUG
+        if fixturePlusHere != nil { return .preview(purchaseResult: .completed) }
+#endif
+        return .live()
+    }
     /// 11/23: 「保存したものを書き出す」 and 「自動保存のアカウント」 are for
     /// someone who started saving (here, or with this account's Plus) or
     /// whose Plus ended with records kept; before that they open nothing.
@@ -2333,7 +2369,10 @@ struct AppRecordSettingsView: View {
     /// Buying is offered only where it can happen; a member is never asked,
     /// and nothing is offered while launch is still checking (11/5).
     private var offersPlus: Bool {
-        PlusOfferAvailability.isConfigured && !hasPlusHere && purchases.entitlementState != .checking
+#if DEBUG
+        if fixturePlusHere != nil { return !hasPlusHere }
+#endif
+        return PlusOfferAvailability.isConfigured && !hasPlusHere && purchases.entitlementState != .checking
     }
     private var plusEnded: Bool {
         guard let membership = authentication.membership else { return false }
@@ -2373,8 +2412,11 @@ struct AppRecordSettingsView: View {
             authentication.checkMembership()
             linkAfterPurchaseIfReady()
         }) {
-            MembershipOfferSheet(model: .live(), context: .preservation) { result in
+            MembershipOfferSheet(model: offerModel, context: .preservation) { result in
                 if result == .completed { linksAfterPurchase = true }
+#if DEBUG
+                if result == .completed, fixturePlusHere != nil { fixturePlusHere = true }
+#endif
                 showsPlusOffer = false
             }
         }
@@ -3039,6 +3081,15 @@ private actor AppRecordFixtureServer {
     func simulateAccountReadFailure() { accountReadsUnavailable = true }
     private var rejectVisibleInventory = false
     func simulateArchiveListingConflict() { rejectVisibleInventory = true }
+    /// 11/24 (autosave flow): an account whose Plus is not linked yet. The
+    /// link either succeeds or answers MEMBERSHIP_LINK_CONFLICT (409).
+    private var membershipLinked = true
+    private var linkConflict = false
+    private var linkParties: (owner: String, billing: String, audience: String)?
+    func useUnlinkedMembership(owner: String, billingAccountID: String, audience: String, conflict: Bool) {
+        membershipLinked = false; linkConflict = conflict
+        linkParties = (owner, billingAccountID, audience)
+    }
     private var maximumIndexVersion = 4
     func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
     private var metadataBatchMode = false
@@ -3205,7 +3256,32 @@ private actor AppRecordFixtureServer {
             }
             return try response(["snapshotId": id.uuidString.lowercased()])
         }
-        if url.path == "/v1/membership" { return try response(["linked": true, "status": "active"]) }
+        // Signed out: the Apple button needs a prepared challenge (never exchanged here).
+        if request.httpMethod == "POST", url.path == "/v1/auth/challenges" {
+            return try response(["challengeId": "fixture-challenge", "challengeProof": "fixture-proof",
+                                 "nonce": "fixture-nonce",
+                                 "expiresAt": try ManagedPreservationWire.string(Date().addingTimeInterval(300))])
+        }
+        if request.httpMethod == "POST", url.path == "/v1/membership/challenges" {
+            guard let parties = linkParties else { throw ToolBackupError.invalid }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let value = ManagedPreservationLinkChallenge(version: 1, purpose: "preservation-membership-link",
+                audience: parties.audience,
+                challengeId: BillingProtocolCodec.base64URLEncode(Data((0..<32).map { _ in UInt8.random(in: 0...255) })),
+                ownerId: parties.owner, billingAccountId: parties.billing, issuedAt: now, expiresAt: now + 300_000)
+            let body = try value.signingBody(owner: parties.owner, billing: parties.billing, audience: parties.audience)
+            return try response(["challenge": JSONSerialization.jsonObject(with: JSONEncoder().encode(value)),
+                                 "signingPath": BillingProtocolV1.preservationMembershipLinkPath,
+                                 "signingBody": String(decoding: body, as: UTF8.self)])
+        }
+        if request.httpMethod == "POST", url.path == "/v1/membership/link" {
+            if linkConflict { return try failure("MEMBERSHIP_LINK_CONFLICT", 409) }
+            membershipLinked = true
+            return try response(["linked": true])
+        }
+        if url.path == "/v1/membership" {
+            return try response(membershipLinked ? ["linked": true, "status": "active"] : ["linked": false, "status": "unknown"])
+        }
         if url.path == "/v1/notice-contact" { return try response(["version": 1, "email": "synthetic@example.invalid", "source": "apple"]) }
         if url.path == "/v1/retention" { return try response(["version": 1, "status": "active", "dueAt": NSNull(), "paused": false]) }
         if url.path == "/v1/usage" {
@@ -3330,8 +3406,44 @@ private final class AppRecordFixture {
         persistence = AppRecordPersistence(configuration: configuration, client: ManagedPreservationClient(configuration: configuration,
             requestOverride: { request, _ in try await server.request(request) }))
     }
+    /// 11/24 (autosave flow): this iPhone's Plus purchase identity, for the
+    /// fixtures that link Plus. Synthetic; never a Keychain item.
+    var billing: BillingCredential?
+    let installation = UUID()
     func authenticationClient() -> ManagedPreservationClient {
-        ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
+        guard let billing else {
+            return ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
+        }
+        let installation = installation
+        return ManagedPreservationClient(configuration: configuration,
+            billingIdentity: .init(credential: { billing }, installation: { installation }),
+            requestOverride: { request, _ in try await self.server.request(request) })
+    }
+    /// 11/24 (autosave flow): signed in, with Plus not linked yet; the link
+    /// succeeds, or answers MEMBERSHIP_LINK_CONFLICT when `conflict`.
+    func useUnlinkedPlus(conflict: Bool) async throws {
+        let store = ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString)
+        guard let owner = try store.load()?.ownerId, let audience = configuration.membershipAudience else { throw ToolBackupError.invalid }
+        let value = try BillingCredential.pending(installationMarker: installation).registering(.init(
+            billingAccountID: UUID().uuidString.lowercased(), billingKeyID: BillingProtocolCodec.randomNonce(),
+            createdAt: Int(Date().timeIntervalSince1970)))
+        billing = value
+        await server.useUnlinkedMembership(owner: owner, billingAccountID: value.billingAccountID!,
+                                           audience: audience, conflict: conflict)
+    }
+    /// 11/24 (autosave flow): the same records on an iPhone that is not
+    /// signed in to 自動保存 (a new origin has no saved sign-in). With
+    /// `staleSettings`, its 自動保存 settings name another destination (P01).
+    func signedOutCopy(staleSettings: Bool) throws -> AppRecordFixture {
+        if staleSettings {
+            let old = AppRecordPersistence.Binding(version: 1, origin: configuration.origin!.absoluteString,
+                owner: UUID().uuidString.lowercased(), consent: AppRecordPersistence.consentVersion, enabled: true)
+            try AppRecordRebinding.write(JSONEncoder().encode(old), to: AppRecordDataset.control.appendingPathComponent("binding.json"))
+        }
+        let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".app-record-fixture.invalid")!
+        return AppRecordFixture(configuration: ManagedPreservationConfiguration(isEnabled: true, origin: origin,
+                                                                               membershipAudience: configuration.membershipAudience),
+                                server: server, profiles: profiles)
     }
     static var preparationPhase = "開始"
     static var measurementSummary = ""
@@ -4354,6 +4466,18 @@ struct AppRecordPersistenceFixtureView: View {
                     _ = try prepared.installRenewableFixtureCredential(expired: CommandLine.arguments.contains("--app-records-expired-session"))
                     fixture = prepared
                     return
+                }
+                // 11/24 (autosave flow): the screens before saving starts.
+                if let state = AutoSaveFixturePlus.state {
+                    switch state {
+                    case "p01", "signed-out-no-plus", "signed-out-plus":
+                        let signedOut = try prepared.signedOutCopy(staleSettings: state == "p01")
+                        fixture = signedOut
+                        return
+                    case "link-conflict", "linked-after-purchase":
+                        try await prepared.useUnlinkedPlus(conflict: state == "link-conflict")
+                    default: break
+                    }
                 }
                 if CommandLine.arguments.contains("--app-records-settings-conflict") {
                     await prepared.server.simulateArchiveListingConflict()

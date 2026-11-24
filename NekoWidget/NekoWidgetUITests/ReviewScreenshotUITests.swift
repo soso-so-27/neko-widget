@@ -1417,6 +1417,91 @@ final class ReviewScreenshotUITests: XCTestCase {
         deletion.terminate()
     }
 
+    /// 11/24: 自動保存 until saving starts — before signing in (with and
+    /// without Plus, and with settings for another destination, P01), the
+    /// Plus link answered 409, and Plus bought from the screen; then 設定's
+    /// Plus section and the Plus screen when the purchase cannot be confirmed.
+    @MainActor
+    func test23AutoSaveFlow() {
+        func openAutoSave(_ state: String) -> (XCUIApplication, String?) {
+            let app = launch(["--app-records-ui-fixture", "--autosave-state-" + state])
+            let open = app.buttons["保存・復元"]
+            guard open.waitForExistence(timeout: 30) else { return (app, "app-records fixture did not start") }
+            open.tap()
+            guard app.staticTexts["app-record-save-status"].waitForExistence(timeout: 15) else {
+                return (app, "自動保存 did not open")
+            }
+            settle(3)
+            return (app, nil)
+        }
+        let (p01, p01Reason) = openAutoSave("p01")
+        shot("80_autosave_p01", p01) { p01Reason }
+        p01.terminate()
+        let (noPlus, noPlusReason) = openAutoSave("signed-out-no-plus")
+        shot("81_autosave_signed_out_no_plus", noPlus) { noPlusReason }
+        noPlus.terminate()
+        let (withPlus, withPlusReason) = openAutoSave("signed-out-plus")
+        shot("82_autosave_signed_out_plus", withPlus) { withPlusReason }
+        withPlus.terminate()
+
+        let (conflict, conflictReason) = openAutoSave("link-conflict")
+        shot("83_autosave_link_conflict", conflict) {
+            if let conflictReason { return conflictReason }
+            let start = conflict.buttons["app-record-enable"]
+            guard reveal(start, conflict, maximumSwipes: 6) else { return "「保存を始める」 not found" }
+            start.tap()
+            settle(6)
+            return nil
+        }
+        conflict.terminate()
+
+        let (bought, boughtReason) = openAutoSave("linked-after-purchase")
+        shot("84_autosave_needs_plus", bought) { boughtReason }
+        shot("84b_autosave_after_purchase", bought) {
+            if let boughtReason { return boughtReason }
+            let plus = bought.buttons["plus-offer-entry-preservation"]
+            guard reveal(plus, bought, maximumSwipes: 6) else { return "「Plusを始める」 not found" }
+            plus.tap()
+            let purchase = bought.buttons["membership-offer-purchase"]
+            guard purchase.waitForExistence(timeout: 15) else { return "Plus sheet did not open" }
+            settle(1.5)
+            guard reveal(purchase, bought, maximumSwipes: 8) else { return "purchase button not hittable" }
+            purchase.tap()
+            guard purchase.waitForNonExistence(timeout: 15) else { return "Plus sheet did not close" }
+            let status = bought.staticTexts["app-record-save-status"]
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "保存済み"), object: status)
+            if XCTWaiter.wait(for: [saved], timeout: 30) != .completed { note("after purchase: did not reach 保存済み by itself") }
+            settle(1.5)
+            return nil
+        }
+        bought.terminate()
+
+        let settings = launch(["--membership-offer-ui-fixture", "--membership-settings-section"])
+        shot("85_settings_plus_unknown", settings) {
+            guard settings.buttons["settings-membership-restore"].waitForExistence(timeout: 15) else {
+                return "設定's Plus section did not appear"
+            }
+            settle(2)
+            return nil
+        }
+        settings.terminate()
+
+        let unknown = openOfferFixture(["--membership-state-unknown"], false)
+        shot("86_plus_offer_unknown", unknown) { offerScreenShown(unknown) }
+        unknown.terminate()
+        let transaction = openOfferFixture(["--membership-state-store-transaction"], false)
+        shot("87_plus_offer_store_transaction", transaction) { offerScreenShown(transaction) }
+        transaction.terminate()
+    }
+
+    /// The Plus screen is up (its heading), settled for the capture.
+    @MainActor
+    private func offerScreenShown(_ app: XCUIApplication) -> String? {
+        guard app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 15) else { return "Plus screen did not open" }
+        settle(2)
+        return nil
+    }
+
     /// From a fresh launch: the この子 tab, then its gear.
     @MainActor
     private func openSettings(_ app: XCUIApplication) -> String? {

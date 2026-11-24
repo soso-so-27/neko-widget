@@ -396,7 +396,7 @@ final class MembershipOfferModel: ObservableObject {
                 self.fixtureStatus = .active
                 return true
             case .expired: self.fixtureStatus = .fresh
-            case .fresh, .active, .applePending: break
+            case .fresh, .active, .applePending, .storeTransaction: break
             }
         }
 #endif
@@ -559,7 +559,7 @@ final class MembershipOfferModel: ObservableObject {
                     switch fixtureStatus {
                     case .unknown, .authorityPending: self.fixtureStatus = .active
                     case .expired: self.fixtureStatus = .fresh
-                    case .fresh, .active, .applePending: break
+                    case .fresh, .active, .applePending, .storeTransaction: break
                     }
                 }
     #endif
@@ -667,9 +667,11 @@ final class MembershipOfferModel: ObservableObject {
     static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
         let restoreResult: MembershipOfferActionResult
         if state == .applePending { restoreResult = .waiting }
-        else if state == .expired || expiresAfter != nil { restoreResult = .nothingToRestore }
+        else if state == .expired || state == .storeTransaction || expiresAfter != nil { restoreResult = .nothingToRestore }
         else { restoreResult = .completed }
-        let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: false)
+        // 11/24: StoreKit can still call the account eligible for the trial
+        // while its old transaction blocks a new purchase (the owner's iPhone).
+        let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: state == .storeTransaction)
         model.fixtureStatus = state
         if state == .active, let expiresAfter {
             model.fixtureExpiresAt = .now.addingTimeInterval(expiresAfter)
@@ -791,6 +793,9 @@ final class MembershipOfferModel: ObservableObject {
 #if DEBUG || INTERNAL_PRESENTATION
 enum MembershipOfferFixtureStatus: String {
     case fresh, active, applePending, authorityPending, unknown, expired
+    /// 11/24: Apple still holds a subscription transaction the server did
+    /// not confirm as Plus (a new purchase cannot start; restore can).
+    case storeTransaction
 }
 
 #endif
@@ -1353,10 +1358,34 @@ struct PlusSettingsSection<Rows: View>: View {
 
     init(@ViewBuilder rows: () -> Rows) { self.rows = rows() }
 
+#if DEBUG
+    /// 11/24: a UI fixture's state and restore, in place of the live store's.
+    private var fixtureStatus: Status?
+    private var fixtureRestoreModel: (@MainActor () -> MembershipOfferModel)?
+    init(fixtureStatus: PlusSettingsRowStatus, restoreModel: @escaping @MainActor () -> MembershipOfferModel,
+         @ViewBuilder rows: () -> Rows) {
+        self.rows = rows()
+        self.fixtureStatus = fixtureStatus
+        self.fixtureRestoreModel = restoreModel
+    }
+#endif
+    private var restoreModel: MembershipOfferModel? {
+#if DEBUG
+        return fixtureRestoreModel?()
+#else
+        return nil
+#endif
+    }
+
     /// Each refresh (launch, foreground, a closed sheet) is `.checking` again
     /// for a moment; the rows keep the last answer so the Plus sheet hung on
     /// this section is not rebuilt, which reloaded it over and over (11/10).
-    private var status: Status { Status.steady(liveStatus, lastAnswer: lastAnswer) }
+    private var status: Status {
+#if DEBUG
+        if let fixtureStatus { return fixtureStatus }
+#endif
+        return Status.steady(liveStatus, lastAnswer: lastAnswer)
+    }
 
     private var liveStatus: Status {
         // Just after launch: neither the offer nor restore until the answer is in (11/5).
@@ -1390,7 +1419,7 @@ struct PlusSettingsSection<Rows: View>: View {
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
                 // One button for the re-check and the App Store restore (11/5).
-                MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore")
+                MembershipRestoreButton(look: .settingsRow, identifier: "settings-membership-restore", model: restoreModel)
             case .checking:
                 HStack(spacing: 10) {
                     ProgressView()
@@ -1403,7 +1432,7 @@ struct PlusSettingsSection<Rows: View>: View {
             // must not leave a member without a way back (App Review requires it).
             // The unknown state already shows it as its one row.
             if status == .notMember || status == .checking {
-                MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore")
+                MembershipRestoreButton(look: .footnote, identifier: "settings-membership-restore", model: restoreModel)
             }
             rows
         } header: {
@@ -1729,6 +1758,14 @@ struct MembershipOfferFixture: View {
         NavigationStack {
             if CommandLine.arguments.contains("--billing-owner-enrollment-fixture") {
                 BillingSandboxOwnerEnrollmentView(fixture: enrollmentFixture)
+            } else if CommandLine.arguments.contains("--membership-settings-section") {
+                // 11/24: 設定's Plus section while the purchase cannot be confirmed.
+                Form {
+                    PlusSettingsSection(fixtureStatus: .unknown, restoreModel: { .preview(state: .unknown) }) {
+                        LabeledContent { Text("オフ") } label: { Label("自動保存", systemImage: "icloud") }
+                    }
+                }
+                .navigationTitle("設定")
             } else {
                 MembershipOfferPreviewView(purchaseResult: result, membershipState: membershipState,
                                            expiresAfter: CommandLine.arguments.contains("--membership-state-expiring") ? 6 : nil)
@@ -1766,6 +1803,7 @@ struct MembershipOfferFixture: View {
         if arguments.contains("--membership-state-apple-pending") { return .applePending }
         if arguments.contains("--membership-state-authority-pending") { return .authorityPending }
         if arguments.contains("--membership-state-fresh") { return .fresh }
+        if arguments.contains("--membership-state-store-transaction") { return .storeTransaction }
         return nil
     }
 }

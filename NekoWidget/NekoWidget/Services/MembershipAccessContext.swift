@@ -256,13 +256,14 @@ struct MembershipRestoreButton: View {
 
     init(title: String = "購入を復元", look: Look = .prominent,
          identifier: String = "membership-restore-submit", showsFound: Bool = true,
-         restored: @escaping () -> Void = {}) {
+         model: MembershipOfferModel? = nil, restored: @escaping () -> Void = {}) {
         self.title = title
         self.look = look
         self.identifier = identifier
         self.showsFound = showsFound
         self.restored = restored
-        _model = StateObject(wrappedValue: MembershipOfferModel.live(presentsOffer: false))
+        // `model` only for a UI fixture (11/24); the app always restores live.
+        _model = StateObject(wrappedValue: model ?? MembershipOfferModel.live(presentsOffer: false))
     }
 
     var body: some View {
