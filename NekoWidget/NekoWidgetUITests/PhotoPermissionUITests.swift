@@ -4394,8 +4394,14 @@ final class SoloMemoriesUITests: XCTestCase {
                 // 11/16 (#1041): an ended Plus is not 「確認できません」; it can
                 // be bought again, and 「購入を復元」 stays next to it.
                 XCTAssertTrue(purchase.isEnabled, "An expired Plus must be offered again: " + app.debugDescription)
+            } else if state == "unknown" {
+                // 11/24: the button keeps its name and restores; it never buys again.
+                XCTAssertEqual(purchase.label, "Plusを始める")
+                XCTAssertTrue(purchase.isEnabled, "Unknown restores from the main button: " + app.debugDescription)
+                XCTAssertEqual(app.staticTexts["membership-offer-message"].label,
+                               "購入を確かめられません。購入し直さずに「購入を復元」を押してください。")
             } else {
-                XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
+                XCTAssertFalse(purchase.isEnabled, "Pending states must not invite another purchase")
                 XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
                               || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
             }
@@ -4424,8 +4430,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 attachment.name = "membership-confirmation-required"
                 attachment.lifetime = .keepAlways
                 add(attachment)
-                checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "購入状況の確認が必要です",
-                                                           captureName: "unknown")
+                checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "Plusを始める",
+                                                           expectedEnabled: true, captureName: "unknown")
                 for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
             }
             restore.tap()
@@ -4494,6 +4500,7 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func checkMembershipManagementPreviewKeepsState(_ app: XCUIApplication,
                                                           expectedPurchaseTitle: String?,
+                                                          expectedEnabled: Bool = false,
                                                           captureName: String) {
         let manage = app.buttons["membership-offer-manage"]
         for _ in 0..<10 where !manage.isHittable { app.swipeUp() }
@@ -4514,7 +4521,7 @@ final class SoloMemoriesUITests: XCTestCase {
         if let expectedPurchaseTitle {
             XCTAssertEqual(purchase.label, expectedPurchaseTitle,
                            "Closing management must not invent a purchase, cancellation, or grant")
-            XCTAssertFalse(purchase.isEnabled)
+            XCTAssertEqual(purchase.isEnabled, expectedEnabled)
         } else {
             // A member has no purchase button (11/7); closing management must not add one.
             XCTAssertFalse(purchase.exists, "Closing management must not invent a purchase, cancellation, or grant")

@@ -32,12 +32,68 @@ final class SettingsRulesTests: XCTestCase {
                                                            hasPlusHere: false, entitlementChecking: false))
     }
 
-    // B1: the way without Plus, only without Plus and while not saving here.
+    // B1: the way without Plus, only without Plus and while not saving here;
+    // 11/24: and only after the Plus screen was closed without buying.
     func testProfileTransferOnlyWithoutPlusAndWhileOff() {
-        XCTAssertTrue(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: false, enabled: false))
-        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: true, enabled: false))
-        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: false, enabled: true))
-        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: true, enabled: true))
+        XCTAssertTrue(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: false, enabled: false, plusDeclined: true))
+        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: false, enabled: false, plusDeclined: false))
+        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: true, enabled: false, plusDeclined: true))
+        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: false, enabled: true, plusDeclined: true))
+        XCTAssertFalse(AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: true, enabled: true, plusDeclined: true))
+    }
+
+    // 11/24: after the Apple sign-in the screen goes on by itself.
+    func testStartGoesOnBySignInAlone() {
+        let unlinked = ManagedPreservationMembership(linked: false, status: .unknown)
+        let linked = ManagedPreservationMembership(linked: true, status: .active)
+        let ended = ManagedPreservationMembership(linked: true, status: .expired)
+        func step(_ membership: ManagedPreservationMembership?, enabled: Bool = false, plus: Bool = false,
+                  checking: Bool = false, offers: Bool = true, offered: Bool = false) -> AppRecordSettingsRules.StartStep {
+            AppRecordSettingsRules.startStep(membership: membership, enabled: enabled, hasPlusHere: plus,
+                                             plusChecking: checking, offersPlus: offers, plusOffered: offered)
+        }
+        XCTAssertEqual(step(nil), .wait)
+        // Plus here: linked, then saving starts.
+        XCTAssertEqual(step(unlinked, plus: true), .link)
+        XCTAssertEqual(step(linked, plus: true), .enable)
+        // Saved before: what was saved comes back, also after Plus ended.
+        XCTAssertEqual(step(linked), .enable)
+        XCTAssertEqual(step(ended), .enable)
+        XCTAssertEqual(step(ended, enabled: true), .stop)
+        // No Plus: the Plus screen opens once, never while Plus is still being checked.
+        XCTAssertEqual(step(unlinked), .offerPlus)
+        XCTAssertEqual(step(unlinked, checking: true), .wait)
+        XCTAssertEqual(step(unlinked, offered: true), .stop)
+        XCTAssertEqual(step(unlinked, offers: false), .stop)
+    }
+
+    // 11/24: off — one state, one sentence, one button; never P01 or 連携.
+    func testOffStateIsOneStateOneLineOneButton() {
+        typealias Rules = AppRecordSettingsRules
+        let signIn = Rules.offState(signedIn: false, working: false, linkStop: nil, needsPlus: false)
+        XCTAssertEqual(signIn, .init(title: "自動保存はオフです", line: "この子のこととメモを自動で保存して、新しいiPhoneに戻せます。",
+                                     action: .signIn))
+        XCTAssertEqual(Rules.offState(signedIn: true, working: true, linkStop: nil, needsPlus: false),
+                       .init(title: "保存を始めています…", line: nil, action: .none))
+        XCTAssertEqual(Rules.offState(signedIn: true, working: false, linkStop: nil, needsPlus: true),
+                       .init(title: "自動保存はオフです", line: "保存にはPlusが必要です。", action: .plus))
+        XCTAssertEqual(Rules.offState(signedIn: true, working: false, linkStop: nil, needsPlus: false).action, .start)
+        // A link that stopped outranks working: the contact page is the one button.
+        XCTAssertEqual(Rules.offState(signedIn: true, working: true, linkStop: .usedElsewhere, needsPlus: false),
+                       .init(title: "このPlusはほかの保存で使われています", line: "購入し直さずに、お問い合わせください。",
+                             action: .contact))
+        XCTAssertEqual(Rules.offState(signedIn: true, working: false, linkStop: .plusUnconfirmed, needsPlus: false),
+                       .init(title: "Plusを確かめられません", line: "購入し直さずに、お問い合わせください。", action: .contact))
+        XCTAssertEqual(Rules.linkStop(.membershipLinkConflict), .usedElsewhere)
+        XCTAssertEqual(Rules.linkStop(.billingIdentityUnavailable), .plusUnconfirmed)
+        XCTAssertNil(Rules.linkStop(.membershipLinkExpired))
+        XCTAssertNil(Rules.linkStop(nil))
+        for error: ManagedPreservationError in [.membershipLinkConsent, .membershipLinkConflict, .membershipLinkExpired,
+                                                .billingIdentityUnavailable, .billingIdentityChanged] {
+            XCTAssertFalse(error.errorDescription!.contains("連携"))
+            XCTAssertFalse(error.errorDescription!.contains("設定の「お問い合わせ」"))
+        }
+        XCTAssertFalse(AppRecordBindingError.destination.errorDescription!.contains("P01"))
     }
 
     // B3: 「ブロックした人」 only once someone is blocked or hidden.

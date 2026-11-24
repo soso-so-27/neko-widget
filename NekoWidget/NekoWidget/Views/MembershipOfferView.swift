@@ -14,6 +14,8 @@ struct MembershipOfferView: View {
     let isWorking: Bool
     let canPurchase: Bool
     let canRestore: Bool
+    /// 11/24: a new purchase cannot start (unknown, or Apple holds one); the main button restores.
+    let purchaseRestores: Bool
     let message: String?
     /// 11/15 (TestFlight 378): the message says to press 「購入を復元」, so the
     /// one 「購入を復元」 moves from the links to right under it.
@@ -99,6 +101,7 @@ struct MembershipOfferView: View {
         isWorking: Bool,
         canPurchase: Bool,
         canRestore: Bool,
+        purchaseRestores: Bool = false,
         message: String?,
         restoreNearMessage: Bool = false,
         isMember: Bool = false,
@@ -124,6 +127,7 @@ struct MembershipOfferView: View {
         self.isWorking = isWorking
         self.canPurchase = canPurchase
         self.canRestore = canRestore
+        self.purchaseRestores = purchaseRestores
         self.message = message
         self.restoreNearMessage = restoreNearMessage
         self.isMember = isMember
@@ -380,8 +384,9 @@ struct MembershipOfferView: View {
             // big blue button that cannot be pressed.
             if !isMember {
                 Button {
-                    running = "購入"
-                    onPurchase()
+                    // 11/24: no new purchase can start here; the button restores.
+                    if purchaseRestores { running = "購入を復元"; onRestore() }
+                    else { running = "購入"; onPurchase() }
                 } label: {
                     HStack(spacing: 8) {
                         if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
@@ -393,13 +398,14 @@ struct MembershipOfferView: View {
                     .frame(maxWidth: .infinity, minHeight: 36)
                 }
                 .nekoPrimaryButton()
-                .disabled(isWorking || !canPurchase || offer == nil)
+                .disabled(isWorking || (!purchaseRestores && (!canPurchase || offer == nil)))
                 .accessibilityIdentifier("membership-offer-purchase")
             }
 
             // The billed amount stays as prominent as the trial: it is the
             // headline directly under the button, never a footnote.
-            if !isMember, let offer {
+            // Nothing is bought while the button restores, so no price under it.
+            if !isMember, !purchaseRestores, let offer {
                 Text(offer.billingLine)
                     .font(.headline)
                     .multilineTextAlignment(.center)

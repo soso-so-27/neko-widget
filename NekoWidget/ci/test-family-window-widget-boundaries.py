@@ -5606,9 +5606,13 @@ class PlusRouteTests(unittest.TestCase):
         self.assertIn("if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }", notebook)
         self.assertIn("if sharing.failure == .plusRequired {", notebook)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        link = section(saving, "private func linkAfterPurchaseIfReady() {", "private func linkPlusIfStarting() {")
-        self.assertIn("authentication.connectMembership(consent: true)", link)
-        self.assertIn(".onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }", saving)
+        # 11/24 (P2): Plus bought or restored here starts saving without another tap.
+        link = section(saving, "    private func linkPlusIfStarting() {", "\n    }\n")
+        self.assertIn("case .link: authentication.connectMembership(consent: true)", link)
+        self.assertIn(".onChange(of: hasPlusHere) { _, _ in linkPlusIfStarting() }", saving)
+        sheet = section(saving, "MembershipOfferSheet(model: offerModel, context: .preservation) { result in", "showsPlusOffer = false")
+        self.assertIn("if result == .completed {", sheet)
+        self.assertIn("authentication.clearLinkFailure(); starting = true", sheet)
 
 
 class WindowStateTests(unittest.TestCase):
@@ -5909,9 +5913,10 @@ class AutoSaveScreenLayoutTests(unittest.TestCase):
         # 349: start / stop / export / account were mixed in one box; the stop
         # row sat far from the status it changes.
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        body = section(saving, "@ViewBuilder private var settingsSections: some View {", "@ViewBuilder private var startAction: some View {")
+        body = section(saving, "@ViewBuilder private var settingsSections: some View {", "@ViewBuilder private var offSection: some View {")
         order = [body.index('.accessibilityIdentifier("app-record-save-status")'),
-                 body.index("if !persistence.enabled { startAction } else { savingActions }"),
+                 body.index("offSection"),
+                 body.index("savingActions"),
                  body.index('header: { Text("保存されているもの") }'),
                  body.index('NavigationLink("自動保存のアカウント")'),
                  body.index('"app-record-cat-profile-transfer"'),
@@ -7078,9 +7083,10 @@ class OnePlaceSettingsTests(unittest.TestCase):
         self.assertGreater(save.index('"settings-cat-profile-transfer"'), save.index("} else {"))
         self.assertNotIn("プロフィールの引き継ぎはいりません", settings)
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
-        transfer = section(saving, "if let profileTransfer, AppRecordSettingsRules.offersProfileTransfer(", '"app-record-cat-profile-transfer"')
-        self.assertIn("(hasPlusHere: hasPlusHere,", transfer)
-        self.assertIn("enabled: persistence.enabled) {", transfer)
+        transfer = section(saving, "if let profileTransfer, authentication.accountDeletionState == nil,", '"app-record-cat-profile-transfer"')
+        self.assertIn("AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: hasPlusHere, enabled: persistence.enabled,", transfer)
+        # 11/24: only after the Plus screen was closed without buying.
+        self.assertIn("plusDeclined: plusDeclined) {", transfer)
         self.assertIn('Label("Plusなしで猫の名前と日付だけ移す"', transfer)
         self.assertIn("CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)", transfer)
 
@@ -8179,9 +8185,10 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         # 11/24 (A1): one wording for what 自動保存 keeps, in every place that names it.
         saving = source("NekoWidget/Services/AppRecordPersistence.swift")
         self.assertIn('static let contents = "この子のこととメモ"', saving)
-        self.assertIn('Text("\\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneに戻せます。")', saving)
+        self.assertIn('static let startLine = "\\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneに戻せます。"', saving)
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
-        self.assertIn('case .preservation: "\\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"', model)
+        # 11/24: the sheet's line above the heading said the value row again; gone.
+        self.assertIn("case .preservation: nil", model)
         self.assertIn('Text("\\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneでも戻せます。")', model)
         for old in ("猫のこと・メモ・ツールの記録", "猫のこと、メモ、ツールに書いたこと", "この子のこと、メモ、ツールの記録"):
             for text in (offer, saving, model):
@@ -8234,10 +8241,13 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         state = section(model, "        } else if isWaiting {", "        } else {\n            purchaseTitle = nil")
         self.assertIn("もう一度購入しないでください。" + auto + '"', state)
         self.assertIn("お支払い方法を確認してください。" + auto + '"', state)
-        checking = state[state.index("} else if verificationRequired {"):]
+        checking = state[state.index("} else if verificationRequired || restoresInsteadOfPurchase {"):]
         self.assertNotIn(auto, checking)
         # The server-side check is waited out with 「購入を復元」, not automatically.
         self.assertIn('もう一度購入せずに、「購入を復元」を押してください。"', state)
+        # 11/24: unknown keeps the button's name and says what to do once.
+        self.assertIn("purchaseTitle = MembershipOfferPresentation.startTitle\n            message = Self.restoreLine", checking)
+        self.assertIn('static let restoreLine = "購入を確かめられません。購入し直さずに「購入を復元」を押してください。"', model)
         self.assertEqual(model.count(auto), 3)
 
     def test_showcase_without_recommendation_offers_picking(self) -> None:
@@ -8523,9 +8533,10 @@ class PlusMomentOfBuying1112Tests(unittest.TestCase):
         for line in ('"\\(month)月の作品ができています。Plusで開けます。"',
                      '"季節のムービーができています。Plusで見られます。"',
                      '"まどを作ると、家族のホーム画面に写真を届けられます。Plusがいるのは作る人だけです。"',
-                     '"お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"',
-                     '"\(AutoSaveWording.contents)を保存して、新しいiPhoneに戻せます。"'):
+                     '"お世話の記録を、家族で一緒に書けます。Plusがいるのは作る人だけです。"'):
             self.assertIn(line, reasons)
+        # 11/24: 自動保存's sheet has no line above the heading; its value row says it.
+        self.assertIn("case .preservation: nil", reasons)
         for gone in ("写真やメモの保存", "は無料です", "trialPeriod", "メモを書くのはPlus"):
             self.assertNotIn(gone, reasons)
         self.assertIn('Link("プライバシーポリシー", destination: privacyURL)', self.view)
@@ -8968,8 +8979,8 @@ class MainTabsLook1112Tests(unittest.TestCase):
         self.assertNotIn(".buttonStyle(.bordered)", row)
         self.assertNotIn(".listRowBackground(Color.clear)", row)
         records = source("NekoWidget/Services/AppRecordPersistence.swift")
-        start = section(records, "@ViewBuilder private var startAction: some View {",
-                        "@ViewBuilder private var signedOutSections")
+        start = section(records, "@ViewBuilder private var offSection: some View {",
+                        "@ViewBuilder private var signInPreparation")
         self.assertIn('mainButton("保存を始める") { start() }', start)
         self.assertIn(".buttonStyle(.borderedProminent)", start)
         self.assertIn('.accessibilityIdentifier("app-record-enable")', start)

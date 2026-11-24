@@ -164,8 +164,10 @@ enum AppRecordBindingError: String, LocalizedError {
     case destination = "P01", format = "P02", consent = "P03", rebinding = "P04", busy = "P05"
     var errorDescription: String? {
         switch self {
+        // 11/24: never shown as P01. Settings for another save server read as
+        // not started, and starting again replaces them (`enable()`).
         case .destination:
-            "自動保存を始められませんでした。記録は消えていません。設定の「お問い合わせ」から、P01とお伝えください。"
+            "自動保存を始められませんでした。記録は消えていません。"
         case .rebinding, .busy:
             "自動保存を始められませんでした。記録は消えていません。続くときは、設定の「お問い合わせ」から\(rawValue)とお伝えください。"
         case .format, .consent:
@@ -1195,22 +1197,33 @@ final class AppRecordPersistence: ObservableObject {
             bindingRead = true
             if detail == Self.bindingUnreadableDetail || detail == settingsUnusable?.errorDescription { detail = nil }
             settingsUnusable = nil
+        } catch AppRecordBindingError.destination {
+            // 11/24: settings for another save server (an earlier test build)
+            // are not this build's start: shown as off, with no code and no
+            // dot. Starting (`enable()`) sets them aside and binds again.
+            bindingRead = true
+            if detail == Self.bindingUnreadableDetail { detail = nil }
+            settingsUnusable = nil
         } catch let error as AppRecordBindingError where Self.needsPersonForSettings(error) {
             settingsUnusable = error
             detail = error.errorDescription
         } catch { detail = Self.bindingUnreadableDetail }
     }
-    /// A destination, format or consent mismatch stays until someone looks
-    /// at it (お問い合わせ); a busy or interrupted switch settles by itself.
+    /// A format or consent mismatch stays until someone looks at it
+    /// (お問い合わせ); a busy or interrupted switch settles by itself, and a
+    /// destination mismatch reads as not started (11/24).
     nonisolated static func needsPersonForSettings(_ error: AppRecordBindingError) -> Bool {
-        [.destination, .format, .consent].contains(error)
+        [.format, .consent].contains(error)
     }
     private static let bindingUnreadableDetail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。"
     private var bindingRead = false
     /// 11/23: saving was started on this iPhone (on now, or stopped with its
-    /// settings kept). An unreadable settings file counts as started.
+    /// settings kept). An unreadable settings file counts as started; 11/24:
+    /// settings this build cannot use (P01–P03) do not, as nothing was saved with them here.
     func hasStartedHere() -> Bool {
-        do { return try binding() != nil } catch { return true }
+        do { return try binding() != nil }
+        catch is AppRecordBindingError { return false }
+        catch { return true }
     }
     nonisolated private func binding() throws -> Binding? {
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
@@ -1893,7 +1906,7 @@ final class AppRecordPersistence: ObservableObject {
                 try saveIntent.require(intent)
             }
             title = "保存中…"
-            detail = "アプリを閉じても、次に開いたときに自動で続けます。"
+            detail = "アプリを閉じても、次に開いたときに続きます。"
             phase = "準備した記録を送信"
             do {
                 try await ToolBackupTransfer.upload(saved, client: client, confirmedUsage: usage) { _, _ in }
@@ -2026,7 +2039,7 @@ final class AppRecordPersistence: ObservableObject {
     var shownDetail: String? {
         if failing && intakePaused { return Self.intakePausedDetail }
         if failing && retriesByItself { return "通信が戻ると、自動で続けます。" }
-        if shownTitle == "保存中…" { return "アプリを閉じても、次に開いたときに自動で続けます。" }
+        if shownTitle == "保存中…" { return "アプリを閉じても、次に開いたときに続きます。" }
         // Tidying older saves is the app's own work, not something to read about.
         return title == "保存済み" ? nil : detail
     }
@@ -2260,9 +2273,59 @@ enum AppRecordSettingsRules {
             && !hasPlusHere && !entitlementChecking
     }
 
-    /// B1: the way without Plus, only to someone without Plus who is not saving here.
-    static func offersProfileTransfer(hasPlusHere: Bool, enabled: Bool) -> Bool {
-        !hasPlusHere && !enabled
+    /// B1: the way without Plus, only to someone without Plus who is not
+    /// saving here. 11/24: and only once the Plus screen was closed without
+    /// buying, small and below; before that the one way is Apple's button.
+    static func offersProfileTransfer(hasPlusHere: Bool, enabled: Bool, plusDeclined: Bool) -> Bool {
+        !hasPlusHere && !enabled && plusDeclined
+    }
+
+    /// 11/24: a Plus link that cannot go on by waiting or trying again; the
+    /// screen says it as its state, with お問い合わせ as its one button.
+    enum LinkStop: Equatable { case usedElsewhere, plusUnconfirmed }
+    static func linkStop(_ failure: ManagedPreservationError?) -> LinkStop? {
+        switch failure {
+        case .membershipLinkConflict?: .usedElsewhere
+        case .billingIdentityUnavailable?, .accessUnconfirmed?: .plusUnconfirmed
+        default: nil
+        }
+    }
+
+    /// 11/24: after the Apple sign-in (or a purchase from this screen) the
+    /// screen goes on by itself: link this iPhone's Plus, start saving (which
+    /// also brings back what this account saved), or open the Plus screen once.
+    enum StartStep: Equatable { case wait, link, enable, offerPlus, stop }
+    static func startStep(membership: ManagedPreservationMembership?, enabled: Bool, hasPlusHere: Bool,
+                          plusChecking: Bool, offersPlus: Bool, plusOffered: Bool) -> StartStep {
+        guard let membership else { return .wait }
+        if !membership.linked, hasPlusHere { return .link }
+        // Plus that ended still lets this account's saved copy come back (11/21).
+        if membership.canSave || (membership.linked && !enabled) { return .enable }
+        if plusChecking { return .wait }
+        return offersPlus && !plusOffered ? .offerPlus : .stop
+    }
+
+    /// 11/24: 自動保存 before saving is on: one state, one sentence, one button.
+    enum OffAction: Equatable { case signIn, start, plus, contact, none }
+    struct OffState: Equatable {
+        let title: String
+        let line: String?
+        let action: OffAction
+    }
+    static let startLine = "\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneに戻せます。"
+    static func offState(signedIn: Bool, working: Bool, linkStop: LinkStop?, needsPlus: Bool) -> OffState {
+        let off = "自動保存はオフです"
+        switch linkStop {
+        case .usedElsewhere?: return OffState(title: "このPlusはほかの保存で使われています",
+                                              line: "購入し直さずに、お問い合わせください。", action: .contact)
+        case .plusUnconfirmed?: return OffState(title: "Plusを確かめられません",
+                                                line: "購入し直さずに、お問い合わせください。", action: .contact)
+        case nil: break
+        }
+        if working { return OffState(title: "保存を始めています…", line: nil, action: .none) }
+        if !signedIn { return OffState(title: off, line: startLine, action: .signIn) }
+        if needsPlus { return OffState(title: off, line: "保存にはPlusが必要です。", action: .plus) }
+        return OffState(title: off, line: startLine, action: .start)
     }
 }
 
@@ -2287,9 +2350,10 @@ enum AutoSaveFixturePlus {
 }
 #endif
 
-/// 自動保存: the one place for saving (10/31). Starting is one Apple sign-in:
-/// the consent and the Plus link are stated above that button, then enabling,
-/// linking this iPhone's Plus and restoring an earlier save all follow it.
+/// 自動保存: the one place for saving (10/31). Starting is one Apple sign-in
+/// (11/24: the screen's one button); then the app goes on by itself:
+/// restoring what this account saved, linking this iPhone's Plus and
+/// starting to save, or opening the Plus screen when there is no Plus.
 /// Ordinary tool editing never presents a separate upload operation.
 @MainActor
 struct AppRecordSettingsView: View {
@@ -2298,10 +2362,14 @@ struct AppRecordSettingsView: View {
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
     @StateObject private var exporter = RecordExportController()
     @Environment(\.scenePhase) private var scenePhase
+    /// The person started (Apple sign-in, 「保存を始める」, or Plus bought or
+    /// restored here): the screen goes on until saving is on or it stops.
     @State private var starting = false
-    /// Plus was bought from this screen: link it to saving as soon as this
-    /// iPhone has it, even when saving was turned on before (11/6).
-    @State private var linksAfterPurchase = false
+    /// 11/24: the Plus screen opened by itself once for this start; closing
+    /// it does not bring it back by itself.
+    @State private var plusOffered = false
+    /// 11/24: the Plus screen was closed without buying (the way without Plus shows then).
+    @State private var plusDeclined = false
     @State private var confirmsLocal = false
     @State private var confirmsPause = false
     @State private var confirmsRemote = false
@@ -2311,9 +2379,6 @@ struct AppRecordSettingsView: View {
     @State private var startedHere = false
     /// The record choice that was confirmed, so only that button says so (11/6).
     @State private var running: String?
-    /// 11/24 (D5): 「前のiPhoneから戻す」 signed in to an account with nothing saved.
-    @State private var restoring = false
-    @State private var restoreFoundNothing = false
     /// 11/24 (F2): the gear's mark after Plus ended goes once this screen was opened.
     @AppStorage(AppRecordPersistence.planEndSeenKey) private var planEndSeen = false
     /// Opened from 「自動保存も始めますか？」→「保存を始める」 right after buying
@@ -2362,6 +2427,7 @@ struct AppRecordSettingsView: View {
     /// 11/23: 「保存したものを書き出す」 and 「自動保存のアカウント」 are for
     /// someone who started saving (here, or with this account's Plus) or
     /// whose Plus ended with records kept; before that they open nothing.
+    /// 11/24: settings this build cannot use (P01) are not a start here.
     private var hasSavedSomething: Bool {
         persistence.enabled || startedHere || plusEnded || authentication.membership?.linked == true
             || (authentication.usage?.productQuota?.usage?.records.saved ?? 0) > 0
@@ -2377,6 +2443,28 @@ struct AppRecordSettingsView: View {
     private var plusEnded: Bool {
         guard let membership = authentication.membership else { return false }
         return membership.linked && !membership.canSave
+    }
+    private var linkStop: AppRecordSettingsRules.LinkStop? {
+        AppRecordSettingsRules.linkStop(authentication.linkFailure)
+    }
+    /// Signed in without Plus here, and this account cannot save or restore without it.
+    private var needsPlus: Bool {
+        guard let membership = authentication.membership else { return false }
+        return !hasPlusHere && !membership.canSave && !membership.linked
+    }
+    /// Between the person's start and saving being on (the sign-in, the
+    /// Plus check, the link): one 「保存を始めています…」.
+    private var working: Bool {
+        (starting || persistence.busy) && !persistence.enabled && (authentication.isSignedIn || authentication.isBusy)
+    }
+    private var supportURL: URL? {
+#if DEBUG
+        // The capture build has no public links; the fixture stands in for one.
+        if AutoSaveFixturePlus.state != nil {
+            return AppPublicLinksConfiguration.current.supportURL ?? URL(string: "https://nekonomado.com/support/")
+        }
+#endif
+        return AppPublicLinksConfiguration.current.supportURL
     }
     /// Saving is on and waits only for Plus. 11/24 (D1): never while the
     /// server already lets this account save without a Plus link.
@@ -2408,19 +2496,23 @@ struct AppRecordSettingsView: View {
                 .onDisappear { exporter.finishSharing(payload) }
         }
         .sheet(isPresented: $showsPlusOffer, onDismiss: {
+            // Closed without Plus (× or a swipe): the way without Plus shows below.
+            plusDeclined = !starting
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
             authentication.checkMembership()
-            linkAfterPurchaseIfReady()
         }) {
             MembershipOfferSheet(model: offerModel, context: .preservation) { result in
-                if result == .completed { linksAfterPurchase = true }
+                // 11/24 (P2): bought or restored here, saving starts without
+                // another tap: the membership read after closing goes on.
+                if result == .completed { authentication.clearLinkFailure(); starting = true }
 #if DEBUG
                 if result == .completed, fixturePlusHere != nil { fixturePlusHere = true }
 #endif
                 showsPlusOffer = false
             }
         }
-        .onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }
+        .onChange(of: hasPlusHere) { _, _ in linkPlusIfStarting() }
+        .onChange(of: purchases.entitlementState == .checking) { _, _ in linkPlusIfStarting() }
         .onChange(of: persistence.enabled, initial: true) { _, _ in startedHere = persistence.hasStartedHere() }
         .task {
             authentication.start(observingOnly: true)
@@ -2434,7 +2526,6 @@ struct AppRecordSettingsView: View {
         // This screen's sign-in reads membership only; the quota is one more read.
         .onChange(of: authentication.isSignedIn, initial: true) { _, signedIn in
             guard signedIn else {
-                restoring = false; restoreFoundNothing = false
                 if !authentication.exportAuthenticationNeeded { exporter.invalidate() }
                 return
             }
@@ -2447,7 +2538,7 @@ struct AppRecordSettingsView: View {
             authentication.refreshUsage()
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
-        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting(); linkAfterPurchaseIfReady() } }
+        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
         .onChange(of: authentication.membership?.canSave) { previous, canSave in
             linkPlusIfStarting()
             if canSave == true, persistence.enabled, previous == false || persistence.planEnded {
@@ -2521,46 +2612,40 @@ struct AppRecordSettingsView: View {
                 // never renew the sign-in); アカウント shows it on request.
                 Text("Plusが終わったため、新しい保存は止まっています。保存したものは12か月のあいだ書き出せます。")
                 if offersPlus { plusOfferButton }
+            } else if !persistence.enabled {
+                offSection
             } else {
                 Label(persistence.shownTitle, systemImage: statusSymbol)
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.shownDetail { Text(detail).font(.footnote) }
-                else if restoreFoundNothing { Text("このApple Accountに保存したものはありません。") }
-                else if !persistence.enabled { Text("\(AutoSaveWording.contents)を自動で保存して、新しいiPhoneに戻せます。") }
                 // The one thing to do now sits with the status it changes.
                 if authentication.isSignedIn {
-                    if !persistence.enabled { startAction } else { savingActions }
+                    savingActions
                     // 11/24 (F1): the way to Plus is this box's main button, not a box of its own.
                     if waitsForPlus {
                         Text("Plusを始めると、保存が始まります。")
                         if offersPlus { plusOfferButton }
                     }
-                } else if authentication.preparedSignIn != nil, !persistence.enabled, offersPlus {
-                    plusOfferButton
                 }
             }
         } footer: {
-            if authentication.isSignedIn, !persistence.enabled,
-               hasPlusHere, authentication.membership?.linked != true { plusLinkText }
+            // 11/24: the one line the start's consent needs, under Apple's button.
+            if !persistence.enabled, !authentication.isSignedIn, !working, linkStop == nil,
+               authentication.preparedSignIn != nil {
+                Text("Plusは、このApple Accountの保存に使います。")
+            }
         }
         }
-        if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
+        // The state already says why a link stopped; no second line in red.
+        if let error = authentication.errorMessage, linkStop == nil { Section { Text(error).foregroundStyle(.red) } }
         if authentication.accountDeletionState != nil {
             Section { Text("アカウントを消しているため、使えません。") }
-        } else if !authentication.isSignedIn {
+        } else if !authentication.isSignedIn, persistence.enabled {
             if authentication.preparedSignIn != nil {
-                signedOutSections
+                // 11/24 (D2): saving was on and the sign-in ended: only signing in again.
+                Section { appleButton } header: { Text("もう一度サインイン") }
             } else {
-                Section {
-                    if authentication.isBusy { ProgressView("準備しています…") }
-                    else {
-                        // Explicit verification may renew access; opening the
-                        // screen or receiving a read error must not do so.
-                        Button("もう一度試す") { authentication.start() }
-                            .disabled(persistence.busy)
-                            .accessibilityIdentifier("app-record-check-session")
-                    }
-                }
+                Section { signInPreparation }
             }
         }
         // What is kept: how much, and taking it out. Shown while signed in,
@@ -2583,14 +2668,17 @@ struct AppRecordSettingsView: View {
                     .accessibilityIdentifier("app-record-account")
             }
         }
-        // 11/24 (B1): only to someone without Plus who is not saving here.
-        if let profileTransfer, AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: hasPlusHere,
-                                                                              enabled: persistence.enabled) {
+        // 11/24: the way without Plus, small and below, only after the Plus
+        // screen was closed without buying.
+        if let profileTransfer, authentication.accountDeletionState == nil,
+           AppRecordSettingsRules.offersProfileTransfer(hasPlusHere: hasPlusHere, enabled: persistence.enabled,
+                                                        plusDeclined: plusDeclined) {
             Section {
                 NavigationLink {
                     CatProfileTransferView(actions: profileTransfer.actions, hasProfiles: profileTransfer.hasProfiles)
                 } label: {
                     Label("Plusなしで猫の名前と日付だけ移す", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.subheadline)
                 }
                 .accessibilityIdentifier("app-record-cat-profile-transfer")
             }
@@ -2608,27 +2696,54 @@ struct AppRecordSettingsView: View {
         }
     }
 
-    /// Off and signed in: start, or (without Plus) the way to Plus. Without Plus,
-    /// 「保存を始める」 could do nothing (11/7). 11/24 (D3): nor while Plus is
-    /// still being checked, or when the check failed: those say so instead.
-    @ViewBuilder private var startAction: some View {
-        if authentication.membership == nil, !authentication.membershipLoading, !authentication.isBusy,
-           let message = authentication.membershipMessage {
+    /// 11/24: off — one state, one sentence, one button (Apple's sign-in,
+    /// start, Plus, or お問い合わせ). How it works is in the policy.
+    @ViewBuilder private var offSection: some View {
+        if authentication.isSignedIn, authentication.membership == nil, !authentication.membershipLoading,
+           !authentication.isBusy, let message = authentication.membershipMessage {
+            // 11/24 (D3): the Plus check failed; say so instead of a start that could do nothing.
+            Label("自動保存はオフです", systemImage: "icloud.slash")
+                .accessibilityIdentifier("app-record-save-status")
             Text(message).font(.footnote)
             Button("もう一度試す") { authentication.checkMembership() }
                 .accessibilityIdentifier("app-record-membership-retry")
-        } else if authentication.membership == nil
-                    || (authentication.membership?.canSave != true && purchases.entitlementState == .checking) {
-            mainButton("確認しています…") { }
-                .disabled(true)
-                .accessibilityIdentifier("app-record-membership-checking")
-        } else if offersPlus && authentication.membership?.canSave != true {
-            plusOfferButton
         } else {
-            // 11/12 (review 22): the one thing to do here, as the main button.
-            mainButton("保存を始める") { start() }
-                .disabled(persistence.busy || authentication.isBusy)
-                .accessibilityIdentifier("app-record-enable")
+            let state = AppRecordSettingsRules.offState(signedIn: authentication.isSignedIn, working: working,
+                                                        linkStop: linkStop, needsPlus: needsPlus)
+            Label(state.title, systemImage: state.action == .none ? "icloud" : "icloud.slash")
+                .accessibilityIdentifier("app-record-save-status")
+            if let line = state.line { Text(line) }
+            switch state.action {
+            case .signIn:
+                if authentication.preparedSignIn != nil { appleButton } else { signInPreparation }
+            case .start:
+                if authentication.membership == nil
+                    || (authentication.membership?.canSave != true && purchases.entitlementState == .checking) {
+                    // 11/24 (D3): not while Plus is still being checked.
+                    mainButton("確認しています…") { }
+                        .disabled(true)
+                        .accessibilityIdentifier("app-record-membership-checking")
+                } else {
+                    // 11/12 (review 22): the one thing to do here, as the main button.
+                    mainButton("保存を始める") { start() }
+                        .disabled(persistence.busy || authentication.isBusy)
+                        .accessibilityIdentifier("app-record-enable")
+                }
+            case .plus:
+                if offersPlus { plusOfferButton }
+            case .contact:
+                // 11/24: the contact page itself, from here (not 設定's row).
+                if let supportURL {
+                    Link(destination: supportURL) {
+                        Text("お問い合わせ").font(.headline).frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("app-record-contact")
+                }
+            case .none:
+                ProgressView().frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("app-record-starting")
+            }
         }
     }
 
@@ -2641,36 +2756,29 @@ struct AppRecordSettingsView: View {
             .buttonStyle(.borderedProminent)
     }
 
-    @ViewBuilder private var signedOutSections: some View {
-        if persistence.enabled {
-            // 11/24 (D2): saving was on and the sign-in ended: only signing in again.
-            Section { appleButton(restores: false) } header: { Text("もう一度サインイン") }
-        } else if offersPlus {
-            // 11/24 (F1): 「Plusを始める」 is in the status box above.
-            Section { appleButton(restores: true) } header: { Text("前のiPhoneから戻す") }
-            footer: { Text("戻すだけなら、Plusはいりません。") }
-        } else {
-            Section { appleButton(restores: false) } footer: {
-                if hasPlusHere { plusLinkText } else { Text("サインインすると、保存が始まります。") }
-            }
+    /// Signed out and Apple's button not ready yet: preparing, or one retry.
+    @ViewBuilder private var signInPreparation: some View {
+        if authentication.isBusy { ProgressView("準備しています…") }
+        else {
+            // Explicit verification may renew access; opening the
+            // screen or receiving a read error must not do so.
+            Button("もう一度試す") { authentication.start() }
+                .disabled(persistence.busy)
+                .accessibilityIdentifier("app-record-check-session")
         }
     }
 
-    @ViewBuilder private func appleButton(restores: Bool) -> some View {
+    @ViewBuilder private var appleButton: some View {
         if let challenge = authentication.preparedSignIn {
             SignInWithAppleButton(.continue) { request in
                 request.requestedScopes = [.email]; request.nonce = challenge.nonce; request.state = challenge.state
             } onCompletion: { result in
-                if case .success = result { starting = true; restoring = restores; restoreFoundNothing = false }
+                if case .success = result { starting = true; plusOffered = false; plusDeclined = false }
                 authentication.completeSignIn(result)
             }
             .id(challenge.state)
             .disabled(authentication.isBusy)
             .frame(height: 48).accessibilityIdentifier("app-record-signin")
-        } else if authentication.isBusy {
-            ProgressView("準備しています…")
-        } else {
-            Button("もう一度試す") { authentication.prepareSignIn() }
         }
     }
 
@@ -2711,48 +2819,36 @@ struct AppRecordSettingsView: View {
             .accessibilityIdentifier("plus-offer-entry-preservation")
     }
 
-    private var plusLinkText: some View {
-        Text("サインインすると、保存が始まります。このiPhoneのPlusはこのアカウントで使い、あとから移せません。")
-    }
-
+    /// 「保存を始める」: a new try, also after a link that stopped for a moment.
     private func start() {
+        authentication.clearLinkFailure()
         starting = true
         linkPlusIfStarting()
     }
 
-    /// Links this iPhone's Plus once, right after the person chose to start.
-    /// The button they pressed states that the link cannot be moved later.
-    /// The 「Plusを始める」 here says starting Plus starts saving: once this
-    /// iPhone has the Plus just bought, it is linked without another press.
-    private func linkAfterPurchaseIfReady() {
-        guard linksAfterPurchase, hasPlusHere, authentication.isSignedIn, !authentication.isBusy,
-              authentication.membership?.linked == false else { return }
-        linksAfterPurchase = false
-        starting = true
-        authentication.connectMembership(consent: true)
-    }
-
+    /// Goes on from the person's start until saving is on: links this
+    /// iPhone's Plus (the consent is the line under Apple's button), starts
+    /// saving, or opens the Plus screen once when there is no Plus. A link
+    /// that stopped ends the start; it is never tried again by itself (P3).
     private func linkPlusIfStarting() {
-        guard starting, authentication.isSignedIn, !authentication.isBusy,
-              let membership = authentication.membership else { return }
-        if !membership.linked, hasPlusHere {
-            authentication.connectMembership(consent: true)
-            return
+        guard starting, authentication.isSignedIn, !authentication.isBusy else { return }
+        guard authentication.linkFailure == nil else { starting = false; return }
+        switch AppRecordSettingsRules.startStep(membership: authentication.membership, enabled: persistence.enabled,
+                                                hasPlusHere: hasPlusHere,
+                                                plusChecking: purchases.entitlementState == .checking,
+                                                offersPlus: offersPlus, plusOffered: plusOffered) {
+        case .wait: return
+        case .link: authentication.connectMembership(consent: true)
+        case .enable:
+            starting = false
+            // 1115v-4: after the person's start (or the Plus they just bought).
+            Task { await SharingPersonAction.run { await persistence.enable() } }
+        case .offerPlus:
+            // 11/24: signed in without Plus: the Plus screen opens by itself, once.
+            starting = false; plusOffered = true; showsPlusOffer = true
+        case .stop:
+            starting = false
         }
-        // 11/21: Plus that ended still lets this account's saved copy come back
-        // (the server asks for Plus only to save): starting goes on, restores
-        // what is saved, and then shows that new saving waits for Plus.
-        guard membership.canSave || (membership.linked && !persistence.enabled) else {
-            // 11/24 (D5): 「前のiPhoneから戻す」 reached an account that never had
-            // Plus, so nothing was saved for it; say so instead of nothing.
-            if restoring, !membership.linked, !persistence.enabled {
-                starting = false; restoring = false; restoreFoundNothing = true
-            }
-            return
-        }
-        starting = false; restoring = false
-        // 1115v-4: after the person's 「保存を始める」 (or the Plus they just bought).
-        Task { await SharingPersonAction.run { await persistence.enable() } }
     }
 }
 

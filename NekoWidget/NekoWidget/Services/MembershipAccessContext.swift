@@ -256,15 +256,15 @@ struct MembershipRestoreButton: View {
 
     init(title: String = "購入を復元", look: Look = .prominent,
          identifier: String = "membership-restore-submit", showsFound: Bool = true,
-         model: MembershipOfferModel? = nil, restored: @escaping () -> Void = {}) {
+         restored: @escaping () -> Void = {}) {
         self.title = title
         self.look = look
         self.identifier = identifier
         self.showsFound = showsFound
         self.restored = restored
-        // `model` only for a UI fixture (11/24); the app always restores live.
-        _model = StateObject(wrappedValue: model ?? MembershipOfferModel.live(presentsOffer: false))
+        _model = StateObject(wrappedValue: Self.fixtureModel ?? MembershipOfferModel.live(presentsOffer: false))
     }
+
 
     var body: some View {
         button
@@ -432,3 +432,13 @@ struct MembershipAccessFixture: View {
     }
 }
 #endif
+
+extension MembershipRestoreButton {
+    /// 11/24: 設定's Plus section fixture restores as an unconfirmed purchase would.
+    @MainActor fileprivate static var fixtureModel: MembershipOfferModel? {
+#if DEBUG
+        if CommandLine.arguments.contains("--membership-settings-section") { return .preview(state: .unknown) }
+#endif
+        return nil
+    }
+}

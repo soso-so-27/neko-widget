@@ -138,11 +138,12 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .rateLimited, .exportThrottled: "操作が続いたため、いまは使えません。少し待ってから、もう一度お試しください。"
         case .integrityFailure: "保存した記録の内容を確認できませんでした。元の写真やメモは消さずに、設定の「お問い合わせ」からご連絡ください。"
         case .accountingUnavailable: "保存できる容量を確認できません。少し待ってから、もう一度お試しください。"
-        case .membershipLinkConsent: "このアカウントにPlusを連携することに同意してください。"
-        case .membershipLinkConflict: "すでにほかのアカウントやPlusと連携されているため、変更できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。保存した記録はこれまでどおり使えます。"
-        case .membershipLinkExpired: "時間がたったため、連携できませんでした。もう一度「Plusを連携する」を押してください。"
-        case .billingIdentityUnavailable: "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、設定の「お問い合わせ」からご連絡ください。保存した記録はこれまでどおり使えます。"
-        case .billingIdentityChanged: "購入情報が変わったため、途中で止まりました。「購入を復元」を押してから、やり直してください。"
+        // 11/24: no 「連携」, and no button the screen showing it may not have.
+        case .membershipLinkConsent: "このアカウントでPlusを使うことに同意してください。"
+        case .membershipLinkConflict: "このPlusはほかの保存で使われています。購入し直さずに、お問い合わせください。"
+        case .membershipLinkExpired: "時間がたったため、止まりました。もう一度お試しください。"
+        case .billingIdentityUnavailable: "Plusを確かめられません。購入し直さずに、お問い合わせください。"
+        case .billingIdentityChanged: "購入情報が変わったため、途中で止まりました。もう一度お試しください。"
         }
     }
 }
