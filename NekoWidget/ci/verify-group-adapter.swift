@@ -110,6 +110,8 @@ private actor EchoTransport: GroupHTTPTransport {
     func managementStats(_ operation: String) -> [Data] { managementBodies[operation] ?? [] }
     func configureList(_ mode: String = "normal", delay: UInt64 = 0) { listMode = mode; listDelay = delay; paths = [] }
     func requestPaths() -> [String] { paths }
+    private var rotationBodies: [Data] = []
+    func rotationCount() -> Int { rotationBodies.count }
     func advanceRoster(identity: GroupDeviceIdentity, includeMember: Bool) throws {
         let old = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation!))
         let anchor = GroupTrustAnchor(windowID: old.packet.roster.windowID, ownerPersonID: identity.personID,
@@ -222,7 +224,7 @@ private actor EchoTransport: GroupHTTPTransport {
                   let roster = packet["roster"] as? [String: Any], let members = roster["members"] as? [[String: Any]],
                   let owner = members.first(where: { $0["role"] as? String == "owner" }) else { return try reply(["items": [], "next": NSNull()]) }
             var item: [String: Any] = ["windowId": roster["windowId"]!, "revision": roster["revision"]!, "keyEpoch": roster["keyEpoch"]!,
-                "rotationRequired": listMode == "rotation", "encryptedName": creation["encryptedName"]!,
+                "rotationRequired": listMode.hasPrefix("rotation"), "encryptedName": creation["encryptedName"]!,
                 "myParticipantId": owner["participantId"]!, "myRole": "owner"]
             if delivery != "legacy" {
                 item["deliveryStatus"] = delivery == "active" ? "active" : "paused"
@@ -403,7 +405,7 @@ private actor EchoTransport: GroupHTTPTransport {
         if path == root {
             let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
             let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
-            var metadata: [String: Any] = ["windowId": windowID, "revision": r["revision"]!, "keyEpoch": r["keyEpoch"]!, "rotationRequired": listMode == "rotation",
+            var metadata: [String: Any] = ["windowId": windowID, "revision": r["revision"]!, "keyEpoch": r["keyEpoch"]!, "rotationRequired": listMode.hasPrefix("rotation"),
                                           "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": r["keyEpoch"]!, "nameRosterRevision": r["revision"]!]
             if managementEnabled {
                 metadata["nameRevision"] = nameRevision; metadata["nameProof"] = nameProof as Any? ?? NSNull()
@@ -432,13 +434,31 @@ private actor EchoTransport: GroupHTTPTransport {
             let envelopes = creation["envelopes"] as! [[String: Any]]
             return try reply(["roster": packet, "envelopeForThisDevice": envelopes.first(where: { $0["deviceId"] as? String == device })!])
         }
+        if path == root + "/rotate" {
+            let input = try GroupWire.decode(GroupAPIModel.Transition.self, body)
+            let kept = Set(input.packet.roster.members.map(\.participantID))
+            try check(input.kind == "rotate" && kept == [owner["participantId"] as! String]
+                && Set(input.encryptedMemberNames.keys) == kept, "renewal drops the departed member and carries only active names")
+            rotationBodies.append(body)
+            self.creation = try JSONSerialization.jsonObject(with: GroupWire.encode(GroupAPIModel.CreateInput(operationID: input.operationID,
+                packet: input.packet, envelopes: input.envelopes, encryptedName: input.encryptedName,
+                encryptedMemberNames: input.encryptedMemberNames))) as? [String: Any]
+            nameRevision = 0; nameProof = nil; originalName = nil; listMode = "normal"
+            return try reply(["operationId": input.operationID, "windowId": windowID,
+                              "revision": input.packet.roster.revision, "keyEpoch": input.packet.roster.keyEpoch])
+        }
         if path == root + "/members/list" {
             let names = creation["encryptedMemberNames"] as! [String: Any]
             let rows = members.map { member -> [String: Any] in
-                let participant = member["participantId"] as! String
+                let participant = member["participantId"] as! String, guest = member["role"] as? String == "member"
+                // 11/24h: "rotation-erased" is a member who left and then erased
+                // their data (empty name, still in the signed roster until the
+                // key is renewed); "active-erased" is the same empty name on an
+                // active member, which must still be rejected.
+                let erased = guest && (listMode == "rotation-erased" || listMode == "active-erased")
                 return ["id": participant, "personId": member["personId"]!, "role": member["role"]!,
-                    "state": listMode == "rotation" && member["role"] as? String == "member" ? "left" : "active",
-                    "joinedRevision": 1, "encryptedDisplayName": names[participant]!]
+                    "state": listMode.hasPrefix("rotation") && guest ? "left" : "active",
+                    "joinedRevision": 1, "encryptedDisplayName": erased ? "" : names[participant]!]
             }
             return try reply(["items": rows, "next": NSNull(), "revision": r["revision"]!])
         }
@@ -1213,6 +1233,24 @@ private struct GroupAdapterChecks {
                   "removal replaces roster and key before caching")
         await relay.configureList(); _ = try await client.windows()
         try check(await relay.requestPaths() == [list], "post-removal list remains one authorized request")
+
+        // 11/24h production: B left and erased their data, so the server's name
+        // for B is empty while the signed roster still lists B until the
+        // creator's iPhone renews the key. The list and the renewal go on;
+        // an empty name for an active member is still an error.
+        try await relay.advanceRoster(identity: identity, includeMember: true)
+        await relay.configureList(); _ = try await client.windows()
+        await relay.configureList("active-erased")
+        do { _ = try await client.window(id: room.id); throw Failure.check("active member with erased name was accepted") }
+        catch Failure.check(let name) { throw Failure.check(name) } catch { }
+        await relay.configureList("rotation-erased")
+        let erased = try await client.windows()
+        try check(erased.first?.state == .rotationRequired && erased.first?.memberCount == 1
+            && erased.first?.members.first(where: { $0.state == .left })?.displayName == GroupNameCrypto.departedMemberName,
+            "departed member with erased name loads as a former member")
+        let renewed = await client.renewPendingKeys()
+        try check(await relay.rotationCount() == 1 && renewed.first?.state == .active && renewed.first?.revision == 5
+            && renewed.first?.members.map(\.state) == [.active], "key renewal proceeds after an erased departed member")
         print("Window list transport fixture: first 3 requests, repeat 1; membership, policy, pin, identity and key boundaries passed (not iPhone/network latency)")
     }
 }
