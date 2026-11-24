@@ -73,12 +73,24 @@ final class FamilyJourneyTests: XCTestCase {
         // 11/24: unknown has 「購入を復元」 as its one main button instead.
         XCTAssertFalse(MembershipOfferModel.preview(state: .unknown).asksForRestore)
         XCTAssertTrue(MembershipOfferModel.preview(state: .unknown).restoresInsteadOfPurchase)
-        XCTAssertTrue(MembershipOfferModel.preview(state: .storeTransaction).restoresInsteadOfPurchase)
         // Apple's own pending purchase, a member, and a fresh offer keep it
         // among the links.
         XCTAssertFalse(MembershipOfferModel.preview(state: .applePending).asksForRestore)
         XCTAssertFalse(MembershipOfferModel.preview(state: .active).asksForRestore)
         XCTAssertFalse(MembershipOfferModel.preview(state: .fresh).asksForRestore)
+    }
+
+    // 11/24: Apple still holds a subscription the server did not confirm: once
+    // the price is read, the one button restores (never a greyed trial).
+    func testStoreTransactionRestoresInsteadOfBuyingAgain() async {
+        let held = MembershipOfferModel.preview(state: .storeTransaction)
+        await held.load()
+        XCTAssertTrue(held.restoresInsteadOfPurchase)
+        XCTAssertFalse(held.canPurchase)
+        XCTAssertEqual(held.purchaseTitle, "購入を復元")
+        let fresh = MembershipOfferModel.preview(state: .fresh)
+        await fresh.load()
+        XCTAssertFalse(fresh.restoresInsteadOfPurchase)
     }
 
     func testServerConfirmationIsAskedAgainAFewTimesWithinTwoMinutes() {
