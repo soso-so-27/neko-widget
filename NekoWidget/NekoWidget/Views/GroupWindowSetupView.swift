@@ -748,7 +748,11 @@ struct GroupWindowMembersView: View {
         if window.state == .closed { return .closed }
         if let message = model.actionCompletionMessage { return .completed(message) }
         // Who this iPhone let in by itself since the creator last looked.
-        if !newAdmissions.isEmpty { return .admitted(GroupWindowPresentation.admittedText(newAdmissions.map(\.displayName))) }
+        // 11/24: only people still in the まど. Someone who joined and has since
+        // left (or erased their data) is not announced under their old name.
+        let present = Set(window.activeMembers.filter { $0.id != window.myParticipantID }.map(\.displayName))
+        let stillHere = newAdmissions.filter { present.contains($0.displayName) }
+        if !stillHere.isEmpty { return .admitted(GroupWindowPresentation.admittedText(stillHere.map(\.displayName))) }
         return nil
     }
 
