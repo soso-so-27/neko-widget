@@ -1033,6 +1033,310 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - 設定とその下の画面（11/24: 標準の文字といちばん大きい文字）
+
+    /// 設定 and every screen below it that the capture build can reach, each
+    /// at the standard text size and at the largest accessibility size
+    /// (`<name>` and `<name>_ax5`). Plus is shown free and as a member, and
+    /// 自動保存 before saving and saved, on the existing DEBUG fixtures only
+    /// (synthetic account, sample names, no service). Rows that leave the app
+    /// (通知, 使い方 and the other links) are not followed.
+    @MainActor
+    func test21SettingsTree() {
+        for large in [false, true] {
+            settingsMainWalk(large)
+            settingsFamilyNotebookWalk(large)
+            settingsPlusWalk(large)
+            settingsAutoSaveWalk(large)
+        }
+    }
+
+    @MainActor
+    private func settingsMainWalk(_ large: Bool) {
+        let app = launch(fixture + ["--group-window-screens-fixture"] + textSize(large), tools: true)
+        let title = app.navigationBars["設定"]
+        variantShot("60_settings_top", large, app) { openSettings(app) }
+        func nextPage() -> String? {
+            guard title.exists else { return "settings not shown" }
+            app.swipeUp()
+            settle(1.2)
+            return nil
+        }
+        variantShot("60_settings_page2", large, app) { nextPage() }
+        variantShot("60_settings_page3", large, app) { nextPage() }
+        variantShot("60_settings_bottom", large, app) {
+            guard title.exists else { return "settings not shown" }
+            scrollToEnd(app, until: anyIdentifier(app, ["settings-app-version", "settings-account-deletion"]), maximumSwipes: 16)
+            return nil
+        }
+        for _ in 0..<16 { app.swipeDown() }
+
+        let save = anyIdentifier(app, ["settings-cat-profile-transfer", "settings-managed-preservation"])
+        variantShot("61_settings_save_row_page", large, app) {
+            pushFromSettings(app, save, "保存の行（プロフィールの引き継ぎ／自動保存）")
+        }
+        if !title.exists { back(app) }
+
+        let photos = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
+        let photosTitle = app.navigationBars["写真の表示と整理"]
+        variantShot("62_settings_photos", large, app) {
+            guard reveal(photos, app, maximumSwipes: 16) else { return "「写真の表示と整理」 row not found" }
+            photos.tap()
+            guard photosTitle.waitForExistence(timeout: 10) else { return "photo settings did not open" }
+            settle(1)
+            return nil
+        }
+        variantShot("62b_settings_photos_bottom", large, app) {
+            guard photosTitle.exists else { return "photo settings not shown" }
+            scrollToEnd(app, maximumSwipes: 8)
+            return nil
+        }
+        func photoSubpage(_ identifier: String) -> String? {
+            guard photosTitle.exists else { return "photo settings not shown" }
+            let row = app.buttons[identifier].firstMatch
+            guard reveal(row, app, maximumSwipes: 10) else { return identifier + " row not found" }
+            row.tap()
+            guard photosTitle.waitForNonExistence(timeout: 10) else { return identifier + " page did not open" }
+            settle(1.5)
+            return nil
+        }
+        variantShot("62c_settings_photo_source", large, app) { photoSubpage("settings-photo-source") }
+        if !photosTitle.exists { back(app) }
+        variantShot("62d_settings_excluded_photos", large, app) { photoSubpage("settings-excluded-photos") }
+        if !photosTitle.exists { back(app) }
+        if photosTitle.exists { back(app) }
+
+        let guide = app.buttons["settings-widget-placement-guide"]
+        variantShot("64_settings_widget_guide", large, app) {
+            guard title.exists else { return "settings not shown" }
+            guard reveal(guide, app, maximumSwipes: 16) else { return "widget guide row not found" }
+            guide.tap()
+            guard app.buttons["widget-placement-close"].waitForExistence(timeout: 15) else { return "widget guide did not open" }
+            settle(1.5)
+            return nil
+        }
+        let close = app.buttons["widget-placement-close"]
+        if close.exists, close.isHittable { close.tap(); settle(1) }
+        if !title.exists { back(app) }
+
+        let blocked = app.buttons["settings-group-hidden-members"]
+        variantShot("65_settings_blocked_people", large, app) {
+            pushFromSettings(app, blocked, "「ブロックした人」")
+        }
+        if !title.exists { back(app) }
+
+        // Last on this launch: the 外観 menu stays open in the capture.
+        let appearance = app.buttons["settings-appearance"].firstMatch
+        variantShot("63_settings_appearance_menu", large, app) {
+            guard title.exists else { return "settings not shown" }
+            guard reveal(appearance, app, maximumSwipes: 16) else { return "外観 row not found" }
+            appearance.tap()
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    private func settingsFamilyNotebookWalk(_ large: Bool) {
+        let app = launch(fixture + ["--family-report-replies-fixture"] + textSize(large), tools: true)
+        let notebook = app.navigationBars["家族の手帳"]
+        variantShot("66_family_notebook_top", large, app) {
+            if let reason = openSettings(app) { return reason }
+            let family = app.buttons["settings-family-notebook"]
+            guard reveal(family, app, maximumSwipes: 16) else { return "家族の手帳 row not found" }
+            family.tap()
+            guard notebook.waitForExistence(timeout: 10) else { return "family notebook did not open" }
+            settle(1.5)
+            return nil
+        }
+        variantShot("66b_family_notebook_bottom", large, app) {
+            guard notebook.exists else { return "family notebook not shown" }
+            scrollToEnd(app, maximumSwipes: 10)
+            return nil
+        }
+        variantShot("66c_family_report_replies", large, app) {
+            guard notebook.exists else { return "family notebook not shown" }
+            let row = app.buttons["family-notebook-report-replies"].firstMatch
+            guard reveal(row, app, maximumSwipes: 14) else { return "通報への返答 row not found" }
+            row.tap()
+            guard app.navigationBars["通報への返答"].waitForExistence(timeout: 10) else { return "通報への返答 did not open" }
+            settle(1)
+            return nil
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    private func settingsPlusWalk(_ large: Bool) {
+        let offer = openOfferFixture([], large)
+        let heading = offer.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "membership-offer-")).firstMatch
+        variantShot("67_plus_free_top", large, offer) {
+            guard heading.waitForExistence(timeout: 15) else { return "Plus screen (free) did not open" }
+            settle(1.5)
+            return nil
+        }
+        variantShot("67b_plus_free_bottom", large, offer) {
+            guard heading.exists else { return "Plus screen (free) not shown" }
+            scrollToEnd(offer, until: offer.descendants(matching: .any)["membership-offer-privacy"].firstMatch, maximumSwipes: 14)
+            return nil
+        }
+        offer.terminate()
+
+        let member = openOfferFixture(["--membership-state-active"], large)
+        let memberHeading = member.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "membership-offer-")).firstMatch
+        variantShot("68_plus_member_top", large, member) {
+            guard memberHeading.waitForExistence(timeout: 15) else { return "Plus screen (member) did not open" }
+            settle(1.5)
+            return nil
+        }
+        variantShot("68b_plus_member_bottom", large, member) {
+            guard memberHeading.exists else { return "Plus screen (member) not shown" }
+            scrollToEnd(member, maximumSwipes: 14)
+            return nil
+        }
+        member.terminate()
+    }
+
+    @MainActor
+    private func openOfferFixture(_ arguments: [String], _ large: Bool) -> XCUIApplication {
+        let app = launch(["--membership-offer-ui-fixture"] + arguments + textSize(large))
+        let open = app.buttons["membership-preview-open"]
+        if open.waitForExistence(timeout: 15), reveal(open, app) { open.tap() }
+        return app
+    }
+
+    @MainActor
+    private func settingsAutoSaveWalk(_ large: Bool) {
+        let records = launch(["--app-records-ui-fixture"] + textSize(large))
+        let status = records.staticTexts["app-record-save-status"]
+        variantShot("70_autosave_off", large, records) {
+            let open = records.buttons["保存・復元"]
+            guard open.waitForExistence(timeout: 20) else { return "app-records fixture did not start" }
+            open.tap()
+            guard anyIdentifier(records, ["app-record-enable", "app-record-save-status"]).waitForExistence(timeout: 15) else {
+                return "自動保存 did not open"
+            }
+            settle(1.5)
+            return nil
+        }
+        variantShot("70b_autosave_off_bottom", large, records) {
+            guard status.exists || records.buttons["app-record-enable"].exists else { return "自動保存 not shown" }
+            scrollToEnd(records, maximumSwipes: 6)
+            return nil
+        }
+        variantShot("71_autosave_saved", large, records) {
+            let start = records.buttons["app-record-enable"]
+            guard reveal(start, records, maximumSwipes: 8) else { return "「保存を始める」 not found" }
+            start.tap()
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "保存済み"), object: status)
+            guard XCTWaiter.wait(for: [saved], timeout: 45) == .completed else { return "did not reach 保存済み" }
+            for _ in 0..<6 { records.swipeDown() }
+            settle(1.5)
+            return nil
+        }
+        variantShot("71b_autosave_saved_bottom", large, records) {
+            guard status.exists || records.buttons["app-record-pause"].exists else { return "自動保存 not shown" }
+            scrollToEnd(records, until: records.buttons["app-record-pause"], maximumSwipes: 8)
+            return nil
+        }
+        let screenTitle = records.navigationBars.firstMatch.identifier
+        variantShot("71c_autosave_account", large, records) {
+            let account = records.buttons["app-record-account"]
+            guard reveal(account, records, maximumSwipes: 8) else { return "自動保存のアカウント row not found" }
+            account.tap()
+            settle(3)
+            guard records.navigationBars.firstMatch.identifier != screenTitle else { return "account page did not open" }
+            return nil
+        }
+        back(records)
+        variantShot("71d_autosave_pause_confirm", large, records) {
+            let pause = records.buttons["app-record-pause"]
+            guard reveal(pause, records, maximumSwipes: 8) else { return "「このiPhoneで自動保存をやめる」 not found" }
+            pause.tap()
+            guard records.buttons["自動保存をやめる"].waitForExistence(timeout: 8) else { return "pause question did not appear" }
+            settle(1)
+            return nil
+        }
+        records.terminate()
+
+        // Saved before, and this iPhone's session has run out.
+        let expired = launch(["--app-records-ui-fixture", "--app-records-observation-ui", "--app-records-expired-session"]
+                             + textSize(large))
+        variantShot("72_autosave_session_expired", large, expired) {
+            let open = expired.buttons["保存・復元"]
+            guard open.waitForExistence(timeout: 30) else { return "app-records fixture did not start" }
+            open.tap()
+            guard expired.staticTexts["app-record-save-status"].waitForExistence(timeout: 15) else {
+                return "自動保存 did not open"
+            }
+            settle(2)
+            return nil
+        }
+        expired.terminate()
+
+        // 設定 → アカウントとデータを消す → 自動保存のアカウント (the deletion page itself).
+        let deletion = launch(["--managed-preservation-membership-ui-fixture", "--preservation-account-deletion-ui-fixture"]
+                              + textSize(large))
+        variantShot("73_autosave_account_deletion", large, deletion) {
+            guard deletion.buttons["preservation-account-delete"].waitForExistence(timeout: 20) else {
+                return "deletion page did not appear"
+            }
+            settle(1)
+            return nil
+        }
+        variantShot("73b_autosave_account_deletion_confirm", large, deletion) {
+            let delete = deletion.buttons["preservation-account-delete"]
+            guard reveal(delete, deletion, maximumSwipes: 8) else { return "削除 button not hittable" }
+            delete.tap()
+            guard deletion.buttons["preservation-account-delete-confirm"].waitForExistence(timeout: 8) else {
+                return "deletion question did not appear"
+            }
+            settle(1)
+            return nil
+        }
+        deletion.terminate()
+    }
+
+    /// From a fresh launch: the この子 tab, then its gear.
+    @MainActor
+    private func openSettings(_ app: XCUIApplication) -> String? {
+        guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
+        let gear = app.buttons["tools-settings-button"]
+        guard gear.waitForExistence(timeout: 15) else { return "settings button not found" }
+        for _ in 0..<8 where !gear.isHittable { app.swipeDown() }
+        gear.tap()
+        guard app.navigationBars["設定"].waitForExistence(timeout: 10) else { return "settings did not open" }
+        settle(1)
+        return nil
+    }
+
+    /// One row of 設定 opened; nil once its page replaced 設定.
+    @MainActor
+    private func pushFromSettings(_ app: XCUIApplication, _ row: XCUIElement, _ what: String) -> String? {
+        let title = app.navigationBars["設定"]
+        guard title.exists else { return "settings not shown" }
+        guard reveal(row, app, maximumSwipes: 16) else { return what + " row not found" }
+        row.tap()
+        guard title.waitForNonExistence(timeout: 10) else { return what + " page did not open" }
+        settle(1.5)
+        return nil
+    }
+
+    /// The largest accessibility size: the fixture root's own switch (it
+    /// sets the size itself) and the system setting for the other fixtures.
+    private func textSize(_ large: Bool) -> [String] {
+        large ? ["--ux-large-text", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] : []
+    }
+
+    /// `name` at the standard size, `name_ax5` at the largest.
+    @MainActor
+    private func variantShot(_ name: String, _ large: Bool, _ app: XCUIApplication, _ reach: () -> String?) {
+        shot(large ? name + "_ax5" : name, app, reach)
+    }
+
     /// 「この子のこと」 of the family cat on screen, then its 「…」 open.
     @MainActor
     private func openFamilyPhotoMenu(_ app: XCUIApplication) -> String? {

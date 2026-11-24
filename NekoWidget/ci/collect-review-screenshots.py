@@ -53,6 +53,21 @@ RECOVERY_SCREENS = (
 )
 # 家族の手帳の「通報への返答」 on sample answers (test20FamilyReportReplies): light and dark.
 FAMILY_REPORT_SCREENS = ("92p_family_report_replies",)
+# 設定とその下の画面 (test21SettingsTree): each at the standard text size and,
+# as `<name>_ax5`, at the largest accessibility size; light and dark.
+SETTINGS_TREE_BASES = (
+    "60_settings_top", "60_settings_page2", "60_settings_page3",
+    "60_settings_bottom", "61_settings_save_row_page", "62_settings_photos",
+    "62b_settings_photos_bottom", "62c_settings_photo_source", "62d_settings_excluded_photos",
+    "64_settings_widget_guide", "65_settings_blocked_people", "63_settings_appearance_menu",
+    "66_family_notebook_top", "66b_family_notebook_bottom", "66c_family_report_replies",
+    "67_plus_free_top", "67b_plus_free_bottom", "68_plus_member_top",
+    "68b_plus_member_bottom", "70_autosave_off", "70b_autosave_off_bottom",
+    "71_autosave_saved", "71b_autosave_saved_bottom", "71c_autosave_account",
+    "71d_autosave_pause_confirm", "72_autosave_session_expired", "73_autosave_account_deletion",
+    "73b_autosave_account_deletion_confirm",
+)
+SETTINGS_TREE_SCREENS = tuple(name + suffix for name in SETTINGS_TREE_BASES for suffix in ("", "_ax5"))
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -70,7 +85,7 @@ FULL_SCREENS = (
     "28_onboarding_5_widget_guide",
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
-) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS
+) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
@@ -121,6 +136,9 @@ def screens_by_method(source: str) -> dict[str, list[str]]:
         names = re.findall(r'shot\("([A-Za-z0-9_]+)"', body)
         if 'shot("29_widget_guide_\\(page)"' in body:
             names += [f"29_widget_guide_{page}" for page in range(2, 6)]
+        # variantShot("<name>", large, ...) captures <name> and <name>_ax5.
+        for base in re.findall(r'variantShot\("([A-Za-z0-9_]+)"', body):
+            names += [base, base + "_ax5"]
         result[method] = names
     return result
 
