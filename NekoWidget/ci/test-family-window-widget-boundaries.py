@@ -3337,7 +3337,7 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertIn("static let deviceLimitPerPerson = 3", presentation)
         self.assertIn("static let totalWindowLimit = 10", presentation)
         for expected in (
-            "このまどは\\(memberLimit)人までです。",
+            "このまどは、もう\\(memberLimit)人でいっぱいです。",
             "1人が使えるiPhoneは\\(deviceLimitPerPerson)台までです。",
             "まどは全部で\\(totalWindowLimit)個までです。",
             "まどを作った人がアプリを開くと、続けられます。",
@@ -6858,6 +6858,8 @@ class VeterinaryRoundTwoTests(unittest.TestCase):
         plist = source("NekoWidget/Info.plist")
         camera_text = section(plist, "<key>NSCameraUsageDescription</key>", "<key>NSPhotoLibraryAddUsageDescription</key>")
         self.assertIn("写真アプリには追加しません", camera_text)
+        # 11/24: 自動保存 can include a document photo when it is turned on.
+        self.assertNotIn("このiPhoneの中だけ", camera_text)
         self.assertIn("病院で見せる写真と動画は、写真アプリに保存します。", camera_text)
         add_text = section(plist, "<key>NSPhotoLibraryAddUsageDescription</key>", "<key>NSMicrophoneUsageDescription</key>")
         self.assertIn("「病院で見せる」で撮った写真と動画", add_text)
@@ -9154,7 +9156,7 @@ class CatHomeTab1112Tests(unittest.TestCase):
         # No cat: のわ, one sentence, one button; the two household tools only.
         empty = section(self.home, "private struct CatHomeNoCatPage: View {", "private struct CatHomePressStyle")
         self.assertIn('Image("Nowa-sit-up")', empty)
-        self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
+        self.assertIn('var sentence = "名前と写真を入れると、この子のページができます。"', empty)
         self.assertIn("Text(sentence)", empty)
         self.assertIn('Text("この子を追加")', empty)
         self.assertIn(".nekoPrimaryButton()", empty)

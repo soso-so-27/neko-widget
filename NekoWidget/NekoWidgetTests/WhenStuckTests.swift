@@ -87,7 +87,8 @@ final class WhenStuckTests: XCTestCase {
                        "データを保存できませんでした。アプリを開き直しても変わらないときは、設定の「お問い合わせ」からお知らせください。")
         XCTAssertTrue(AppViewModel.userFacingMessage(for: NekoWidgetError.photoAccessDenied).contains("写真へのアクセス"))
         XCTAssertTrue(AppViewModel.userFacingMessage(for: NekoWidgetError.exportFailed).contains("空き容量"))
-        XCTAssertTrue(AppViewModel.userFacingMessage(for: URLError(.notConnectedToInternet)).contains("インターネット"))
+        XCTAssertTrue(AppViewModel.userFacingMessage(for: URLError(.notConnectedToInternet))
+                      == "接続できません。電波のあるところで、もう一度お試しください。")
         // Photo access and storage are named only by the errors that know them.
         for error: Error in [NekoWidgetError.appGroupUnavailable("group"), NekoWidgetError.albumCreationFailed,
                              CocoaError(.fileWriteUnknown), URLError(.timedOut)] {

@@ -1214,14 +1214,18 @@ struct GroupWindowScreen: View {
                         .accessibilityLabel("写真を読み込んでいます")
                         .accessibilityIdentifier("group-window-syncing")
                 } else if model.entries.isEmpty {
-                    ContentUnavailableView(
-                        "まだ写真はありません",
-                        systemImage: "photo.on.rectangle",
-                        description: Text(model.isFormer
-                            ? "このiPhoneに残っている写真はありません。"
-                            : "届けた写真と届いた写真が、ここに並びます。")
-                    )
-                    .frame(minHeight: 240)
+                    // 11/24: a failed read is not 「まだ写真はありません」; the
+                    // red line and its 「もう一度」 above say it alone.
+                    if !model.messageOffersReload {
+                        ContentUnavailableView(
+                            "まだ写真はありません",
+                            systemImage: "photo.on.rectangle",
+                            description: Text(model.isFormer
+                                ? "このiPhoneに残っている写真はありません。"
+                                : "届けた写真と届いた写真が、ここに並びます。")
+                        )
+                        .frame(minHeight: 240)
+                    }
                 } else {
                     // One photo per row, large, with who sent it and the hearts under it.
                     LazyVStack(spacing: 14) {
@@ -3126,10 +3130,10 @@ struct GroupWindowListSection: View {
                 }
             }
             if model.windows.isEmpty, model.hasLoaded, model.message == nil, known.isEmpty {
-                // Nothing yet: one line and the way in.
+                // Nothing yet: what a まど is, in one line, and the way in
+                // (11/24). An invited person comes by the link, not here.
                 VStack(spacing: 12) {
-                    Text("まだまどがありません。").font(.subheadline).foregroundStyle(.secondary)
-                    Text("招待リンクを開くと参加できます。").font(.footnote).foregroundStyle(.secondary)
+                    Text("家族や猫友と、猫の写真を届け合えます。").font(.subheadline).foregroundStyle(.secondary)
                     if compactHeader {
                         NavigationLink {
                             GroupWindowCreateScreen(client: model.client)

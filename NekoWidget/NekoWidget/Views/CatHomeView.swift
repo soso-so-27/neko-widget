@@ -1658,7 +1658,7 @@ private struct CatHomeNoCatPage: View {
     let tools: CatHomeTools
     /// 設定 (no cat menu without a cat), scrolling with the page.
     let openSettings: () -> Void
-    var sentence = "この子を追加すると、ここに出ます。"
+    var sentence = "名前と写真を入れると、この子のページができます。"
     /// 避難に備える and 写真を見せる; only with no cat.
     var householdTools = true
     /// The add page after the cats: VoiceOver's 「前の子」 back to the last cat.

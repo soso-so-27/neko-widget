@@ -155,6 +155,15 @@ class AuditTests(unittest.TestCase):
         join = section(VIEW, "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView")
         self.assertIn("} else if !previewFailed {", join)
         self.assertIn("previewFailed = true", join)
+        # 11/24: the reason on the sheet, with 「閉じる」 (「もう一度」 only for
+        # the network); never a name field or a 「参加する」 that cannot be pressed.
+        failed = section(join, "if let previewError, preview == nil {", "} else if let prior")
+        self.assertIn("Text(previewError.message)", failed)
+        self.assertIn("if previewError.recovery == .retry {", failed)
+        self.assertIn('Button("閉じる") { dismiss() }', failed)
+        self.assertNotIn("family-notebook-join", failed)
+        self.assertIn("previewError = error as? FamilySharingError ?? .serviceUnavailable", join)
+        self.assertNotIn("sharing.failure = error as? FamilySharingError ?? .serviceUnavailable", join)
 
     def test_cat_selection_retry(self):
         add = section(VIEW, "private func add() {", "/// 11/19: a cat's photo in the notebook's lists")

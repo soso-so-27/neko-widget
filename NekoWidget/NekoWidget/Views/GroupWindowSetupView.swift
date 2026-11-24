@@ -71,7 +71,7 @@ enum GroupWindowPresentation {
         case .staleEpoch, .rotationPending:
             return "まどを作った人がアプリを開くと、続けられます。少し待ってから、もう一度お試しください。"
         case .memberLimit:
-            return "このまどは\(memberLimit)人までです。"
+            return "このまどは、もう\(memberLimit)人でいっぱいです。"
         case .deviceLimit:
             return "1人が使えるiPhoneは\(deviceLimitPerPerson)台までです。"
         case .totalWindowLimit:
@@ -1551,7 +1551,9 @@ struct GroupJoinView: View {
             Label("参加の手続き中です", systemImage: "hourglass")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
-            Text("参加できたら、お知らせします。")
+            // 11/24: what the wait is for. The inviter's iPhone lets the
+            // person in, at the latest when the inviter opens the app.
+            Text("招待した人がアプリを開くと、参加できます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -400,7 +400,7 @@ class NameIsTheCatMenu(unittest.TestCase):
         self.assertIn("previous: { pageActions.turn(cats.count, -1) }) { pageActions.add() }", pager)
         self.assertIn("openSettings: { pageActions.openSettings() }", pager)
         empty = block(HOME, "private struct CatHomeNoCatPage: View {")
-        self.assertIn('var sentence = "この子を追加すると、ここに出ます。"', empty)
+        self.assertIn('var sentence = "名前と写真を入れると、この子のページができます。"', empty)
         self.assertIn("var householdTools = true", empty)
         self.assertIn("if householdTools {", empty)
         self.assertIn('.accessibilityIdentifier("cat-home-add")', empty)

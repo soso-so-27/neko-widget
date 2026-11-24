@@ -64,7 +64,9 @@ class WidgetGuideTests(unittest.TestCase):
     def test_later_stays_on_every_first_run_page(self):
         buttons = section(GUIDE, ".safeAreaInset(edge: .bottom) {", "/// A secondary button")
         later = section(buttons, "if closeTitle == nil {", ".accessibilityIdentifier(\"widget-placement-skip\")")
-        self.assertIn("Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)", later)
+        self.assertIn("Button(page < steps.count - 1 ? OnboardingPresentationCopy.widgetLaterAction", later)
+        # 11/24: on the last step the same way out reads 「写真を見る」.
+        self.assertIn(": OnboardingPresentationCopy.widgetLastStepAction,\n                           action: onSkip)", later)
         # Its own `if`, after the next/waiting choice has closed: every page.
         self.assertIn('.accessibilityIdentifier("widget-placement-waiting")\n                }\n\n                if closeTitle == nil {',
                       buttons)

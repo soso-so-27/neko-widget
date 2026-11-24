@@ -1457,11 +1457,11 @@ final class PhotoPermissionUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["initial-scan-widget-guide"].exists)
                 XCTAssertFalse(app.buttons["first-run-photo-close"].exists)
                 captureMainlineScreen(scenario)
-                // 10/30 plain-Japanese copy: 「写真を追加で選ぶ」「もう一度探す」.
+                // 10/30 plain-Japanese copy: 「写真を追加で選ぶ」. 11/24: no
+                // 「もう一度探す」; choosing photos searches again by itself.
+                XCTAssertFalse(app.buttons["もう一度探す"].exists)
                 app.buttons["写真を追加で選ぶ"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-action-choose"].waitForExistence(timeout: 5))
-                app.buttons["もう一度探す"].tap()
-                XCTAssertTrue(app.staticTexts["mainline-action-rescan"].waitForExistence(timeout: 5))
                 app.buttons["initial-scan-continue"].tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "skip":
@@ -4680,7 +4680,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["cat-profiles-unassigned"].exists)
         capture("cat-list-browsing")
         app.buttons["cat-profile-add"].tap()
-        XCTAssertTrue(app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["この子の写真を選ぶ"].waitForExistence(timeout: 5))
         app.buttons["キャンセル"].tap()
         XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
         app.buttons["cat-profiles-more"].tap()

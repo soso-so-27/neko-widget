@@ -2386,6 +2386,9 @@ struct FamilyNotebookJoinView: View {
     @State private var result: FamilyJoinResult?
     /// 11/21: the invitation could not be read (the error, if any, is shown).
     @State private var previewFailed = false
+    /// 11/24: why it could not be read, said on the sheet itself (no
+    /// alert, no name field or 「参加する」 that could not be pressed).
+    @State private var previewError: FamilySharingError?
     @State private var displayName = GroupDisplayName.remembered
     /// The keyboard goes away when 「参加する」 is pressed, so the progress shows (11/6).
     @FocusState private var typingName: Bool
@@ -2415,7 +2418,16 @@ struct FamilyNotebookJoinView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let prior = preview?.priorRequestState, ["rejected", "cancelled", "expired"].contains(prior), result == nil {
+                if let previewError, preview == nil {
+                    Text(previewError.message)
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .accessibilityIdentifier("family-notebook-preview-failed")
+                    if previewError.recovery == .retry {
+                        Button("もう一度") { Task { await loadPreview() } }
+                            .disabled(sharing.isWorking)
+                    }
+                    Button("閉じる") { dismiss() }
+                } else if let prior = preview?.priorRequestState, ["rejected", "cancelled", "expired"].contains(prior), result == nil {
                     Text("この招待では参加できません。新しい招待リンクを送ってもらってください。")
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else if result == .pendingApproval || result == .waitingForKeys
@@ -2453,7 +2465,6 @@ struct FamilyNotebookJoinView: View {
                                 .disabled(sharing.isWorking)
                                 .accessibilityLabel("あなたの名前")
                                 .accessibilityIdentifier("family-notebook-display-name")
-                            Text("家族に表示されます。").font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                     Button {
@@ -2477,10 +2488,9 @@ struct FamilyNotebookJoinView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(sharing.isWorking || preview == nil || (sharing.service.sendsInvitations && (try? GroupWire.name(displayName)) == nil))
                     .accessibilityIdentifier("family-notebook-join")
-                    Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
                     GroupWindowStandardsAgreement(action: "参加する", isFamilyNotebook: true)
                 }
-                if result == nil && !(inFamily && !otherFamilyLink) {
+                if result == nil && previewError == nil && !(inFamily && !otherFamilyLink) {
                     Button("今はやめておく") { dismiss() }
                         .disabled(sharing.isWorking)
                 }
@@ -2494,18 +2504,23 @@ struct FamilyNotebookJoinView: View {
         }
         // Once, when joining succeeds (the result is set once per 「参加する」).
         .sensoryFeedback(.success, trigger: result) { old, new in old != .joined && new == .joined }
-        .task {
-            // 1115s: opening the invitation link is the person's own action.
-            await SharingPersonAction.run {
-                await sharing.refresh()
-                do { preview = try await sharing.service.previewInvitation(link) }
-                catch {
-                    previewFailed = true
-                    // Already waiting, or already in this family: the used link
-                    // is not an error to this person (11/19).
-                    if sharing.state != .pendingApproval && !(inFamily && !otherFamilyLink) {
-                        sharing.failure = error as? FamilySharingError ?? .serviceUnavailable
-                    }
+        .task { await loadPreview() }
+    }
+
+    /// 1115s: opening the invitation link is the person's own action, and so
+    /// is 「もう一度」 after it could not be read for the network (11/24).
+    private func loadPreview() async {
+        previewError = nil
+        previewFailed = false
+        await SharingPersonAction.run {
+            await sharing.refresh()
+            do { preview = try await sharing.service.previewInvitation(link) }
+            catch {
+                previewFailed = true
+                // Already waiting, or already in this family: the used link
+                // is not an error to this person (11/19).
+                if sharing.state != .pendingApproval && !(inFamily && !otherFamilyLink) {
+                    previewError = error as? FamilySharingError ?? .serviceUnavailable
                 }
             }
         }
@@ -2634,7 +2649,7 @@ struct FamilyNotebookCatSelectionView: View {
                     }
                 }
             } footer: {
-                Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。")
+                Text("選んだ猫の代表写真と「この子のこと」、病院・預けるときに書いたことを家族と共有します。")
             }
         }
         .disabled(saving)

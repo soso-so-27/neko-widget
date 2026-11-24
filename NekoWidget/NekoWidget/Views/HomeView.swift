@@ -1021,13 +1021,25 @@ struct HomeView: View {
         .accessibilityIdentifier("photo-hub-load-failed")
     }
 
+    /// One cat chosen (「all-<id>」) or 未分類 (「all-unassigned」).
+    private func scopedEmptyLine(_ key: String) -> String {
+        let parts = key.split(separator: "-", maxSplits: 1)
+        let identifier = parts.count == 2 ? String(parts[1]) : ""
+        if identifier == "unassigned" { return "未分類の写真はありません。" }
+        if let name = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier })?.displayName,
+           !name.isEmpty {
+            return "\(name)の写真はまだありません。"
+        }
+        return "写真はまだありません。"
+    }
+
     @ViewBuilder
     private var emptyPhotoState: some View {
         if scan.hasFailed {
+            // 11/24: no sentence about access; it was allowed. The title and
+            // the button say it.
             ContentUnavailableView {
                 Label("写真を最後まで探せませんでした", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text("写真へのアクセスを確認して、もう一度探してください。")
             } actions: {
                 // 「写真を追加で選ぶ」 is the banner above (11/8: one door).
                 Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
@@ -1040,8 +1052,9 @@ struct HomeView: View {
             // spinner only if it takes a while.
             PhotosPreparingPlaceholder()
         } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
-            ContentUnavailableView("表示できる写真がありません", systemImage: "photo.on.rectangle",
-                description: Text("選んでいる猫と、写真へのアクセスを確かめてください。"))
+            // 11/24: a cat with no photo yet (or an empty 未分類) is common;
+            // never blamed on access. 「この子の写真を追加」 is the row above.
+            ContentUnavailableView(scopedEmptyLine(readingPositionKey), systemImage: "photo.on.rectangle")
                 .frame(maxWidth: .infinity, minHeight: 280)
                 .accessibilityIdentifier("photo-library-scoped-empty")
         } else if let openWindows, PhotosEmptyStatePolicy.pointsToWindows(
@@ -1070,11 +1083,9 @@ struct HomeView: View {
                 // never 「アクセスを確かめて」 to someone who allowed it all.
                 Text(isLimitedAccess ? OnboardingPresentationCopy.scanZeroLimitedBody
                                      : OnboardingPresentationCopy.scanZeroBody)
-            } actions: {
-                // 「写真を追加で選ぶ」 is the banner above (11/8: one door).
-                Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
-                    .buttonStyle(.bordered)
             }
+            // 11/24: no 「もう一度探す」, as in the first run: cats taken later
+            // are found by themselves, and 「写真を追加で選ぶ」 is the banner above.
             .frame(maxWidth: .infinity, minHeight: 320)
         } else if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
             ContentUnavailableView {

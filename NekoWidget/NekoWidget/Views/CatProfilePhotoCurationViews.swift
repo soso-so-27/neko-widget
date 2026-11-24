@@ -979,7 +979,7 @@ struct CatProfilePhotoPicker: View {
                 .disabled(savingIdentifier != nil)
             }
         }
-        .navigationTitle("写真を選ぶ")
+        .navigationTitle("この子の写真を選ぶ")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(savingIdentifier != nil)
         .safeAreaInset(edge: .bottom) {
