@@ -2380,6 +2380,7 @@ private struct GroupCaptionField: View {
 }
 
 private struct GroupPhotoDetail: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ObservedObject var model: GroupWindowScreenModel
     @State private var selection: String
     @Environment(\.dismiss) private var dismiss
@@ -2593,7 +2594,10 @@ private struct GroupPhotoDetail: View {
         let people = givers.map { model.heartGiver($0) }
         let spoken = GroupPhotoTileSpeech.givers(people.map { $0.shownName ?? GroupHeartGivers.formerMemberName })
         if isShown(entry) && look != .hidden {
-            HStack(spacing: 10) {
+            // The names start under the sender's name: the ♥'s 44pt frame,
+            // less 4, is the sender row's 30pt circle and 10pt gap. At the
+            // accessibility sizes the ♥ itself is wider, so the plain gap.
+            HStack(spacing: typeSize.isAccessibilitySize ? 10 : -4) {
                 if heartable {
                     Button {
                         // 11/22: a heart sent (not taken back) shows on the photo.
