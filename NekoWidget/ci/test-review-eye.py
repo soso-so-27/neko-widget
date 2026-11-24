@@ -92,9 +92,18 @@ class ReviewEyeTests(unittest.TestCase):
             "運営に知らせる",
             "連絡先：support@nekonomado.com",
             "まどを作った直後の画面で、6 つの席と「招待する」から招待リンクを送れます。",
+            # 11/24: where 設定 is, the second device's join, the tab's own names,
+            # 5 per まど, the 病院 entry and the family photo report.
+            "「この子」タブ右上の歯車（設定）→「Plusについて」",
+            "「まど」タブの「まどを作る」",
+            "1 台目でねこのまどを開くと参加が完了します",
+            "1 つのまどにつき 1 人 1 日 5 枚まで",
+            "「この子を追加」（名前だけで足せます）のあと「病院」",
+            "その猫のページの「…」から「この写真を通報」",
         ):
             self.assertIn(phrase, notes)
         self.assertNotIn("猫友を招く", notes)
+        self.assertNotIn("みんなのまど", notes)
         self.assertNotIn("まどと家族の手帳のID", notes)
         self.assertNotIn("まどと家族の手帳から抜ける", notes)
         self.assertLessEqual(len(notes), 4000)

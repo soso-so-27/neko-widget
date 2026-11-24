@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 export const applicationIdentifier = 'FF96XYPPH2.jp.nekowidget.app';
 export const invitationPaths = ['/join', '/family-join'];
-export const policyPaths = ['/', '/privacy/', '/support/', '/community/', '/guide/'];
+export const policyPaths = ['/', '/privacy/', '/support/', '/community/', '/guide/', '/tokushoho/'];
 export const policyFile = path => path === '/' ? 'index.html' : path.slice(1) + 'index.html';
 const baseHeaders = `/*
   Referrer-Policy: no-referrer
@@ -31,7 +31,9 @@ export async function prepareInvitationAssets(output) {
     const html = (await readFile(join(repository, 'docs', path.slice(1)+'.html'), 'utf8')).replace(/\r\n/g, '\n');
     if (!html.includes('<link rel="stylesheet" href="assets/site.css">')) throw Error('Expected shared stylesheet');
     if (/<(?:form|input|iframe|img)\b|<script[^>]+src|\bon\w+\s*=/iu.test(html)) throw Error('Unexpected active content');
-    if (!html.includes('nekowidget://' + path.slice(1)) || !html.includes('app-id=6801962436')) throw Error('Invitation target missing');
+    if (!html.includes('nekowidget://' + path.slice(1)) || !html.includes('https://apps.apple.com/jp/app/id6801962436')) throw Error('Invitation target missing');
+    // No Smart App Banner: its 「開く」 cannot carry the fragment, so it would open the app without the invitation (11/24).
+    if (html.includes('apple-itunes-app')) throw Error('Smart App Banner would drop the invitation');
     return html.replace('<link rel="stylesheet" href="assets/site.css">', '<style>' + css + '</style>');
   }));
   const hash = text => "'sha256-" + createHash('sha256').update(text).digest('base64') + "'";
