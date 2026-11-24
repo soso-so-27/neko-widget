@@ -1705,6 +1705,22 @@ enum GroupHeartGivers {
     /// The relay's word for someone no longer in the まど
     /// (ProductionGroupWindowClient): shown as a plain person circle.
     static let formerMemberName = "以前のメンバー"
+    /// 11/24: up to this many people are named in words; more are circles.
+    static let namedLimit = 3
+    /// With more people than `namedLimit`, this many circles, then 「ほか◯人」.
+    static let circleLimit = 3
+
+    /// 1–3 people as words in the order they sent it (「お母さん・おばあちゃん」):
+    /// circles with the same first letter cannot be told apart. nil for more.
+    static func names(_ shownNames: [String?]) -> String? {
+        guard (1...namedLimit).contains(shownNames.count) else { return nil }
+        return shownNames.map { $0 ?? formerMemberName }.joined(separator: "・")
+    }
+
+    /// 「ほか◯人」 after the circles, or nil when every person has a circle.
+    static func othersLabel(count: Int) -> String? {
+        count > circleLimit ? "ほか\(count - circleLimit)人" : nil
+    }
 }
 
 /// 11/24 (D): who sent a photo and when, the same on the feed and on the
@@ -2364,6 +2380,7 @@ private struct GroupCaptionField: View {
 }
 
 private struct GroupPhotoDetail: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ObservedObject var model: GroupWindowScreenModel
     @State private var selection: String
     @Environment(\.dismiss) private var dismiss
@@ -2577,7 +2594,10 @@ private struct GroupPhotoDetail: View {
         let people = givers.map { model.heartGiver($0) }
         let spoken = GroupPhotoTileSpeech.givers(people.map { $0.shownName ?? GroupHeartGivers.formerMemberName })
         if isShown(entry) && look != .hidden {
-            HStack(spacing: 10) {
+            // The names start under the sender's name: the ♥'s 44pt frame,
+            // less 4, is the sender row's 30pt circle and 10pt gap. At the
+            // accessibility sizes the ♥ itself is wider, so the plain gap.
+            HStack(spacing: typeSize.isAccessibilitySize ? 10 : -4) {
                 if heartable {
                     Button {
                         // 11/22: a heart sent (not taken back) shows on the photo.
@@ -2650,21 +2670,33 @@ private struct GroupPhotoDetail: View {
     }
 }
 
-/// 11/24 (V3): the circles of who sent a heart, in the order they sent it;
-/// with one person, their name after the circle. Someone who left the まど
-/// is a plain person circle with no name. At most 5 in a 6-person まど.
+/// 11/24 (V3): who sent a heart, in the order they sent it. One to three
+/// people by name (「お母さん・おばあちゃん」), cut short at the end when the
+/// row is too narrow; more as the first circles and 「ほか◯人」. Someone who
+/// left the まど is 「以前のメンバー」 or a plain person circle. A 6-person
+/// まど has at most 5.
 private struct GroupHeartGiverCircles: View {
     let people: [(avatarName: String, shownName: String?)]
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(people.indices, id: \.self) { index in
-                GroupMemberAvatar(name: people[index].avatarName, size: 26)
-            }
-            if people.count == 1, let name = people[0].shownName {
-                Text(name)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+        if let names = GroupHeartGivers.names(people.map(\.shownName)) {
+            Text(names)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                .truncationMode(.tail)
+        } else {
+            HStack(spacing: 6) {
+                ForEach(0..<min(people.count, GroupHeartGivers.circleLimit), id: \.self) { index in
+                    GroupMemberAvatar(name: people[index].avatarName, size: 26)
+                }
+                if let others = GroupHeartGivers.othersLabel(count: people.count) {
+                    Text(others)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
         }
     }

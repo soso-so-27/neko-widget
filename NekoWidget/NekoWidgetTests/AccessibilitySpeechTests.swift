@@ -37,4 +37,18 @@ final class AccessibilitySpeechTests: XCTestCase {
         XCTAssertEqual(Speech.heart(mine: false, canHeart: false), "ハート")
         XCTAssertEqual(Speech.heart(mine: true, canHeart: false), "ハートを送りました")
     }
+
+    func testWindowPhotoHeartGiversAreNamedUpToThreeThenCircles() {
+        typealias Givers = GroupHeartGivers
+        XCTAssertEqual(Givers.names(["お母さん"]), "お母さん")
+        XCTAssertEqual(Givers.names(["お母さん", "おばあちゃん"]), "お母さん・おばあちゃん")
+        XCTAssertEqual(Givers.names(["あなた", nil, "パパ"]), "あなた・以前のメンバー・パパ")
+        XCTAssertNil(Givers.names([]))
+        XCTAssertNil(Givers.names(["a", "b", "c", "d"]))
+        XCTAssertNil(Givers.othersLabel(count: 3))
+        XCTAssertEqual(Givers.othersLabel(count: 4), "ほか1人")
+        XCTAssertEqual(Givers.othersLabel(count: 5), "ほか2人")
+        XCTAssertEqual(GroupPhotoTileSpeech.givers(["お母さん", "おばあちゃん"]),
+                       "ハートを送った人：お母さん、おばあちゃん")
+    }
 }
