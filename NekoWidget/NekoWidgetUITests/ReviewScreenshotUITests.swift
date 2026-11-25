@@ -1549,6 +1549,10 @@ final class ReviewScreenshotUITests: XCTestCase {
             let send = app.buttons["group-library-delivery-send"]
             guard send.waitForExistence(timeout: 20) else { return "sending sheet did not open" }
             settle(1.5)
+            let caption = app.descendants(matching: .any)["group-window-send-caption"].firstMatch
+            guard caption.exists, !caption.isEnabled else { return "ひとこと still editable while sending" }
+            let cancel = app.navigationBars.buttons["キャンセル"].firstMatch
+            guard cancel.exists, !cancel.isEnabled else { return "キャンセル still enabled while sending" }
             return nil
         }
         app.terminate()

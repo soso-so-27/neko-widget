@@ -1229,7 +1229,8 @@ struct GroupWindowRenameSheet: View {
             .navigationTitle("名前を変える")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+                // 11/25: the rename is sent to the end, so 「キャンセル」 waits too.
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(model.isWorking) }
                 ToolbarItem(placement: .confirmationAction) {
                     if model.isWorking {
                         ProgressView()
@@ -1511,6 +1512,8 @@ struct GroupJoinView: View {
             }
         }
         .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
+        // 11/25: no swipe-down while 「参加する」 is being sent (see GroupJoinCloseButton).
+        .interactiveDismissDisabled(model.isWorking)
         .task { await model.resume() }
         .task(id: model.isPending) {
             // Approval shows up by itself; nothing to press while waiting (M2).
@@ -1934,8 +1937,7 @@ struct GroupInvitationJoinSheet: View {
                 }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { dismiss() }
-                            .accessibilityIdentifier("group-join-close")
+                        GroupJoinCloseButton(model: model) { dismiss() }
                     }
                 }
         }
@@ -1964,6 +1966,32 @@ struct GroupInvitationJoinSheet: View {
             // Closed in the まど tab before applying: not offered again. The
             // first-run guide keeps it for the まど tab (AppRootView).
             if isCurrent, inbox.isSetAside { inbox.discard() }
+        }
+    }
+}
+
+/// 11/25: 「閉じる」 waits while 「参加する」 is being sent. Closed mid-send,
+/// the sheet settled as "not applied yet" and dropped the invitation while
+/// the relay already had the request.
+private struct GroupJoinCloseButton: View {
+    let model: GroupJoinModel?
+    let close: () -> Void
+
+    var body: some View {
+        if let model {
+            Observed(model: model, close: close)
+        } else {
+            Button("閉じる", action: close).accessibilityIdentifier("group-join-close")
+        }
+    }
+
+    private struct Observed: View {
+        @ObservedObject var model: GroupJoinModel
+        let close: () -> Void
+        var body: some View {
+            Button("閉じる", action: close)
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("group-join-close")
         }
     }
 }

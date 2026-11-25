@@ -747,6 +747,28 @@ final class GroupWindowScreenModel: ObservableObject {
         }
     }
 
+    /// 11/25: the ひとこと this photo was sealed with, while a send of it may
+    /// still reach the relay (it is sent again as it is: a changed ひとこと
+    /// under the same operation is refused). Nil when it can be edited.
+    func sentMemo(for prepared: PreparedPhoto) -> String? {
+        Self.sentMemo(failed: failedDelivery, for: prepared)
+    }
+
+    static func sentMemo(failed: FailedDelivery?, for prepared: PreparedPhoto) -> String? {
+        guard let failed, failed.photo.operationID == prepared.operationID else { return nil }
+        return failed.memo
+    }
+
+    /// 11/25: the confirmation sheet holds still while 「届けています…」, and
+    /// after a send that may have reached the relay.
+    func locksCaption(for prepared: PreparedPhoto) -> Bool {
+        Self.locksCaption(isSending: isSending, failed: failedDelivery, for: prepared)
+    }
+
+    static func locksCaption(isSending: Bool, failed: FailedDelivery?, for prepared: PreparedPhoto) -> Bool {
+        isSending || sentMemo(failed: failed, for: prepared) != nil
+    }
+
     func retryFailedDelivery() async {
         // 1115s: the person's own action, outside the automatic budget.
         await SharingPersonAction.run {
@@ -2202,8 +2224,11 @@ private struct GroupWindowCatPhotoDelivery: View {
 
     var body: some View {
         // The window's own send bar, under this sheet, gives the haptic.
+        // 11/25: inside the まど the sheet closes on 「届ける」; the まど's
+        // send bar shows 「届けています…」, 「届けました」 or 「もう一度届ける」,
+        // as for a photo from the Photos app (GroupSendConfirmSheet).
         GroupLibraryDeliveryStep(model: model, localIdentifier: localIdentifier, memo: $memo,
-                                 givesDeliveryHaptic: false, close: close)
+                                 givesDeliveryHaptic: false, closesOnSend: true, close: close)
     }
 }
 
@@ -2248,6 +2273,8 @@ private struct GroupLibraryDeliveryStep: View {
     var changeWindow: (() -> Void)? = nil
     /// False inside a まど, whose send bar gives it: one haptic per delivery.
     var givesDeliveryHaptic = true
+    /// True inside a まど: 「届ける」 closes the sheet and the まど shows the send.
+    var closesOnSend = false
     let close: () -> Void
     /// DEBUG screen check: this photo instead of reading one from Photos.
     var fixturePhoto: GroupWindowScreenModel.PreparedPhoto? = nil
@@ -2301,7 +2328,10 @@ private struct GroupLibraryDeliveryStep: View {
                                 .accessibilityLabel("届ける写真")
                         }
                     }
+                    // 11/25: nothing on this sheet changes while it is sent
+                    // (build 412: the ひとこと stayed editable under 「届けています…」).
                     GroupCaptionField(text: $memo)
+                        .disabled(model.locksCaption(for: prepared))
                     // 11/25: while 「届けています…」, no earlier sentence beside it.
                     if let message = model.message, !model.isSending {
                         // 11/22 (1122n): today's limit is a quiet notice, not an error.
@@ -2318,7 +2348,10 @@ private struct GroupLibraryDeliveryStep: View {
                         // earlier undelivered photo is never sent in its place;
                         // it keeps its own 「もう一度届ける」.
                         let retry = model.failedDelivery.flatMap { $0.photo.jpeg == prepared.jpeg ? $0.photo : nil }
-                        Task { await model.deliver(retry ?? prepared, memo: memo) }
+                        let photo = retry ?? prepared
+                        let sent = model.sentMemo(for: photo) ?? memo
+                        if closesOnSend { close() }
+                        Task { await model.deliver(photo, memo: sent) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -2350,8 +2383,12 @@ private struct GroupLibraryDeliveryStep: View {
         .toolbar {
             ToolbarItem(placement: pushed ? .topBarTrailing : .cancellationAction) {
                 Button(model.sendCompleted ? "閉じる" : "キャンセル", action: close)
+                    .disabled(model.isSending)
             }
         }
+        // 11/25: the result shows on this sheet, so it stays until then.
+        .interactiveDismissDisabled(model.isSending)
+        .navigationBarBackButtonHidden(model.isSending)
         .announcesWhenShown(model.message)
         // Once, when this page turns 「届けました」 (not on a failure).
         .sensoryFeedback(.success, trigger: model.sendCompleted) { old, new in givesDeliveryHaptic && !old && new }
@@ -3224,6 +3261,8 @@ struct GroupWindowCreateScreen: View {
         }
         .navigationTitle("まどを作る")
         .navigationBarTitleDisplayMode(.inline)
+        // 11/25: no 「戻る」 while it is being made (the invite step would be skipped).
+        .navigationBarBackButtonHidden(model.isWorking)
         .announcesWhenShown(model.message)
         .sheet(isPresented: $model.needsPlus, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)

@@ -230,3 +230,31 @@ final class SendAfterLeavingTests: XCTestCase {
         }
     }
 }
+
+/// 11/25 (build 412): the まど send sheet holds still while it sends.
+@MainActor
+final class WindowSendSheetLockTests: XCTestCase {
+    private typealias Model = GroupWindowScreenModel
+
+    func testLockedWhileSending() {
+        let photo = Model.PreparedPhoto(jpeg: Data([1]))
+        XCTAssertTrue(Model.locksCaption(isSending: true, failed: nil, for: photo))
+        XCTAssertFalse(Model.locksCaption(isSending: false, failed: nil, for: photo))
+    }
+
+    func testAKeptSendKeepsItsWords() {
+        // The same operation goes again: the ひとこと it was sealed with stays.
+        let photo = Model.PreparedPhoto(jpeg: Data([1]))
+        let failed = Model.FailedDelivery(photo: photo, memo: "ねている")
+        XCTAssertEqual(Model.sentMemo(failed: failed, for: photo), "ねている")
+        XCTAssertTrue(Model.locksCaption(isSending: false, failed: failed, for: photo))
+    }
+
+    func testARefusedSendCanBeEditedAgain() {
+        // Refused for good: the retry is a new operation, so the words are free.
+        let photo = Model.PreparedPhoto(jpeg: Data([1]))
+        let failed = Model.FailedDelivery(photo: Model.PreparedPhoto(jpeg: photo.jpeg), memo: "ねている")
+        XCTAssertNil(Model.sentMemo(failed: failed, for: photo))
+        XCTAssertFalse(Model.locksCaption(isSending: false, failed: failed, for: photo))
+    }
+}
