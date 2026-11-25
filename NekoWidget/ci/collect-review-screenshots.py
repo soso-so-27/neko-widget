@@ -91,6 +91,59 @@ SETTINGS_PLUS_SCREENS = (
 IAP_REVIEW_SCREENS = ("89_iap_review",)
 # The まど send confirmation while 「届けています…」 (test26WindowSendWhileSending, 11/25).
 WINDOW_SENDING_SCREENS = ("90_window_send_sending",)
+# Moments between an action and its result (test27-30 InBetween..., 11/26):
+# the keyboard up, typing, right after 保存・届ける・購入, and loading.
+IN_BETWEEN_SCREENS = (
+    "95a_memo_keyboard_up",
+    "95b_memo_typing",
+    "95c_memo_long_text",
+    "95d_memo_just_saved",
+    "95e_memo_saved_1s",
+    "95f_name_keyboard_up",
+    "95g_name_typed",
+    "95h_name_long",
+    "95i_name_just_saved",
+    "95j_name_saved_1s",
+    "95k_add_cat_keyboard_up",
+    "95l_add_cat_typed",
+    "95m_add_cat_just_added",
+    "95n_add_cat_added_1s",
+    "95o_vet_keyboard_up",
+    "95p_vet_typed",
+    "95q_vet_just_back",
+    "95r_vet_back_1s",
+    "96a_mado_list_just_opened",
+    "96b_mado_feed_just_opened",
+    "96c_mado_feed_1s",
+    "96d_send_caption_keyboard_up",
+    "96e_send_caption_typed",
+    "96f_send_just_tapped",
+    "96g_send_1s",
+    "96h_send_3s",
+    "96i_report_reason_chosen",
+    "96j_report_just_sent",
+    "96k_report_sent_1s",
+    "97a_notebook_item_keyboard_up",
+    "97b_notebook_item_typed",
+    "97c_notebook_item_just_back",
+    "97d_notebook_item_back_1s",
+    "97e_family_report_reason_chosen",
+    "97f_family_report_just_sent",
+    "97g_family_report_sent_1s",
+    "98a_plus_just_tapped",
+    "98b_plus_1s",
+    "98c_plus_waiting_1s",
+    "98d_autosave_just_started",
+    "98e_autosave_1s",
+    "98f_autosave_3s",
+    "98g_appearance_just_changed",
+    "98h_appearance_1s",
+    "98i_launch_first_frame",
+    "98j_launch_1s",
+    "98k_scan_first_frame",
+    "98l_scan_1s",
+    "98m_scan_3s",
+)
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -109,7 +162,8 @@ FULL_SCREENS = (
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
 ) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS \
-    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + SETTINGS_PLUS_SCREENS + IAP_REVIEW_SCREENS     + WINDOW_SENDING_SCREENS
+    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + SETTINGS_PLUS_SCREENS + IAP_REVIEW_SCREENS     + WINDOW_SENDING_SCREENS \
+    + IN_BETWEEN_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",

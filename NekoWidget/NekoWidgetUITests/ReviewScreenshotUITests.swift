@@ -1585,6 +1585,356 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    // MARK: - 操作の途中（11/26: 入力中・読み込み中・送った直後）
+
+    /// Moments between an action and its result: the keyboard up, while and
+    /// right after typing, and right after 保存 / 届ける (captured with no
+    /// settling, about 0.1–0.3 s after the tap returns, then about 1 s later).
+    /// Synthetic fixtures only; what is saved stays on the Simulator.
+    @MainActor
+    func test27InBetweenWriting() {
+        // 写真のメモ
+        var app = launch(fixture + ["--group-window-screens-fixture"])
+        let memo = app.textViews["photo-memory-note-text"]
+        shot("95a_memo_keyboard_up", app, after: 0.3) {
+            guard tapTab(app, "main-tab-photos", "写真") else { return "photos tab not found" }
+            tapIfPresent(app.buttons["photos-section-all"])
+            guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 20) else {
+                return "photo grid did not appear"
+            }
+            _ = waitForFixturePhotos(app, [1])
+            let first = app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"]
+            guard reveal(first, app) else { return "first fixture photo not hittable" }
+            first.tap()
+            let open = app.buttons["photo-memory-note-open"]
+            guard open.waitForExistence(timeout: 15), open.isHittable else { return "memo button not on the photo screen" }
+            open.tap()
+            guard memo.waitForExistence(timeout: 10) else { return "memo editor did not open" }
+            settle(1)
+            memo.tap()
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("95b_memo_typing", app, after: 0) {
+            guard memo.exists else { return "memo editor not shown" }
+            memo.typeText("きょうは窓辺で")
+            return nil
+        }
+        shot("95c_memo_long_text", app, after: 0.3) {
+            guard memo.exists else { return "memo editor not shown" }
+            memo.typeText("ひなたぼっこ。しっぽをゆっくり振りながら、外のすずめをずっと目で追っていた。"
+                          + "夕方になると台所の前に座って、ごはんの音がするたびに耳だけこちらに向ける。"
+                          + "夜は毛布の上でまるくなって、朝までぐっすり眠っていた。")
+            return nil
+        }
+        shot("95d_memo_just_saved", app, after: 0) {
+            let save = app.buttons["photo-memory-note-save"]
+            guard save.exists, save.isEnabled else { return "保存 not enabled" }
+            save.tap()
+            return nil
+        }
+        shot("95e_memo_saved_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // この子: 名前を変える
+        app = launchStress(80, names: ["むぎ", "ソラ"])
+        let nameField = app.alerts.textFields.firstMatch
+        shot("95f_name_keyboard_up", app, after: 0.3) {
+            if let reason = reachStressHome(app) { return reason }
+            let about = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tools-cat-")).firstMatch
+            guard about.waitForExistence(timeout: 10), reveal(about, app) else { return "この子のこと not found" }
+            about.tap()
+            let rename = app.buttons["cat-profile-rename"].firstMatch
+            guard rename.waitForExistence(timeout: 15) else { return "name button not found" }
+            rename.tap()
+            guard nameField.waitForExistence(timeout: 8) else { return "name dialog did not open" }
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("95g_name_typed", app, after: 0) {
+            guard nameField.exists else { return "name dialog not shown" }
+            nameField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "こむぎ")
+            return nil
+        }
+        shot("95h_name_long", app, after: 0) {
+            guard nameField.exists else { return "name dialog not shown" }
+            nameField.typeText("ちゃんはおうちでいちばんのあまえんぼう")
+            return nil
+        }
+        shot("95i_name_just_saved", app, after: 0) {
+            let save = app.alerts.buttons["保存"].firstMatch
+            guard save.exists else { return "保存 not in the dialog" }
+            save.tap()
+            return nil
+        }
+        shot("95j_name_saved_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // この子: 追加する
+        app = launchStress(81, names: ["むぎ"])
+        let newName = app.textFields["cat-profile-name"]
+        shot("95k_add_cat_keyboard_up", app, after: 0.3) {
+            if let reason = reachStressHome(app) { return reason }
+            if let reason = showStressAddPage(app) { return reason }
+            app.buttons["cat-home-add"].tap()
+            let later = app.buttons["写真はあとで"].firstMatch
+            if !newName.waitForExistence(timeout: 4), later.waitForExistence(timeout: 6) { later.tap() }
+            guard newName.waitForExistence(timeout: 10) else { return "この子を追加 did not open" }
+            settle(0.8)
+            newName.tap()
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("95l_add_cat_typed", app, after: 0) {
+            guard newName.exists else { return "この子を追加 not shown" }
+            newName.typeText("ちゃちゃ")
+            return nil
+        }
+        shot("95m_add_cat_just_added", app, after: 0) {
+            let create = app.buttons["cat-profile-create"].firstMatch
+            guard create.exists, create.isEnabled else { return "追加 not enabled" }
+            create.tap()
+            return nil
+        }
+        shot("95n_add_cat_added_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // ツール: 病院の「家で気付いたこと」
+        app = launch(fixture + ["--app-store-screenshot-cat-care"], tools: true)
+        let field = app.descendants(matching: .any)["vet-observations"].firstMatch
+        let page = app.navigationBars["家で気付いたこと"]
+        shot("95o_vet_keyboard_up", app, after: 0.3) {
+            guard openTool(app, "tools-vet-open") else { return "病院 button not found" }
+            let noticed = app.buttons["vet-step-noticed"]
+            guard noticed.waitForExistence(timeout: 15), reveal(noticed, app) else { return "病院 did not open" }
+            noticed.tap()
+            guard page.waitForExistence(timeout: 10), field.waitForExistence(timeout: 5) else { return "row page did not open" }
+            settle(0.8)
+            field.tap()
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("95p_vet_typed", app, after: 0) {
+            guard field.exists else { return "row page not shown" }
+            field.typeText("ごはんを少し残すことがあります。水はよく飲みます。")
+            return nil
+        }
+        shot("95q_vet_just_back", app, after: 0) {
+            guard page.exists else { return "row page not shown" }
+            page.buttons.element(boundBy: 0).tap()
+            return nil
+        }
+        shot("95r_vet_back_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+    }
+
+    @MainActor
+    func test28InBetweenMado() {
+        // Opening: the list and the feed before photos arrive.
+        var app = launch(fixture + ["--group-window-screens-fixture", "--app-store-screenshot-nowa"])
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        shot("96a_mado_list_just_opened", app, after: 0) {
+            guard tapTab(app, "main-tab-windows", "まど") else { return "windows tab not found" }
+            return nil
+        }
+        shot("96b_mado_feed_just_opened", app, after: 0) {
+            guard room.waitForExistence(timeout: 20) else { return "「実家のまど」 card not found" }
+            room.tap()
+            return nil
+        }
+        shot("96c_mado_feed_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // 届ける: ひとこと, then right after 「届ける」 (to the fixture client only).
+        app = launch(fixture + ["--group-window-screens-fixture", "--app-store-screenshot-nowa",
+                                "--group-window-screens-send-sheet"])
+        let caption = app.descendants(matching: .any)["group-window-send-caption"].firstMatch
+        let send = app.buttons["group-library-delivery-send"]
+        shot("96d_send_caption_keyboard_up", app, after: 0.3) {
+            guard tapTab(app, "main-tab-windows", "まど") else { return "windows tab not found" }
+            let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+            guard room.waitForExistence(timeout: 20) else { return "「実家のまど」 card not found" }
+            room.tap()
+            guard send.waitForExistence(timeout: 20), caption.waitForExistence(timeout: 5) else { return "send sheet did not open" }
+            settle(1.5)
+            caption.tap()
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("96e_send_caption_typed", app, after: 0) {
+            guard caption.exists else { return "send sheet not shown" }
+            caption.typeText("おなかを見せて寝ていた")
+            return nil
+        }
+        shot("96f_send_just_tapped", app, after: 0) {
+            guard send.exists else { return "send sheet not shown" }
+            send.tap()
+            return nil
+        }
+        shot("96g_send_1s", app, after: 0) { settle(1); return nil }
+        shot("96h_send_3s", app, after: 0) { settle(2); return nil }
+        app.terminate()
+
+        // 通報: a reason chosen, then right after 「送る」.
+        app = launch(fixture + ["--group-window-screens-fixture", "--group-window-hearts-fixture",
+                                "--group-window-caption-fixture"])
+        shot("96i_report_reason_chosen", app) {
+            guard openFixtureWindow(app) else { return "「実家のまど」 did not open" }
+            let tile = app.descendants(matching: .any).matching(identifier: "group-photo-tile-photo").firstMatch
+            guard tile.waitForExistence(timeout: 15), tile.isHittable else { return "first tile not hittable" }
+            tile.tap()
+            let menu = app.buttons["この写真の操作"].firstMatch
+            guard menu.waitForExistence(timeout: 10) else { return "「…」 not found" }
+            menu.tap()
+            let report = app.buttons["group-photo-report"].firstMatch
+            guard report.waitForExistence(timeout: 5) else { return "この写真を通報 not in 「…」" }
+            report.tap()
+            guard app.navigationBars["この写真を通報"].waitForExistence(timeout: 10) else { return "report sheet did not open" }
+            let reason = app.buttons["不適切な内容"].firstMatch
+            guard reason.waitForExistence(timeout: 5) else { return "reason row not found" }
+            reason.tap()
+            return nil
+        }
+        shot("96j_report_just_sent", app, after: 0) {
+            let send = app.buttons["group-report-send"].firstMatch
+            guard send.exists, send.isEnabled else { return "送る not enabled" }
+            send.tap()
+            return nil
+        }
+        shot("96k_report_sent_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+    }
+
+    @MainActor
+    func test29InBetweenFamily() {
+        // 家族の手帳: writing one item of 「この子のこと」 in a family.
+        var app = launch(fixture + ["--app-store-screenshot-cat-care", "--family-report-replies-fixture"], tools: true)
+        let field = app.descendants(matching: .any)["cat-care-temperament"].firstMatch
+        let page = app.navigationBars["接し方・苦手なこと"]
+        shot("97a_notebook_item_keyboard_up", app, after: 0.3) {
+            guard tapTab(app, "main-tab-tools", "この子") else { return "この子 tab not found" }
+            guard chooseHomeCat(app, Self.mike) else { return "cat page on この子 not found" }
+            let card = app.descendants(matching: .any)["tools-cat-" + Self.mike].firstMatch
+            guard card.waitForExistence(timeout: 10), reveal(card, app) else { return "「この子のこと」 card not found" }
+            card.tap()
+            let row = app.descendants(matching: .any)["cat-care-temperament-row"].firstMatch
+            guard row.waitForExistence(timeout: 15), reveal(row, app, maximumSwipes: 14) else { return "「接し方」 row not found" }
+            row.tap()
+            guard page.waitForExistence(timeout: 10), field.waitForExistence(timeout: 5) else { return "text page did not open" }
+            settle(0.8)
+            field.tap()
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 6) else { return "keyboard did not come up" }
+            return nil
+        }
+        shot("97b_notebook_item_typed", app, after: 0) {
+            guard field.exists else { return "text page not shown" }
+            field.typeText("、知らない人が来ると押し入れに隠れます")
+            return nil
+        }
+        shot("97c_notebook_item_just_back", app, after: 0) {
+            guard page.exists else { return "text page not shown" }
+            page.buttons.element(boundBy: 0).tap()
+            return nil
+        }
+        shot("97d_notebook_item_back_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // 家族の代表写真の通報: a reason chosen, then right after 「送る」.
+        app = launchStress(76, names: ["-"], ["--cat-home-stress-family", "ミケ", "--cat-home-stress-family-photo"])
+        shot("97e_family_report_reason_chosen", app) {
+            if let reason = reachStressHome(app, waitingFor: "cat-home-choose-photo") { return reason }
+            settle(1.5)
+            if let reason = openFamilyPhotoMenu(app) { return reason }
+            let report = app.buttons["family-photo-report"].firstMatch
+            guard report.waitForExistence(timeout: 8) else { return "この写真を通報 not in 「…」" }
+            report.tap()
+            let reason = app.buttons["family-photo-report-reason-other"].firstMatch
+            guard reason.waitForExistence(timeout: 8) else { return "report sheet did not open" }
+            reason.tap()
+            return nil
+        }
+        shot("97f_family_report_just_sent", app, after: 0) {
+            let send = app.buttons["family-photo-report-send"].firstMatch
+            guard send.exists, send.isEnabled else { return "送る not enabled" }
+            send.tap()
+            return nil
+        }
+        shot("97g_family_report_sent_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+    }
+
+    @MainActor
+    func test30InBetweenWaiting() {
+        // Plus: right after the purchase button (the no-charge fixture store).
+        var app = openOfferFixture([], false)
+        let purchase = app.buttons["membership-offer-purchase"]
+        shot("98a_plus_just_tapped", app, after: 0) {
+            guard purchase.waitForExistence(timeout: 15) else { return "Plus sheet did not open" }
+            settle(1.5)
+            guard reveal(purchase, app), purchase.isEnabled else { return "purchase button not usable" }
+            purchase.tap()
+            return nil
+        }
+        shot("98b_plus_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+        app = openOfferFixture(["--membership-purchase-waiting"], false)
+        let waiting = app.buttons["membership-offer-purchase"]
+        shot("98c_plus_waiting_1s", app, after: 0) {
+            guard waiting.waitForExistence(timeout: 15) else { return "Plus sheet did not open" }
+            settle(1.5)
+            guard reveal(waiting, app), waiting.isEnabled else { return "purchase button not usable" }
+            waiting.tap()
+            settle(1)
+            return nil
+        }
+        app.terminate()
+
+        // 自動保存: right after 「保存を始める」 until 保存済み.
+        app = launch(["--app-records-ui-fixture"])
+        shot("98d_autosave_just_started", app, after: 0) {
+            let open = app.buttons["保存・復元"]
+            guard open.waitForExistence(timeout: 20) else { return "app-records fixture did not start" }
+            open.tap()
+            let start = app.buttons["app-record-enable"]
+            guard start.waitForExistence(timeout: 15), reveal(start, app, maximumSwipes: 8) else { return "「保存を始める」 not found" }
+            settle(1)
+            start.tap()
+            return nil
+        }
+        shot("98e_autosave_1s", app, after: 0) { settle(1); return nil }
+        shot("98f_autosave_3s", app, after: 0) { settle(2); return nil }
+        app.terminate()
+
+        // 外観: right after choosing the other appearance.
+        app = launch(fixture + ["--group-window-screens-fixture"], tools: true)
+        shot("98g_appearance_just_changed", app, after: 0) {
+            if let reason = openSettings(app) { return reason }
+            let appearance = app.buttons["settings-appearance"].firstMatch
+            guard reveal(appearance, app, maximumSwipes: 16) else { return "外観 row not found" }
+            appearance.tap()
+            let other = app.buttons[reviewSet == "dark" ? "ライト" : "ダーク"].firstMatch
+            guard other.waitForExistence(timeout: 6) else { return "appearance choices did not open" }
+            other.tap()
+            return nil
+        }
+        shot("98h_appearance_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // 起動直後: the first frames, before the photos are read.
+        app = launch(fixture + ["--group-window-screens-fixture"], declinesPhotos: false)
+        shot("98i_launch_first_frame", app, after: 0) { nil }
+        shot("98j_launch_1s", app, after: 0) { settle(1); return nil }
+        app.terminate()
+
+        // 初回: the scan page while the photos are being looked through.
+        app = launch(["--app-store-screenshot-fixture"], environment: ["NEKO_MAINLINE_ACCEPTANCE_CASE": "three"],
+                     declinesPhotos: false)
+        shot("98k_scan_first_frame", app, after: 0) { nil }
+        shot("98l_scan_1s", app, after: 0) { settle(1); return nil }
+        shot("98m_scan_3s", app, after: 0) { settle(2); return nil }
+        app.terminate()
+    }
+
     /// The Plus screen is up (its heading), settled for the capture.
     @MainActor
     private func offerScreenShown(_ app: XCUIApplication) -> String? {
@@ -1699,7 +2049,7 @@ final class ReviewScreenshotUITests: XCTestCase {
     /// not reach the foreground (a known Simulator flake on hosted runners).
     @MainActor
     private func launch(_ arguments: [String], environment: [String: String] = [:],
-                        tools: Bool = false) -> XCUIApplication {
+                        tools: Bool = false, declinesPhotos: Bool = true) -> XCUIApplication {
         let app = XCUIApplication()
         let appearance = reviewSet == "dark" ? "dark" : "light"
         app.launchArguments = ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
@@ -1716,13 +2066,15 @@ final class ReviewScreenshotUITests: XCTestCase {
             note("launch attempt \(attempt + 1) did not reach the foreground")
             app.terminate()
         }
-        declinePhotosPrompt()
+        if declinesPhotos { declinePhotosPrompt() }
         return app
     }
 
     /// One screen: `reach` brings it up (nil) or says why it could not.
+    /// `after`: the pause before the capture (short for in-between moments).
     @MainActor
-    private func shot(_ name: String, _ app: XCUIApplication, _ reach: () -> String?) {
+    private func shot(_ name: String, _ app: XCUIApplication, after pause: TimeInterval = 0.6,
+                      _ reach: () -> String?) {
         if let reason = reach() {
             guard wants(name) else { return }
             let attachment = XCTAttachment(string: reason + "\n\n" + app.debugDescription)
@@ -1736,7 +2088,7 @@ final class ReviewScreenshotUITests: XCTestCase {
             return
         }
         guard wants(name) else { return }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        if pause > 0 { RunLoop.current.run(until: Date().addingTimeInterval(pause)) }
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "review-shot__\(name)__end"
         attachment.lifetime = .keepAlways

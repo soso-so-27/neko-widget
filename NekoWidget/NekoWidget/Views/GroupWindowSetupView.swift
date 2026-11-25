@@ -2023,6 +2023,12 @@ enum GroupWindowUIFixture {
         CommandLine.arguments.contains("--group-window-screens-sending-sheet")
     }
 
+    /// 11/26: the same send confirmation before 「届ける」 (ひとこと empty and
+    /// editable), for the in-between screen check. Sent only to the fixture.
+    static var showsSendSheet: Bool {
+        CommandLine.arguments.contains("--group-window-screens-send-sheet")
+    }
+
     static var showsFailedDelivery: Bool {
         CommandLine.arguments.contains("--group-window-screens-failed-send")
     }

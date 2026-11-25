@@ -794,6 +794,13 @@ final class GroupWindowScreenModel: ObservableObject {
         return PreparedPhoto(jpeg: jpeg)
     }
 
+    /// Screen check only (11/26): the same photo before 「届ける」.
+    func showFixtureSendSheet() -> PreparedPhoto? {
+        guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
+            .jpegData(compressionQuality: 0.8) else { return nil }
+        return PreparedPhoto(jpeg: jpeg)
+    }
+
     /// Screen check only: shows the 「もう一度届ける」 row with a fixture photo.
     func showFixtureFailedDelivery() {
         guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
@@ -2237,6 +2244,8 @@ private struct GroupWindowCatPhotoDelivery: View {
 /// `--group-window-screens-sending-sheet` (DEBUG): the send confirmation as
 /// opened from outside the まど, frozen at 「届けています…」 with a typed
 /// ひとこと, for the screen check (11/25). Nothing is sent.
+/// `--group-window-screens-send-sheet` (DEBUG, 11/26): the same sheet before
+/// 「届ける」, ひとこと empty; 「届ける」 goes to the fixture client only.
 private struct GroupWindowSendingSheetFixture: ViewModifier {
     @ObservedObject var model: GroupWindowScreenModel
     @State private var photo: GroupWindowScreenModel.PreparedPhoto?
@@ -2246,9 +2255,15 @@ private struct GroupWindowSendingSheetFixture: ViewModifier {
 #if DEBUG
         content
             .task {
-                guard GroupWindowUIFixture.showsSendingSheet, photo == nil else { return }
+                guard GroupWindowUIFixture.showsSendingSheet || GroupWindowUIFixture.showsSendSheet,
+                      photo == nil else { return }
                 try? await Task.sleep(for: .milliseconds(800))
-                photo = model.showFixtureSending()
+                if GroupWindowUIFixture.showsSendingSheet {
+                    photo = model.showFixtureSending()
+                } else {
+                    memo = ""
+                    photo = model.showFixtureSendSheet()
+                }
             }
             .sheet(item: $photo) { prepared in
                 NavigationStack {
