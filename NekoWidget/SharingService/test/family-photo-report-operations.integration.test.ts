@@ -4,6 +4,8 @@ import {advanceFamilyPhotoReportDeadlines,familyPhotoStopped,drainFamilyPhotoRep
 import * as reportOperations from '../src/family-photo-report-operations';
 import * as representative from '../src/family-representative-photo';
 import * as billingRetention from '../src/billing-retention-executor';
+import * as billingAuthority from '../src/billing-authority';
+import * as notificationHistory from '../src/billing-notification-history-recovery';
 import worker from '../src/index';
 import {FAMILY_PHOTO_MAINTENANCE_CRON} from '../src/scheduled';
 import type {Env} from '../src/env';
@@ -42,7 +44,9 @@ describe('family photo report deadlines',()=>{
   const billing=vi.spyOn(billingRetention,'runBillingTransactionDeletion');
   const settings:Env={...testEnv,ENVIRONMENT:'production',INTAKE_ENABLED:'YES',
    REPORT_INGESTION_RUNTIME_ENABLED:'NO',GROUP_MODERATION_RUNTIME_ENABLED:'YES',
-   BILLING_TRANSACTION_RETENTION_REQUIRED:'YES'};
+   BILLING_TRANSACTION_RETENTION_REQUIRED:'YES',
+   BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED:'NO',
+   BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED:'NO'};
   async function scheduled(env:Env){
    const pending:Promise<unknown>[]=[];
    const ctx={waitUntil(job:Promise<unknown>){pending.push(job.catch(error=>error));}} as ExecutionContext;
@@ -66,6 +70,29 @@ describe('family photo report deadlines',()=>{
     .toEqual({revision:1,outcome:'photo'});
    expect(await familyPhotoStopped(db,expired.family,crypto.randomUUID())).toBe(false);
    expect(await familyPhotoStopped(db,decided.family,decided.asset)).toBe(false);
+  } finally {vi.restoreAllMocks();}
+ });
+ it('runs billing reconciliation from the production-only five-minute trigger, never in staging',async()=>{
+  // 11/25: production has no legacy */5 trigger; renewals stayed queued.
+  const reconcile=vi.spyOn(billingAuthority,'runBillingSubscriptionReconciliation').mockResolvedValue(undefined as never);
+  const history=vi.spyOn(notificationHistory,'runAppleNotificationHistoryRecovery').mockResolvedValue(undefined as never);
+  const settings:Env={...testEnv,ENVIRONMENT:'production',INTAKE_ENABLED:'YES',
+   REPORT_INGESTION_RUNTIME_ENABLED:'NO',BILLING_TRANSACTION_RETENTION_REQUIRED:'NO',
+   BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED:'YES',
+   BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED:'YES'};
+  async function scheduled(env:Env){
+   const pending:Promise<unknown>[]=[];
+   const ctx={waitUntil(job:Promise<unknown>){pending.push(job.catch(error=>error));}} as ExecutionContext;
+   await worker.scheduled({cron:FAMILY_PHOTO_MAINTENANCE_CRON} as ScheduledController,env,ctx);
+   return Promise.all(pending);
+  }
+  try {
+   await scheduled({...settings,ENVIRONMENT:'staging'});
+   expect(reconcile).not.toHaveBeenCalled();
+   expect(history).not.toHaveBeenCalled();
+   await scheduled(settings);
+   expect(reconcile).toHaveBeenCalledTimes(1);
+   expect(history).toHaveBeenCalledTimes(1);
   } finally {vi.restoreAllMocks();}
  });
  it('sends fixed reminder text only, leaves failures retryable and sends nothing when email is OFF',async()=>{
