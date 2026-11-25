@@ -57,7 +57,7 @@ FAMILY_REPORT_SCREENS = ("92p_family_report_replies",)
 # fixture; light and dark.
 MADO_SCREENS = (
     "50_mado_feed_hearts_top", "50b_mado_feed_hearts_scrolled", "50c_mado_feed_hearts_end",
-    "51_mado_photo_hearts_one", "51b_mado_photo_hearts_mine", "51c_mado_photo_hearts_own_two",
+    "51_mado_photo_hearts_one", "51e_mado_photo_menu_other", "51f_mado_photo_report", "51b_mado_photo_hearts_mine", "51c_mado_photo_hearts_own_two",
     "51d_mado_photo_hearts_own_one", "52_mado_members_pending", "52b_mado_member_menu",
     "52c_mado_members_bottom", "53_mado_members_admitted",
 )
