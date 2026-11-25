@@ -1516,6 +1516,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         let (checking, checkingReason) = open(["--membership-settings-checking"], "settings-membership-restore")
         shot("88d_settings_plus_checking", checking) { checkingReason }
         checking.terminate()
+    }
+
     /// 11/25: the App Store's in-app purchase review screenshot: the Plus
     /// sheet from 設定 as a release build shows it (no seasonal movie row),
     /// with the sample ¥980 and 14-day trial (no charge, no account).
@@ -1530,6 +1532,29 @@ final class ReviewScreenshotUITests: XCTestCase {
                 return "Plus sheet did not open"
             }
             settle(2)
+            return nil
+        }
+        app.terminate()
+    }
+
+    /// 11/25 (build 412): the まど send confirmation while 「届けています…」.
+    /// The ひとこと and every way out hold still until the send ends.
+    @MainActor
+    func test26WindowSendWhileSending() {
+        let app = launch(fixture + ["--group-window-screens-fixture", "--app-store-screenshot-nowa",
+                                    "--group-window-screens-sending-sheet"])
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        shot("90_window_send_sending", app) {
+            guard tapTab(app, "main-tab-windows", "まど") else { return "windows tab not found" }
+            guard room.waitForExistence(timeout: 20) else { return "「実家のまど」 card not found" }
+            room.tap()
+            let send = app.buttons["group-library-delivery-send"]
+            guard send.waitForExistence(timeout: 20) else { return "sending sheet did not open" }
+            settle(1.5)
+            let caption = app.descendants(matching: .any)["group-window-send-caption"].firstMatch
+            guard caption.exists, !caption.isEnabled else { return "ひとこと still editable while sending" }
+            let cancel = app.navigationBars.buttons["キャンセル"].firstMatch
+            guard cancel.exists, !cancel.isEnabled else { return "キャンセル still enabled while sending" }
             return nil
         }
         app.terminate()

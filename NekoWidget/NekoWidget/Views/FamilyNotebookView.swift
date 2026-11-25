@@ -1890,11 +1890,16 @@ struct FamilyFarewellShareSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    if preview != nil {
-                        Button("戻る") { preview = nil; consentOperation = nil; errorMessage = nil }
-                    } else {
-                        Button("閉じる") { dismiss() }
+                    // 11/25: not while sharing is sent. 「戻る」 dropped the
+                    // operation a retry needs, so it could be shared twice.
+                    Group {
+                        if preview != nil {
+                            Button("戻る") { preview = nil; consentOperation = nil; errorMessage = nil }
+                        } else {
+                            Button("閉じる") { dismiss() }
+                        }
                     }
+                    .disabled(working)
                 }
             }
             .confirmationDialog("この日付の共有をやめますか？", isPresented: $confirmsRevoke, titleVisibility: .visible) {
@@ -2312,7 +2317,9 @@ struct FamilyNotebookInviteView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("招待する")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            // 11/25: not while the link is being made (the old link already stops).
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() }.disabled(creating) } }
+            .interactiveDismissDisabled(creating)
             // A line beside the link, as for a まど: a bare URL said nothing
             // about what it was (11/6). The same system sheet as a まど's.
             .sheet(isPresented: $sharesInvitation) {
@@ -2498,6 +2505,8 @@ struct FamilyNotebookJoinView: View {
             .padding(24)
             .navigationTitle("招待")
             .navigationBarTitleDisplayMode(.inline)
+            // 11/25: no swipe-down while 「参加する」 is sent (the notebook would not open).
+            .interactiveDismissDisabled(sharing.isWorking)
             .alert("招待", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }

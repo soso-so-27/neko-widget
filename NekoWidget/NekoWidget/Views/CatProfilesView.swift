@@ -374,6 +374,9 @@ struct CatOrderView: View {
             }
         }
         .environment(\.editMode, .constant(.active))
+        // 11/25: rows stay put while the order is saved (a move then was lost).
+        .disabled(saving)
+        .interactiveDismissDisabled(saving)
         .navigationTitle("並べ替え")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

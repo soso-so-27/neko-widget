@@ -132,7 +132,7 @@ class Haptics(unittest.TestCase):
         self.assertEqual(WINDOW.count(".sensoryFeedback(.success, trigger: model.sendCompleted)"), 2)
         self.assertIn("{ old, new in givesDeliveryHaptic && !old && new }", WINDOW)
         # Inside a まど the send bar under the sheet gives it, not the sheet as well.
-        self.assertIn("givesDeliveryHaptic: false, close: close)", WINDOW)
+        self.assertIn("givesDeliveryHaptic: false, closesOnSend: true, close: close)", WINDOW)
 
     def test_tile_heart_matches_the_page(self):
         tile = block(WINDOW, "private struct GroupPhotoTile: View {")

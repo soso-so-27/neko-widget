@@ -5625,7 +5625,10 @@ class WindowStateTests(unittest.TestCase):
         # 11/20: only this photo's own failed copy is reused; an earlier
         # undelivered photo is never sent in place of the one shown.
         self.assertIn("model.failedDelivery.flatMap { $0.photo.jpeg == prepared.jpeg ? $0.photo : nil }", window)
-        self.assertIn("model.deliver(retry ?? prepared, memo: memo)", window)
+        self.assertIn("let photo = retry ?? prepared", window)
+        # 11/25: a kept send goes again with the ひとこと it was sealed with.
+        self.assertIn("let sent = model.sentMemo(for: photo) ?? memo", window)
+        self.assertIn("Task { await model.deliver(photo, memo: sent) }", window)
         self.assertNotIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo)", window)
 
     def test_recent_writes_never_show_internal_field_names(self) -> None:
@@ -7989,7 +7992,9 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         field = section(self.screen, "private struct GroupCaptionField: View {", "private struct GroupPhotoDetail: View {")
         self.assertNotIn("PhotoMemoryNoteStore", field)
         self.assertNotIn("text = ", field)
-        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo)"), 2)
+        # 11/25: the library sheet's field also holds still while it sends.
+        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo)"), 1)
+        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared))"), 1)
         self.assertNotIn("GroupCaptionField(text: $memo, photoIdentifier:", self.screen)
         self.assertEqual(self.screen.count('@State private var memo = ""'), 3)
 

@@ -89,6 +89,8 @@ SETTINGS_PLUS_SCREENS = (
 )
 # The App Store's in-app purchase review screenshot (test25PlusPurchaseReview, 11/25).
 IAP_REVIEW_SCREENS = ("89_iap_review",)
+# The まど send confirmation while 「届けています…」 (test26WindowSendWhileSending, 11/25).
+WINDOW_SENDING_SCREENS = ("90_window_send_sending",)
 # Every screen ReviewScreenshotUITests captures, in review order.
 FULL_SCREENS = (
     "01_photos_top", "01_photos_scrolled", "02_photo_detail", "03_memo_editor",
@@ -107,7 +109,7 @@ FULL_SCREENS = (
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
 ) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS \
-    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + SETTINGS_PLUS_SCREENS + IAP_REVIEW_SCREENS
+    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + SETTINGS_PLUS_SCREENS + IAP_REVIEW_SCREENS     + WINDOW_SENDING_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",
