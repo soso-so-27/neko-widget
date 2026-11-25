@@ -1494,6 +1494,25 @@ final class ReviewScreenshotUITests: XCTestCase {
         transaction.terminate()
     }
 
+    /// 11/25: the App Store's in-app purchase review screenshot: the Plus
+    /// sheet from 設定 as a release build shows it (no seasonal movie row),
+    /// with the sample ¥980 and 14-day trial (no charge, no account).
+    @MainActor
+    func test25PlusPurchaseReview() {
+        let app = launch(["--membership-offer-ui-fixture", "--seasonal-movie-hidden"])
+        shot("89_iap_review", app) {
+            let open = app.buttons["membership-preview-open"]
+            guard open.waitForExistence(timeout: 15) else { return "Plus preview did not start" }
+            open.tap()
+            guard app.buttons["membership-offer-purchase"].waitForExistence(timeout: 15) else {
+                return "Plus sheet did not open"
+            }
+            settle(2)
+            return nil
+        }
+        app.terminate()
+    }
+
     /// The Plus screen is up (its heading), settled for the capture.
     @MainActor
     private func offerScreenShown(_ app: XCUIApplication) -> String? {
