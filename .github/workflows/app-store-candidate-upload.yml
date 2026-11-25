@@ -1,0 +1,137 @@
+name: Upload retained App Store candidate
+run-name: Upload App Store candidate ${{ inputs.build_number }} from ${{ inputs.source_run }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful main archive-only TestFlight workflow run ID
+        required: true
+        type: string
+      source_sha:
+        description: Full main SHA used in that archive run
+        required: true
+        type: string
+      build_number:
+        description: Signed 1.0 build number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: testflight-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    environment: testflight
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      SOURCE_RUN: ${{ inputs.source_run }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      RELEASE_APP_STORE_SUBMISSION: 'true'
+      PRODUCTION_CANDIDATE_OWNER_ONLY: 'false'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Restore the candidate from its successful archive run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{0,17}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,5}$ ]]
+          [[ "${#SIGNED_ARTIFACT_ENCRYPTION_PASSWORD}" -ge 20 ]]
+          work="$RUNNER_TEMP/app-store-candidate-upload"
+          mkdir "$work"
+          source_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")"
+          title="TestFlight build $BUILD_NUMBER @ $SOURCE_SHA"
+          attempt="$(jq -er --arg sha "$SOURCE_SHA" --arg title "$title" '
+            select(.head_branch == "main" and .head_sha == $sha and .display_title == $title
+              and .path == ".github/workflows/testflight.yml" and .event == "workflow_dispatch"
+              and .status == "completed" and .conclusion == "success")
+            | .run_attempt' <<< "$source_run")"
+          [[ "$attempt" =~ ^[1-9][0-9]*$ ]]
+          name="production-candidate-$SOURCE_RUN-$attempt"
+          metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts?per_page=100" |
+            jq -ec --arg name "$name" '.artifacts | map(select(.name == $name and .expired == false))')"
+          [[ "$(jq length <<< "$metadata")" == 1 ]]
+          id="$(jq -er '.[0].id' <<< "$metadata")"
+          digest="$(jq -er '.[0].digest' <<< "$metadata")"
+          [[ "$id" =~ ^[1-9][0-9]*$ && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$work/artifact.zip"
+          printf '%s  %s\n' "${digest#sha256:}" "$work/artifact.zip" | shasum -a 256 -c -
+          [[ "$(unzip -Z1 "$work/artifact.zip")" == 'production-candidate.tar.gz.enc' ]]
+          unzip -p "$work/artifact.zip" production-candidate.tar.gz.enc > "$work/payload.enc"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD -in "$work/payload.enc" -out "$work/payload.tar.gz"
+          python3 NekoWidget/ci/restore-app-store-candidate.py "$work/payload.tar.gz" "$work/release" "$BUILD_NUMBER"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: candidate-source
+          persist-credentials: false
+      - name: Verify the signed production IPA against the pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C candidate-source rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          release="$RUNNER_TEMP/app-store-candidate-upload/release"
+          python3 candidate-source/NekoWidget/ci/production_candidate.py ipa \
+            --contract "$release/production-candidate.json" --path "$release/NekoWidget.ipa"
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Validate, upload to Apple, and read back the intended audience
+        shell: bash
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+          OWNER_INTERNAL_TESTER_ID: ${{ secrets.OWNER_INTERNAL_TESTER_ID }}
+          OWNER_INTERNAL_EMAIL: ${{ secrets.OWNER_INTERNAL_EMAIL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          work="$RUNNER_TEMP/app-store-candidate-upload"
+          ipa="$work/release/NekoWidget.ipa"
+          [[ "$APP_STORE_CONNECT_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]
+          key_directory="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$key_directory"
+          key="$key_directory/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          [[ ! -e "$key" ]]
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 -D > "$key"
+          unset APP_STORE_CONNECT_PRIVATE_KEY_BASE64
+
+          check="NekoWidget/ci/check-owner-testflight-recipient.mjs"
+          node "$check" --app-store-candidate-preflight "$BUILD_NUMBER"
+          for stage in validate upload; do
+            xcrun altool "--$stage-app" -f "$ipa" -t ios \
+              --apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" \
+              2>&1 | tee "$work/$stage.log"
+            python3 NekoWidget/ci/altool-result.py "$stage" "$work/$stage.log"
+          done
+          echo "Apple accepted build $BUILD_NUMBER. Do not upload it again."
+          for attempt in {1..15}; do
+            result=0
+            node "$check" --app-store-candidate-confirm "$BUILD_NUMBER" || result=$?
+            [[ "$result" != 0 ]] || exit 0
+            [[ "$result" == 3 ]] || exit "$result"
+            sleep 30
+          done
+          echo "Apple processing or owner group still pending. Read back the existing build."
+          exit 1
