@@ -196,6 +196,13 @@ struct ProductionAppRootView: View {
             .onReceive(NotificationCenter.default.publisher(for: .appRecordDatasetChanged)) { _ in
                 EvacuationStore.followRestoredPlan()
             }
+            // 11/25: 自動保存's Plus answer is read on launch and foreground (one
+            // observing read, at most every 10 minutes), so 設定 has it when it
+            // opens. Display only; it grants nothing.
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await AppRecordPersistence.shared.refreshLinkedPlus()
+            }
             // Usage counts (11/7): earlier days are sent on becoming active,
             // and the file is written only on going to the background.
             .task(id: scenePhase) {
