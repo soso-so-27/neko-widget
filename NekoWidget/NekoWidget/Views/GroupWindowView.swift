@@ -241,6 +241,9 @@ final class GroupWindowScreenModel: ObservableObject {
     private var confirmedHearts: [String: [GroupHeart]] = [:]
     /// One heart request at a time per photo.
     private var sendingHearts = Set<String>()
+    /// 11/25: photos already sent again by themselves after leaving the app
+    /// cut their send: only once, then 「もう一度届ける」 is the person's.
+    private var resentAfterLeaving = Set<UUID>()
     private var me: String? { window?.myParticipantID ?? rememberedMe }
 
     func myHeartIsActive(_ photoID: String) -> Bool {
@@ -643,6 +646,10 @@ final class GroupWindowScreenModel: ObservableObject {
             // meanwhile leaves the earlier undelivered one offered (11/7).
             if failedDelivery?.photo.operationID == prepared.operationID { failedDelivery = nil }
             defer { isSending = false }
+            // 11/25: switching apps right after 「届ける」 must not read as
+            // no internet. The app keeps running for a short while
+            // (SharingPersonAction), and a send cut anyway is sent again here.
+            let leaveMark = AppLeaveCounter.shared.mark()
             // 11/20: a block not sent yet reaches the relay before a new photo does.
             await GroupSafety.shared.sendPendingBlocks(windowID: windowID)
             do {
@@ -651,14 +658,42 @@ final class GroupWindowScreenModel: ObservableObject {
                                                       windowID: windowID, operationID: operationID)
                 await receive(sent, me: me, outgoingOperationID: operationID)
                 sendCompleted = true
+                isSending = false
                 UsageCounter.shared.count(.madoPhotoSent)  // Usage (11/7)
                 message = nil
                 await sync()
             } catch let pending as GroupDeliveryConfirmationPending {
+                // 11/25: never 「届けています…」 and a sentence at once.
+                isSending = false
                 failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)
                 message = "届いたか確かめています。"
                 await sync()
             } catch {
+                // The same operation resends safely, unless the window's key changed.
+                let keepsOperation: Bool
+                switch error as? GroupClientError {
+                case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict),
+                     // 11/20: the relay refused the reservation for good (the
+                     // members changed, or it ran out), so nothing was delivered.
+                     .some(.staleRevision), .some(.reservationExpired): keepsOperation = false
+                default: keepsOperation = true
+                }
+                // 11/25: cut by leaving the app, not by the network: once the
+                // app is back, the same operation goes again (the relay keeps
+                // one photo per operation, so it is never delivered twice).
+                // The button keeps 「届けています…」 meanwhile, with no error.
+                if keepsOperation, SendAfterLeaving.resendsByItself(
+                    error, leftDuringSend: AppLeaveCounter.shared.left(since: leaveMark),
+                    alreadyResent: resentAfterLeaving.contains(prepared.operationID)) {
+                    resentAfterLeaving.insert(prepared.operationID)
+                    await SendAfterLeaving.untilActive()
+                    isSending = false
+                    await deliver(prepared, memo: memo)
+                    resentAfterLeaving.remove(prepared.operationID)
+                    return
+                }
+                // 11/25: the spinner ends before the sentence shows.
+                isSending = false
                 message = Self.deliveryMessage(for: error)
                 if error as? GroupClientError == .dailyLimit {
                     // 11/22 (1122n): today's limit is not a failure. Nothing was
@@ -666,15 +701,6 @@ final class GroupWindowScreenModel: ObservableObject {
                     // so the photo is not kept to resend: it is chosen again then.
                     await client.discardPendingDelivery(operationID: prepared.operationID)
                 } else if !(error is GroupSubscriptionError) {
-                    // The same operation resends safely, unless the window's key changed.
-                    let keepsOperation: Bool
-                    switch error as? GroupClientError {
-                    case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict),
-                         // 11/20: the relay refused the reservation for good (the
-                         // members changed, or it ran out), so nothing was delivered.
-                         .some(.staleRevision), .some(.reservationExpired): keepsOperation = false
-                    default: keepsOperation = true
-                    }
                     if !keepsOperation {
                         // The old sealed copy can no longer be sent; the retry seals anew.
                         await client.discardPendingDelivery(operationID: prepared.operationID)
@@ -912,6 +938,9 @@ final class GroupWindowScreenModel: ObservableObject {
             // and a quick off-and-on sends nothing at all.
             guard sendingHearts.insert(photoID).inserted else { return }
             defer { sendingHearts.remove(photoID) }
+            // 11/25: a heart cut by switching apps goes again once the app is back.
+            let leaveMark = AppLeaveCounter.shared.mark()
+            var heartResent = false
             while let wanted = pendingHearts[photoID] {
                 let relayHas = (confirmedHearts[photoID] ?? []).contains { $0.participantID == me && $0.active }
                 if wanted == relayHas { pendingHearts[photoID] = nil; break }
@@ -926,6 +955,15 @@ final class GroupWindowScreenModel: ObservableObject {
                     if let next = pendingHearts[photoID], next != wanted { applyMyHeart(next, to: photoID) }
                     else { pendingHearts[photoID] = nil }
                 } catch {
+                    // The heart is a state (on or off), so sending it again
+                    // never adds a second one.
+                    if SendAfterLeaving.resendsByItself(
+                        error, leftDuringSend: AppLeaveCounter.shared.left(since: leaveMark),
+                        alreadyResent: heartResent) {
+                        heartResent = true
+                        await SendAfterLeaving.untilActive()
+                        continue
+                    }
                     pendingHearts[photoID] = nil
                     hearts[photoID] = confirmedHearts[photoID]
                     if error as? GroupClientError == .deliveryExpired {
@@ -2224,7 +2262,8 @@ private struct GroupLibraryDeliveryStep: View {
                         }
                     }
                     GroupCaptionField(text: $memo)
-                    if let message = model.message {
+                    // 11/25: while 「届けています…」, no earlier sentence beside it.
+                    if let message = model.message, !model.isSending {
                         // 11/22 (1122n): today's limit is a quiet notice, not an error.
                         Section {
                             Label(message, systemImage: model.messageIsNotice ? "clock" : "exclamationmark.triangle")

@@ -172,3 +172,61 @@ final class WhenStuckTests: XCTestCase {
         XCTAssertEqual(Cache.missingEntry(windowID: "w2", listedWindowIDs: nil, endedWindowIDs: ["w1"]), .notYetKnown)
     }
 }
+
+/// 11/25: 「届ける」 and then another app. A send cut by iOS putting the app
+/// to sleep is sent again once (the same operation), and never reads as
+/// 「インターネットにつながらず」; a refusal of the relay is never resent.
+final class SendAfterLeavingTests: XCTestCase {
+    func testOnlyACutAfterLeavingIsSentAgain() {
+        let cuts: [Error] = [GroupClientError.offline, GroupClientError.unavailable,
+                             URLError(.networkConnectionLost), URLError(.cancelled), CancellationError()]
+        for error in cuts {
+            XCTAssertTrue(SendAfterLeaving.isCutByLeaving(error, leftDuringSend: true), "\(error)")
+            // Without leaving the app, the same error is a real outage.
+            XCTAssertFalse(SendAfterLeaving.isCutByLeaving(error, leftDuringSend: false), "\(error)")
+        }
+        let refusals: [Error] = [GroupClientError.dailyLimit, GroupClientError.staleEpoch,
+                                 GroupClientError.idempotencyConflict, GroupClientError.reservationExpired,
+                                 GroupClientError.notMember, GroupClientError.rotationPending,
+                                 GroupSubscriptionError.windowPaused]
+        for error in refusals {
+            XCTAssertFalse(SendAfterLeaving.isCutByLeaving(error, leftDuringSend: true), "\(error)")
+        }
+    }
+
+    func testSentAgainOnlyOnce() {
+        let cut = GroupClientError.offline
+        XCTAssertTrue(SendAfterLeaving.resendsByItself(cut, leftDuringSend: true, alreadyResent: false))
+        // A second cut is the person's 「もう一度届ける」, never a loop.
+        XCTAssertFalse(SendAfterLeaving.resendsByItself(cut, leftDuringSend: true, alreadyResent: true))
+        XCTAssertFalse(SendAfterLeaving.resendsByItself(cut, leftDuringSend: false, alreadyResent: false))
+    }
+
+    func testLeavingIsCountedFromTheMark() {
+        let counter = AppLeaveCounter()
+        let before = counter.mark()
+        XCTAssertFalse(counter.left(since: before))
+        counter.noteLeft()
+        XCTAssertTrue(counter.left(since: before))
+        XCTAssertFalse(counter.left(since: counter.mark()))
+    }
+
+    @MainActor
+    func testOfflineWordsOnlyForTheNetwork() {
+        let offline = GroupWindowScreenModel.deliveryMessage(for: GroupClientError.offline)
+        XCTAssertTrue(offline.hasPrefix("インターネットにつながらず"))
+        let busy = GroupWindowScreenModel.deliveryMessage(for: GroupClientError.unavailable)
+        XCTAssertFalse(busy.contains("インターネット"))
+    }
+
+    func testAPersonActionStillReturnsAndThrows() async {
+        let value = await SharingPersonAction.run { 7 }
+        XCTAssertEqual(value, 7)
+        do {
+            try await SharingPersonAction.run { throw GroupClientError.offline }
+            XCTFail("expected the error")
+        } catch {
+            XCTAssertEqual(error as? GroupClientError, .offline)
+        }
+    }
+}
