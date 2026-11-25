@@ -1088,6 +1088,31 @@ final class ReviewScreenshotUITests: XCTestCase {
             settle(1)
             return nil
         }
+        // 11/26 (App Review 1.2): another's photo offers 通報 and ブロック in 「…」,
+        // and 通報 opens its sheet. Nothing is sent.
+        shot("51e_mado_photo_menu_other", app) {
+            let menu = app.buttons["この写真の操作"].firstMatch
+            guard menu.waitForExistence(timeout: 8) else { return "「…」 not found" }
+            menu.tap()
+            guard app.buttons["group-photo-report"].waitForExistence(timeout: 5) else { return "この写真を通報 not in 「…」" }
+            guard app.buttons["group-photo-block"].exists else { return "ブロック not in 「…」" }
+            settle(1)
+            return nil
+        }
+        shot("51f_mado_photo_report", app) {
+            let report = app.buttons["group-photo-report"].firstMatch
+            guard report.exists else { return "この写真を通報 not in 「…」" }
+            report.tap()
+            guard app.navigationBars["この写真を通報"].waitForExistence(timeout: 10)
+                    || app.alerts.firstMatch.waitForExistence(timeout: 3) else { return "report sheet did not open" }
+            settle(1.5)
+            return nil
+        }
+        for label in ["やめる", "閉じる"] where app.navigationBars["この写真を通報"].exists {
+            let button = app.navigationBars["この写真を通報"].buttons[label].firstMatch
+            if button.exists { button.tap(); settle(1) }
+        }
+        if app.alerts.firstMatch.exists { app.alerts.firstMatch.buttons.firstMatch.tap(); settle(1) }
         shot("51b_mado_photo_hearts_mine", app) { nextPhoto(1) }
         shot("51c_mado_photo_hearts_own_two", app) { nextPhoto(1) }
         shot("51d_mado_photo_hearts_own_one", app) { nextPhoto(3) }
