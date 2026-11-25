@@ -1599,7 +1599,8 @@ struct GroupWindowScreen: View {
             if catPhotos.isEmpty {
                 // No cat photos found yet: the Photos app is the only source.
                 PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
-                    Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
+                    // 11/26: 「届けています…」 is said once, by the line above.
+                    Label("写真を届ける", systemImage: "paperplane")
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 32)
                 }
@@ -1613,7 +1614,8 @@ struct GroupWindowScreen: View {
                 Button {
                     showsCatPicker = true
                 } label: {
-                    Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
+                    // 11/26: 「届けています…」 is said once, by the line above.
+                    Label("写真を届ける", systemImage: "paperplane")
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 32)
                 }
