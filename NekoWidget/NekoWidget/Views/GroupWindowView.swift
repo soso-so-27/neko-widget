@@ -2346,6 +2346,7 @@ private struct GroupLibraryDeliveryStep: View {
                         // (a new seal when the window's key changed). 11/20: an
                         // earlier undelivered photo is never sent in its place;
                         // it keeps its own 「もう一度届ける」.
+                        guard !model.isSending else { return }
                         let retry = model.failedDelivery.flatMap { $0.photo.jpeg == prepared.jpeg ? $0.photo : nil }
                         let photo = retry ?? prepared
                         let sent = model.sentMemo(for: photo) ?? memo
@@ -2362,7 +2363,11 @@ private struct GroupLibraryDeliveryStep: View {
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isSending || !model.canSend || GroupPhotoCaption.validationMessage(for: memo) != nil)
+                    // 11/25: 「届けています…」 keeps the button's colour so it is
+                    // read (a disabled one faded almost away); a second press
+                    // does nothing (deliver also refuses while sending).
+                    .disabled(!model.isSending && (!model.canSend || GroupPhotoCaption.validationMessage(for: memo) != nil))
+                    .allowsHitTesting(!model.isSending)
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
