@@ -85,8 +85,11 @@ jobs:
           persist-credentials: false
       - name: Verify the signed production IPA against the pinned source
         shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
           [[ "$(git -C candidate-source rev-parse HEAD)" == "$SOURCE_SHA" ]]
           release="$RUNNER_TEMP/app-store-candidate-upload/release"
           python3 candidate-source/NekoWidget/ci/production_candidate.py ipa \
