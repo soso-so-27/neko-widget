@@ -725,6 +725,11 @@ export default {
     if (controller.cron === FAMILY_PHOTO_MAINTENANCE_CRON) {
       if (env.ENVIRONMENT !== 'production') return;
       scheduleFamilyPhotoMaintenance(env, ctx);
+      // 11/25: production has no five-minute legacy trigger (it would also run
+      // the legacy share cleanup and R2 deletes). Billing reconciliation rides
+      // this production-only five-minute trigger instead; without it Apple's
+      // renewals stayed queued and every monthly Plus read as expired.
+      scheduleBillingRecovery(env, ctx);
       if (env.GROUP_REPORT_RUNTIME_ENABLED === 'YES' && env.GROUP_MODERATION_RUNTIME_ENABLED === 'YES'
           && reportIngestionRuntimeEnabled(env)) {
         const open = loadRuntimeGate(env).then(reportIngestionGateOpen);
@@ -777,12 +782,19 @@ export default {
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
-      if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
-        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runAppleNotificationHistoryRecovery(env)));
-      }
-      if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
-        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runBillingSubscriptionReconciliation(env)));
-      }
+      scheduleBillingRecovery(env, ctx);
     }
   },
 } satisfies ExportedHandler<Env>;
+
+/// Apple notification history recovery and subscription reconciliation. Run
+/// from exactly one five-minute trigger per environment: the legacy trigger
+/// outside production, the family maintenance trigger in production.
+function scheduleBillingRecovery(env: Env, ctx: ExecutionContext): void {
+  if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
+    ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runAppleNotificationHistoryRecovery(env)));
+  }
+  if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
+    ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runBillingSubscriptionReconciliation(env)));
+  }
+}
