@@ -348,7 +348,9 @@ struct MembershipOfferView: View {
             } else if let offer {
                 // The trial is the button's own words and the price is said
                 // once, right under it (11/10).
-                if offer.isPreview {
+                // 11/25: not on the App Store's purchase review capture, which
+                // shows the sheet as a release build does.
+                if offer.isPreview, !CommandLine.arguments.contains("--seasonal-movie-hidden") {
                     Text("操作の確認用です。請求されません")
                         .font(.footnote.weight(.semibold))
                         .accessibilityIdentifier("membership-offer-preview-notice")

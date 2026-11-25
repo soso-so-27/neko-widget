@@ -7,7 +7,9 @@ import Foundation
 /// tests and work go on.
 enum SeasonalMovieRelease {
     #if DEBUG || INTERNAL_PRESENTATION
-    static let isAvailable = true
+    /// 11/25: `--seasonal-movie-hidden` shows a fixture as a release build
+    /// does (the App Store's in-app purchase review screenshot).
+    static let isAvailable = !CommandLine.arguments.contains("--seasonal-movie-hidden")
     #else
     static let isAvailable = false
     #endif

@@ -40,7 +40,9 @@ class SwitchTests(unittest.TestCase):
         declaration = section(PRESENTATION, "enum SeasonalMovieRelease {", "\n}\n")
         self.assertIn(
             "    #if DEBUG || INTERNAL_PRESENTATION\n"
-            "    static let isAvailable = true\n"
+            "    /// 11/25: `--seasonal-movie-hidden` shows a fixture as a release build\n"
+            "    /// does (the App Store's in-app purchase review screenshot).\n"
+            "    static let isAvailable = !CommandLine.arguments.contains(\"--seasonal-movie-hidden\")\n"
             "    #else\n"
             "    static let isAvailable = false\n"
             "    #endif",
