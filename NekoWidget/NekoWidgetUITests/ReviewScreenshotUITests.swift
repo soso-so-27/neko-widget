@@ -1516,6 +1516,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         let (checking, checkingReason) = open(["--membership-settings-checking"], "settings-membership-restore")
         shot("88d_settings_plus_checking", checking) { checkingReason }
         checking.terminate()
+    }
+
     /// 11/25: the App Store's in-app purchase review screenshot: the Plus
     /// sheet from 設定 as a release build shows it (no seasonal movie row),
     /// with the sample ¥980 and 14-day trial (no charge, no account).
