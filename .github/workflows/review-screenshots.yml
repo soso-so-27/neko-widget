@@ -199,7 +199,7 @@ jobs:
                      test16FamilyOrderAndFarewell
                      test17RecoveryScreens test18CatOrderEntry test19FamilyRepresentativePhoto
                      test20FamilyReportReplies test21SettingsTree test22MadoScreens test23AutoSaveFlow
-                     test24SettingsPlusSection test25PlusPurchaseReview)
+                     test24SettingsPlusSection test25PlusPurchaseReview test26WindowSendWhileSending)
           fi
           # `only`: just the named methods (each must be one of this class's).
           if [[ -n "${REVIEW_ONLY// /}" ]]; then

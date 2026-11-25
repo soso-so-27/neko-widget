@@ -2330,8 +2330,7 @@ private struct GroupLibraryDeliveryStep: View {
                     }
                     // 11/25: nothing on this sheet changes while it is sent
                     // (build 412: the ひとこと stayed editable under 「届けています…」).
-                    GroupCaptionField(text: $memo)
-                        .disabled(model.locksCaption(for: prepared))
+                    GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared))
                     // 11/25: while 「届けています…」, no earlier sentence beside it.
                     if let message = model.message, !model.isSending {
                         // 11/22 (1122n): today's limit is a quiet notice, not an error.
@@ -2483,11 +2482,16 @@ private struct GroupSendConfirmSheet: View {
 /// own memo is separate: the ひとこと never comes from it or goes into it.
 private struct GroupCaptionField: View {
     @Binding var text: String
+    /// 11/25: while it is sent, the words hold still and look it (a disabled
+    /// field alone kept its full colour).
+    var locked = false
 
     var body: some View {
         Section {
             TextField("例：おなかを見せて寝ていた", text: $text, axis: .vertical)
                 .lineLimit(2...5)
+                .disabled(locked)
+                .foregroundStyle(locked ? Color.secondary : Color.primary)
                 .accessibilityIdentifier("group-window-send-caption")
             if let message = GroupPhotoCaption.validationMessage(for: text) {
                 Text(message).font(.footnote).foregroundStyle(.orange)
