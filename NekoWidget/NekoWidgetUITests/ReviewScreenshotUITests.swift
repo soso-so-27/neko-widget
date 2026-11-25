@@ -1535,6 +1535,25 @@ final class ReviewScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 11/25 (build 412): the まど send confirmation while 「届けています…」.
+    /// The ひとこと and every way out hold still until the send ends.
+    @MainActor
+    func test26WindowSendWhileSending() {
+        let app = launch(fixture + ["--group-window-screens-fixture", "--app-store-screenshot-nowa",
+                                    "--group-window-screens-sending-sheet"])
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        shot("90_window_send_sending", app) {
+            guard tapTab(app, "main-tab-windows", "まど") else { return "windows tab not found" }
+            guard room.waitForExistence(timeout: 20) else { return "「実家のまど」 card not found" }
+            room.tap()
+            let send = app.buttons["group-library-delivery-send"]
+            guard send.waitForExistence(timeout: 20) else { return "sending sheet did not open" }
+            settle(1.5)
+            return nil
+        }
+        app.terminate()
+    }
+
     /// The Plus screen is up (its heading), settled for the capture.
     @MainActor
     private func offerScreenShown(_ app: XCUIApplication) -> String? {

@@ -1990,6 +1990,11 @@ enum GroupWindowUIFixture {
         CommandLine.arguments.contains("--group-window-screens-fixture")
     }
 
+    /// 11/25: the send confirmation frozen at 「届けています…」.
+    static var showsSendingSheet: Bool {
+        CommandLine.arguments.contains("--group-window-screens-sending-sheet")
+    }
+
     static var showsFailedDelivery: Bool {
         CommandLine.arguments.contains("--group-window-screens-failed-send")
     }

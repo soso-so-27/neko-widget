@@ -764,6 +764,14 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
 #if DEBUG
+    /// Screen check only (11/25): the confirmation sheet while 「届けています…」.
+    func showFixtureSending() -> PreparedPhoto? {
+        guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
+            .jpegData(compressionQuality: 0.8) else { return nil }
+        isSending = true
+        return PreparedPhoto(jpeg: jpeg)
+    }
+
     /// Screen check only: shows the 「もう一度届ける」 row with a fixture photo.
     func showFixtureFailedDelivery() {
         guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
@@ -1379,6 +1387,7 @@ struct GroupWindowScreen: View {
                 libraryDelivery = GroupLibraryDeliveryRequest(localIdentifier: identifier)
             }
         }
+        .modifier(GroupWindowSendingSheetFixture(model: model))
         .sheet(item: $libraryDelivery) { request in
             NavigationStack {
                 GroupWindowCatPhotoDelivery(model: model, localIdentifier: request.localIdentifier) {
@@ -2198,6 +2207,35 @@ private struct GroupWindowCatPhotoDelivery: View {
     }
 }
 
+/// `--group-window-screens-sending-sheet` (DEBUG): the send confirmation as
+/// opened from outside the まど, frozen at 「届けています…」 with a typed
+/// ひとこと, for the screen check (11/25). Nothing is sent.
+private struct GroupWindowSendingSheetFixture: ViewModifier {
+    @ObservedObject var model: GroupWindowScreenModel
+    @State private var photo: GroupWindowScreenModel.PreparedPhoto?
+    @State private var memo = "おなかを見せて寝ていた"
+
+    func body(content: Content) -> some View {
+#if DEBUG
+        content
+            .task {
+                guard GroupWindowUIFixture.showsSendingSheet, photo == nil else { return }
+                try? await Task.sleep(for: .milliseconds(800))
+                photo = model.showFixtureSending()
+            }
+            .sheet(item: $photo) { prepared in
+                NavigationStack {
+                    GroupLibraryDeliveryStep(model: model, localIdentifier: "", memo: $memo,
+                                             close: { photo = nil }, fixturePhoto: prepared)
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+            }
+#else
+        content
+#endif
+    }
+}
+
 /// The chosen window: checks the photo, then the same confirmation as in the window.
 private struct GroupLibraryDeliveryStep: View {
     @ObservedObject var model: GroupWindowScreenModel
@@ -2211,6 +2249,8 @@ private struct GroupLibraryDeliveryStep: View {
     /// False inside a まど, whose send bar gives it: one haptic per delivery.
     var givesDeliveryHaptic = true
     let close: () -> Void
+    /// DEBUG screen check: this photo instead of reading one from Photos.
+    var fixturePhoto: GroupWindowScreenModel.PreparedPhoto? = nil
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var checked = false
 
@@ -2325,6 +2365,11 @@ private struct GroupLibraryDeliveryStep: View {
             close()
         }
         .task {
+            if let fixturePhoto {
+                prepared = fixturePhoto
+                checked = true
+                return
+            }
             await model.loadWindow()
             prepared = await model.prepare(localIdentifier: localIdentifier)
             checked = true
