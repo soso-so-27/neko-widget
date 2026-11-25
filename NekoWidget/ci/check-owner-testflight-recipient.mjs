@@ -30,7 +30,9 @@ function recipientEmail(value) {
   return email;
 }
 
-export async function checkRecipient({ groupID, testerID, ownerEmail, get, authenticatedInternalOnly = false }) {
+export async function checkRecipient({
+  groupID, testerID, ownerEmail, get, authenticatedInternalOnly = false, appStoreCandidate = false,
+}) {
   const expectedEmail = recipientEmail(ownerEmail);
   requireValue(resourceID(groupID) && resourceID(testerID), 'Pinned owner group/tester IDs are required; no name-based fallback.');
   // Read both independent collections before validating, so a group-shape
@@ -45,12 +47,11 @@ export async function checkRecipient({ groupID, testerID, ownerEmail, get, authe
     const label = group.id === groupID ? 'Owner group' : 'Another group';
     requireValue(group.type === 'betaGroups' && a, `${label}: invalid resource or missing attributes.`);
     requireValue(typeof a.isInternalGroup === 'boolean', `${label}: isInternalGroup is missing or not boolean.`);
-    // ASC returns null for external groups where this internal automatic-build
-    // setting is inapplicable. They cannot receive an Internal Only upload.
-    // Accept only this observed null shape, and only after authenticating the
-    // exact IPA's internal-only export metadata. Unknown/missing flags still stop.
+    // External groups don't get new direct uploads automatically. ASC reports
+    // null for the internal automatic-distribution setting on those groups.
+    // For App Store candidates, confirm the exact resulting assignments as well.
     const excludedExternal = a.isInternalGroup === false && a.hasAccessToAllBuilds === null
-      && authenticatedInternalOnly === true;
+      && (authenticatedInternalOnly === true || appStoreCandidate === true);
     requireValue(typeof a.hasAccessToAllBuilds === 'boolean' || excludedExternal,
       `${label}: hasAccessToAllBuilds is missing or not boolean; external null requires authenticated Internal Only IPA.`);
     if (group.id === groupID) {
@@ -147,10 +148,47 @@ export async function confirmRetainedBuild(get, groupID, number) {
   return assigned.filter(item => item.type === 'builds' && item.id === build.id && item.attributes?.version === number).length === 1;
 }
 
+const candidateBuildNumber = number => typeof number === 'string' && /^[1-9]\d{0,5}$/.test(number);
+
+export async function checkCandidateBuild(get, groupID, number, confirm) {
+  requireValue(candidateBuildNumber(number), 'Invalid App Store candidate build number.');
+  const builds = await get(
+    `/v1/builds?filter%5Bapp%5D=${appID}&filter%5Bversion%5D=${number}&filter%5BpreReleaseVersion.platform%5D=IOS&include=betaGroups&fields%5Bbuilds%5D=version,processingState,expired,buildAudienceType,usesNonExemptEncryption,betaGroups&limit=200`);
+  if (!confirm) {
+    requireValue(builds.length === 0, 'This App Store candidate build already exists. Do not repeat the upload.');
+    return true;
+  }
+  if (builds.length === 0) return false;
+  requireValue(builds.length === 1 && builds[0].type === 'builds' && resourceID(builds[0].id)
+    && builds[0].attributes?.version === number, 'App Store candidate build identity is ambiguous.');
+  const { id, attributes: a } = builds[0];
+  requireValue(['PROCESSING', 'VALID'].includes(a.processingState),
+    'Apple processing rejected the App Store candidate.');
+  if (a.processingState === 'PROCESSING') return false;
+  requireValue(a.buildAudienceType === 'APP_STORE_ELIGIBLE' && a.expired === false,
+    'The uploaded candidate is not eligible for the App Store.');
+  const membership = builds[0].relationships?.betaGroups;
+  const groups = membership?.data;
+  requireValue(Array.isArray(groups) && !membership.links?.next
+    && (membership.meta?.paging?.total ?? groups.length) === groups.length, 'Build group membership is incomplete.');
+  const [individuals, detail] = await Promise.all([
+    get(`/v1/builds/${id}/individualTesters?limit=200`),
+    get(`/v1/builds/${id}/buildBetaDetail?fields%5BbuildBetaDetails%5D=internalBuildState`, { single: true }),
+  ]);
+  requireValue(groups.every(group => group.type === 'betaGroups' && group.id === groupID)
+    && groups.length <= 1 && individuals.length === 0, 'The uploaded build has an unexpected TestFlight recipient.');
+  requireValue(detail.type === 'buildBetaDetails', 'Unexpected build beta detail.');
+  if (!groups.length || detail.attributes?.internalBuildState !== 'IN_BETA_TESTING') return false;
+  requireValue(a.usesNonExemptEncryption === false, 'Apple export compliance needs verification in App Store Connect.');
+  return true;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const productionOwner = args.length === 4 && args[0] === '--production-owner-artifact' && args[2] === '--ipa';
-  requireValue(productionOwner || args.length === 0 || ([4, 6].includes(args.length) && args[0] === '--authenticated-artifact' && args[2] === '--ipa'
+  const candidate = args.length === 2 && ['--app-store-candidate-preflight', '--app-store-candidate-confirm'].includes(args[0])
+    && candidateBuildNumber(args[1]);
+  requireValue(productionOwner || candidate || args.length === 0 || ([4, 6].includes(args.length) && args[0] === '--authenticated-artifact' && args[2] === '--ipa'
     && (args.length === 4 || (args[4] === '--confirm-build' && ['319', '387'].includes(args[5])))),
     'Expected authenticated artifact and exact IPA arguments, or read-only diagnosis without arguments.');
   let authenticatedInternalOnly = false;
@@ -174,7 +212,7 @@ async function main() {
     encode({ iss: issuer, iat: now, exp: now + 300, aud: 'appstoreconnect-v1' });
   const token = data + '.' + sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   const get = reader(token);
-  await checkRecipient({ groupID, testerID, ownerEmail, authenticatedInternalOnly, get: async url => {
+  await checkRecipient({ groupID, testerID, ownerEmail, authenticatedInternalOnly, appStoreCandidate: candidate, get: async url => {
     const resources = await get(url);
     if (new URL(url, origin).pathname.endsWith('/betaGroups')) {
       for (const line of groupDiagnostics(resources, groupID)) console.log(line);
@@ -184,6 +222,17 @@ async function main() {
     return resources;
   } });
   console.log('PASS owner recipient: pinned group, one owner tester, exclusive automatic distribution (GET only)');
+  if (candidate) {
+    const confirm = args[0] === '--app-store-candidate-confirm';
+    if (await checkCandidateBuild(get, groupID, args[1], confirm)) {
+      console.log(confirm
+        ? `PASS build ${args[1]}: APP_STORE_ELIGIBLE, non-exempt encryption false, IN_BETA_TESTING, owner group only`
+        : `PASS candidate ${args[1]}: no existing iOS build with this number`);
+    } else {
+      console.log(`PENDING build ${args[1]}: Apple processing or owner group assignment is not complete`);
+      process.exitCode = 3;
+    }
+  }
   if (args.length === 6) {
     if (await confirmRetainedBuild(get, groupID, args[5])) console.log(`PASS build ${args[5]}: Internal Only, IN_BETA_TESTING, assigned to pinned owner group; confirmed ${new Date().toISOString()}`);
     else { console.log(`PENDING build ${args[5]}: Apple processing or owner group assignment is not complete`); process.exitCode = 3; }
