@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 struct GroupHTTPReply: Sendable {
     let status: Int; let data: Data
@@ -248,8 +251,20 @@ enum SharingForegroundGap {
 /// (only to the iPhone's 59 a minute). Tasks started inside inherit it; a
 /// detached task or a send saved for later does not, and is automatic.
 enum SharingPersonAction {
+    /// 11/25: the person's action keeps running for the short time iOS
+    /// gives an app that leaves the screen (another app, the home screen,
+    /// the lock), so 「届ける」 and the like finish instead of being cut
+    /// when the person switches apps right after pressing.
     static func run<T>(_ work: () async throws -> T) async rethrows -> T {
-        try await SharingAutoCallBudget.$isPersonAction.withValue(true, operation: work)
+        let lease = await SendLeaveLease.begin()
+        do {
+            let value = try await SharingAutoCallBudget.$isPersonAction.withValue(true, operation: work)
+            await lease.end()
+            return value
+        } catch {
+            await lease.end()
+            throw error
+        }
     }
 
     /// 1115v: a long-lived loop or listener started from a tap (a task
@@ -258,6 +273,113 @@ enum SharingPersonAction {
     static func automatic<T>(_ work: () async throws -> T) async rethrows -> T {
         try await SharingAutoCallBudget.$isPersonAction.withValue(false, operation: work)
     }
+}
+
+/// 11/25: how many times this app has left the screen. A send that saw
+/// the count change was cut by iOS putting the app to sleep, not by the
+/// network: it is sent again (the same operation, so never twice) instead
+/// of saying 「インターネットにつながらず」.
+final class AppLeaveCounter: @unchecked Sendable {
+    static let shared = AppLeaveCounter()
+    private let lock = NSLock()
+    private var count = 0
+    private var observer: NSObjectProtocol?
+
+    /// Taken when a send starts; compare with `left(since:)` after it.
+    func mark() -> Int {
+        lock.lock(); defer { lock.unlock() }
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+            ) { [weak self] _ in self?.noteLeft() }
+        }
+#endif
+        return count
+    }
+
+    func left(since mark: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return count != mark
+    }
+
+    func noteLeft() {
+        lock.lock(); count += 1; lock.unlock()
+    }
+}
+
+/// 11/25: a send the person started, cut while the app was away.
+enum SendAfterLeaving {
+    /// The connection errors iOS gives a request it stopped when the app
+    /// went to sleep. Only these are sent again by themselves; a refusal of
+    /// the relay never is.
+    static func isCutByLeaving(_ error: Error, leftDuringSend: Bool) -> Bool {
+        guard leftDuringSend else { return false }
+        if error is CancellationError || error is URLError { return true }
+        switch error as? GroupClientError {
+        case .some(.offline), .some(.unavailable): return true
+        default: return false
+        }
+    }
+
+    /// Sent again by itself once, after the app is back on the screen. A
+    /// second cut (or a real outage) is said, with 「もう一度届ける」.
+    static func resendsByItself(_ error: Error, leftDuringSend: Bool, alreadyResent: Bool) -> Bool {
+        !alreadyResent && isCutByLeaving(error, leftDuringSend: leftDuringSend)
+    }
+
+    /// Waits until the app is on the screen again (at once when it is).
+    @MainActor static func untilActive() async {
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+        while UIApplication.shared.applicationState != .active {
+            if Task.isCancelled { return }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+#endif
+    }
+}
+
+/// 11/25: holds the time iOS gives a leaving app while the person's action
+/// runs. Ended when the action ends, or by iOS when that time runs out.
+final class SendLeaveLease: @unchecked Sendable {
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+    @MainActor private var identifier: UIBackgroundTaskIdentifier = .invalid
+
+    static func begin() async -> SendLeaveLease {
+        let lease = SendLeaveLease()
+        await MainActor.run {
+            // UIKit calls the expiration on the main thread.
+            lease.identifier = UIApplication.shared.beginBackgroundTask(withName: "Finish the person's send") {
+                MainActor.assumeIsolated { lease.endNow() }
+            }
+        }
+        return lease
+    }
+
+    @MainActor private func endNow() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
+
+    func end() async { await MainActor.run { endNow() } }
+#elseif os(iOS)
+    // The share extension has no UIApplication: it asks the process instead.
+    private let done = DispatchSemaphore(value: 0)
+
+    static func begin() async -> SendLeaveLease {
+        let lease = SendLeaveLease()
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "Finish the person's send") { expired in
+            if expired { lease.done.signal() } else { lease.done.wait() }
+        }
+        return lease
+    }
+
+    func end() async { done.signal() }
+#else
+    static func begin() async -> SendLeaveLease { SendLeaveLease() }
+    func end() async {}
+#endif
 }
 
 private final class GroupNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

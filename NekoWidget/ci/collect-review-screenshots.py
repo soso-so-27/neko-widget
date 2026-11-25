@@ -82,6 +82,11 @@ AUTOSAVE_FLOW_SCREENS = (
     "83_autosave_link_conflict", "84_autosave_needs_plus", "84b_autosave_after_purchase",
     "85_settings_plus_unknown", "86_plus_offer_unknown", "87_plus_offer_store_transaction",
 )
+# 設定's Plus section in each state (test24SettingsPlusSection, 11/25).
+SETTINGS_PLUS_SCREENS = (
+    "88a_settings_plus_unknown", "88b_settings_plus_member", "88c_settings_plus_not_member",
+    "88d_settings_plus_checking",
+)
 # The App Store's in-app purchase review screenshot (test25PlusPurchaseReview, 11/25).
 IAP_REVIEW_SCREENS = ("89_iap_review",)
 # Every screen ReviewScreenshotUITests captures, in review order.
@@ -102,7 +107,7 @@ FULL_SCREENS = (
     "29_widget_guide_1", "29_widget_guide_2", "29_widget_guide_3", "29_widget_guide_4", "29_widget_guide_5",
     "90_error_vet_field_page", "90_error_vet_row", "91_error_plus_product_unavailable",
 ) + STRESS_SCREENS + FAMILY_LINK_SCREENS + RECOVERY_SCREENS + FAMILY_REPORT_SCREENS + SETTINGS_TREE_SCREENS \
-    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + IAP_REVIEW_SCREENS
+    + MADO_SCREENS + AUTOSAVE_FLOW_SCREENS + SETTINGS_PLUS_SCREENS + IAP_REVIEW_SCREENS
 SE_SCREENS = (
     "10_cat_home", "10b_cat_home_second_cat", "10c_cat_home_no_cat", "10d_cat_home_no_photo",
     "11_cat_care_top", "12_vet_bottom", "14_lost_bottom", "16_care_bottom",

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact, confirmRetainedBuild } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact, confirmRetainedBuild, checkCandidateBuild } from './check-owner-testflight-recipient.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -111,6 +111,39 @@ test('observed external null is excluded only for an authenticated internal-only
   }
   await assert.rejects(checkRecipient({ groupID, testerID, ownerEmail, authenticatedInternalOnly: true,
     get: async url => url.includes('/betaTesters') ? [tester] : [{ ...group, attributes: { ...group.attributes, hasAccessToAllBuilds: null } }] }));
+});
+
+test('App Store upload permits manually assigned external groups but rejects any other automatic group', async () => {
+  const attributes = { isInternalGroup: false, hasAccessToAllBuilds: null };
+  const check = values => checkRecipient({ groupID, testerID, ownerEmail, appStoreCandidate: true,
+    get: async url => url.includes('/betaTesters') ? [tester] : [group, { type: 'betaGroups', id: 'another-group', attributes: values }] });
+  assert.equal(await check(attributes), true);
+  await assert.rejects(check({ ...attributes, hasAccessToAllBuilds: true }));
+  await assert.rejects(check({ ...attributes, isInternalGroup: true }));
+  await assert.rejects(check({ ...attributes, hasAccessToAllBuilds: undefined }));
+});
+
+test('App Store confirmation requires the eligible build, the only owner group and no individual testers', async () => {
+  const build = { id: 'new-build-id', type: 'builds', attributes: { version: '412',
+    processingState: 'VALID', buildAudienceType: 'APP_STORE_ELIGIBLE', usesNonExemptEncryption: false, expired: false } };
+  const get = ({ builds = [build], groups = [group], individuals = [] } = {}) => async url => {
+    if (url.endsWith('internalBuildState')) return { type: 'buildBetaDetails', attributes: { internalBuildState: 'IN_BETA_TESTING' } };
+    if (url.includes('/individualTesters')) return individuals;
+    if (url.startsWith('/v1/builds?')) return builds.map(record => ({
+      ...record, relationships: { betaGroups: { data: groups } },
+    }));
+    throw new Error('Unexpected request');
+  };
+  assert.equal(await checkCandidateBuild(get({ builds: [] }), groupID, '412', false), true);
+  await assert.rejects(checkCandidateBuild(get(), groupID, '412', false));
+  assert.equal(await checkCandidateBuild(get(), groupID, '412', true), true);
+  assert.equal(await checkCandidateBuild(get({ groups: [] }), groupID, '412', true), false);
+  await assert.rejects(checkCandidateBuild(get({ individuals: [tester] }), groupID, '412', true));
+  await assert.rejects(checkCandidateBuild(get({ groups: [group, { ...group, id: 'other-group' }] }), groupID, '412', true));
+  for (const attributes of [{ buildAudienceType: 'INTERNAL_ONLY' }, { usesNonExemptEncryption: null }]) {
+    await assert.rejects(checkCandidateBuild(get({ builds: [{ ...build, attributes: { ...build.attributes, ...attributes } }] }),
+      groupID, '412', true));
+  }
 });
 
 test('internal-only evidence is authenticated first and bound to the exact uploaded bytes', async t => {

@@ -1494,6 +1494,28 @@ final class ReviewScreenshotUITests: XCTestCase {
         transaction.terminate()
     }
 
+    /// 11/25: 設定's Plus section in each state, as ordinary rows of one
+    /// grouped section (no floating separators, no pill outside a row).
+    @MainActor
+    func test24SettingsPlusSection() {
+        func open(_ arguments: [String], _ row: String) -> (XCUIApplication, String?) {
+            let app = launch(["--membership-offer-ui-fixture", "--membership-settings-section"] + arguments)
+            guard app.buttons[row].waitForExistence(timeout: 15) else { return (app, "\(row) did not appear") }
+            settle(2)
+            return (app, nil)
+        }
+        let (unknown, unknownReason) = open([], "settings-membership-restore")
+        shot("88a_settings_plus_unknown", unknown) { unknownReason }
+        unknown.terminate()
+        let (member, memberReason) = open(["--membership-settings-member"], "settings-membership-manage")
+        shot("88b_settings_plus_member", member) { memberReason }
+        member.terminate()
+        let (fresh, freshReason) = open(["--membership-settings-not-member"], "settings-membership-offer")
+        shot("88c_settings_plus_not_member", fresh) { freshReason }
+        fresh.terminate()
+        let (checking, checkingReason) = open(["--membership-settings-checking"], "settings-membership-restore")
+        shot("88d_settings_plus_checking", checking) { checkingReason }
+        checking.terminate()
     /// 11/25: the App Store's in-app purchase review screenshot: the Plus
     /// sheet from 設定 as a release build shows it (no seasonal movie row),
     /// with the sample ¥980 and 14-day trial (no charge, no account).

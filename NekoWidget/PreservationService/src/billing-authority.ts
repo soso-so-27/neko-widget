@@ -70,11 +70,13 @@ async function verifiedStatus(value: unknown, env: BillingAuthorityEnv): Promise
   const gate = await env.DB.prepare('SELECT effective_entitlement_enabled FROM billing_runtime_gate WHERE singleton = 1')
     .first<{ effective_entitlement_enabled: number }>();
   if (gate?.effective_entitlement_enabled !== 1) throw new ServiceError('billing_authority_unavailable', 503);
-  // App Review can exercise Plus, but only a Production purchase grants
-  // storage intake on the production authority. Archive reads and deletion
-  // are authorized by the existing owner session.
-  const requiredEnvironment = env.ENVIRONMENT === 'production' || env.BILLING_STORE_ENVIRONMENT === 'Production'
-    ? 'Production' : undefined;
+  const productionWorker = env.ENVIRONMENT === 'production';
+  const productionStore = env.BILLING_STORE_ENVIRONMENT === 'Production';
+  // A correctly configured production authority uses the shared Sandbox opt-in
+  // and review deadline. Preserve the Production-only restriction when only
+  // one setting identifies production.
+  const productionReviewPolicy = productionWorker && productionStore;
+  const requiredEnvironment = !productionReviewPolicy && (productionWorker || productionStore) ? 'Production' : undefined;
   const entitlement = await effectiveBillingEntitlement(billingEnv(env), input.billingAccountId,
     Date.now(), requiredEnvironment);
   const status = entitlement.grantsPlus && entitlement.status === 'active' ? 'active'
