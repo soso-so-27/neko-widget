@@ -1103,15 +1103,39 @@ final class AppRecordPersistence: ObservableObject {
         linkedPlusSeenAt = plus ? Date() : nil
     }
     private var linkedPlusReadAt: Date?
+    private var linkedPlusFailedAt: Date?
+    /// 11/25: a read of that answer has finished in this app session, and none
+    /// runs now. Until then 設定 says 「確認しています…」, not 「確かめられません」.
+    @Published private(set) var linkedPlusReadFinished = false
+    @Published private(set) var linkedPlusReading = false
+    /// 11/25: 自動保存 is on and its Plus answer is not in yet (never read, or a
+    /// read in flight), so it may still settle 設定's open Plus row.
+    var linkedPlusAnswerPending: Bool {
+        configuration.isEnabled && enabled && (linkedPlusReading || !linkedPlusReadFinished)
+    }
     /// One observing read of the save server's Plus answer, at most every 10
-    /// minutes, only while 自動保存 is on. Errors leave the last answer as it was,
-    /// except a stop for Plus.
+    /// minutes after a successful one, only while 自動保存 is on. Errors leave
+    /// the last answer as it was, except a stop for Plus. 11/25: read at launch
+    /// and foreground too; a failed read is retried after a minute (the 10 minutes
+    /// start only on success), and one read at a time.
     func refreshLinkedPlus() async {
-        guard configuration.isEnabled, enabled else { return }
+        guard configuration.isEnabled, enabled, !linkedPlusReading else { return }
         if let linkedPlusReadAt, Date().timeIntervalSince(linkedPlusReadAt) < 600 { return }
-        linkedPlusReadAt = Date()
-        do { noteLinkedPlus(try await client.membership(observingOnly: true)) }
-        catch {
+        // A failed read waits a minute, not 10: 設定's row re-asks on each change.
+        if let linkedPlusFailedAt, Date().timeIntervalSince(linkedPlusFailedAt) < 60 { return }
+        let generation = datasetGeneration
+        linkedPlusReading = true
+        defer {
+            linkedPlusReading = false
+            if generation == datasetGeneration { linkedPlusReadFinished = true }
+        }
+        do {
+            let value = try await client.membership(observingOnly: true)
+            guard generation == datasetGeneration else { return }
+            noteLinkedPlus(value)
+            linkedPlusReadAt = Date(); linkedPlusFailedAt = nil
+        } catch {
+            linkedPlusFailedAt = Date()
             let stop = error as? ManagedPreservationError
             if stop == .membershipRequired || stop == .accessUnconfirmed { linkedPlusSeenAt = nil }
         }
@@ -1200,7 +1224,8 @@ final class AppRecordPersistence: ObservableObject {
         datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
                 self?.datasetGeneration = UUID(); self?.cachedIndex = nil; self?.cachedMembership = nil
-                self?.linkedPlusSeenAt = nil; self?.linkedPlusReadAt = nil
+                self?.linkedPlusSeenAt = nil; self?.linkedPlusReadAt = nil; self?.linkedPlusFailedAt = nil
+                self?.linkedPlusReadFinished = false
             }
         }
         editingObserver = NotificationCenter.default.addObserver(forName: .appRecordEditingFinished, object: nil, queue: nil) { [weak self] _ in

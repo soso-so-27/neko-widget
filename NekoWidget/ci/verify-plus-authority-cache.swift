@@ -248,6 +248,24 @@ private func check(_ condition: Bool, _ message: String) throws {
                          linkedPlusOnSave: true) == .member, "a working 自動保存's Plus needs no first check")
         try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: false,
                          linkedPlusOnSave: true) == .notMember, "this iPhone's own ended answer still wins")
+        // 11/25 (TestFlight 413): 自動保存's answer not read yet waits; it never flips.
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false,
+                         linkedPlusPending: true) == .checking, "an open answer waits for 自動保存's read")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: true,
+                         linkedPlusPending: true) == .checking, "a waiting purchase waits for 自動保存's read")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false,
+                         linkedPlusPending: false) == .unknown, "a finished read without Plus is 確かめられません")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false,
+                         linkedPlusOnSave: true, linkedPlusPending: false) == .member, "a linked Plus is Plus")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: false,
+                         linkedPlusOnSave: true, linkedPlusPending: true) == .notMember,
+                  "this iPhone's own ended answer wins over a pending or linked Plus")
+        try check(S.linkedPlusPending(readPending: true, waited: 0), "a read in flight is pending")
+        try check(!S.linkedPlusPending(readPending: true, waited: S.linkedPlusWait), "the wait ends at 10 seconds")
+        try check(!S.linkedPlusPending(readPending: false, waited: 0), "a finished read is not pending")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false,
+                         linkedPlusPending: S.linkedPlusPending(readPending: true, waited: S.linkedPlusWait))
+                  == .unknown, "a read that never ends falls back to 確かめられません")
         print("Plus rows (11/16): cancelled-in-period Plus, ended offers Plus, only a missing answer asks to restore")
     }
 }

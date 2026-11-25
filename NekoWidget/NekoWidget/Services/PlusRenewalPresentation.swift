@@ -133,14 +133,27 @@ enum PlusSettingsRowStatus: Equatable, Sendable {
     /// so 設定 never says 「購入を確かめられません」 next to a working 自動保存.
     /// It never overrides this iPhone's own "ended" answer, and it is display
     /// only: it grants nothing here.
+    /// 11/25 (TestFlight 413): `linkedPlusPending` is that answer not read yet
+    /// in this app session (or being read). An open question then waits as
+    /// 「確認しています…」 instead of saying 「確かめられません」 and flipping to
+    /// Plus a moment later.
     static func live(usableServerAnswer: Bool, firstCheck: Bool, answerMissing: Bool,
-                     purchaseWaiting: Bool, linkedPlusOnSave: Bool = false) -> Self {
+                     purchaseWaiting: Bool, linkedPlusOnSave: Bool = false,
+                     linkedPlusPending: Bool = false) -> Self {
         if usableServerAnswer { return .member }
         let open = firstCheck || answerMissing || purchaseWaiting
         if open && linkedPlusOnSave { return .member }
-        if firstCheck { return .checking }
+        if firstCheck || (open && linkedPlusPending) { return .checking }
         if answerMissing || purchaseWaiting { return .unknown }
         return .notMember
+    }
+
+    /// 11/25: how long 設定 waits for 自動保存's Plus answer before saying
+    /// 「確かめられません」 (no endless 「確認しています…」).
+    static let linkedPlusWait: TimeInterval = 10
+
+    static func linkedPlusPending(readPending: Bool, waited: TimeInterval) -> Bool {
+        readPending && waited < linkedPlusWait
     }
 }
 
