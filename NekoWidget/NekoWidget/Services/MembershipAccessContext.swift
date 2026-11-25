@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 extension Notification.Name {
     static let membershipAccessRefreshRequested = Notification.Name("membershipAccessRefreshRequested")
@@ -271,15 +274,19 @@ struct MembershipRestoreButton: View {
             // 11/25: one ordinary row; its line (or the result) inside it, never
             // a clear row of its own (their separators floated in 設定).
             Button { restore() } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label { workingLabel } icon: { Image(systemName: "arrow.clockwise") }
-                    if let rowLine {
-                        Text(rowLine)
-                            .font(.footnote).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier(found ? "membership-restore-found" : "membership-restore-message")
+                // The line under the title (not under the icon), in the
+                // list's secondary colour, not the button's tint.
+                Label {
+                    VStack(alignment: .leading, spacing: 3) {
+                        workingLabel
+                        if let rowLine {
+                            Text(rowLine)
+                                .font(.footnote).foregroundStyle(Color(uiColor: .secondaryLabel))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier(found ? "membership-restore-found" : "membership-restore-message")
+                        }
                     }
-                }
+                } icon: { Image(systemName: "arrow.clockwise") }
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .contentShape(Rectangle())
             }
