@@ -1382,8 +1382,8 @@ struct PlusSettingsSection<Rows: View>: View {
     @State private var showsManagement = false
     /// The last answer before a re-check: shown while it runs (11/10).
     @State private var lastAnswer: Status?
-    /// 11/25: seconds waited for 自動保存's Plus answer on this opening (capped).
-    @State private var linkedPlusWaited: TimeInterval = 0
+    /// 11/25: seconds waited for an answer on this opening (capped).
+    @State private var waited: TimeInterval = 0
 
     private typealias Status = PlusSettingsRowStatus
 
@@ -1416,8 +1416,7 @@ struct PlusSettingsSection<Rows: View>: View {
                     purchaseWaiting: purchases.pendingProductID != nil || purchases.awaitingServerConfirmation,
                     linkedPlusOnSave: ManagedPreservationConfiguration.current.isEnabled
                         && saving.linkedPlusSeenAt != nil,
-                    linkedPlusPending: Status.linkedPlusPending(readPending: saving.linkedPlusAnswerPending,
-                                                                waited: linkedPlusWaited))
+                    stillWaiting: Status.stillWaiting(waited: waited))
     }
 
     /// 11/25: every state is ordinary rows of one grouped section (no clear
@@ -1492,8 +1491,8 @@ struct PlusSettingsSection<Rows: View>: View {
                 }
                 // 11/25: an answer that does not come in 10 seconds is 「確かめられません」.
                 .task {
-                    do { try await Task.sleep(for: .seconds(Status.linkedPlusWait)) } catch { return }
-                    linkedPlusWaited = Status.linkedPlusWait
+                    do { try await Task.sleep(for: .seconds(Status.answerWait)) } catch { return }
+                    waited = Status.answerWait
                 }
         }
     }
