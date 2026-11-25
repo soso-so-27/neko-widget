@@ -108,16 +108,59 @@ describe('private preservation billing authority', () => {
       .toMatchObject({ status: 'unknown', endedAt: null });
   });
 
-  it('does not use a Sandbox purchase for new production storage during review', async () => {
-    const f=await fixture();
-    await entitlement(f.billingAccountId,1);
-    const production=makeWorker({ENVIRONMENT:'production',BILLING_STORE_ENVIRONMENT:'Production',
-      BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'YES',
-      BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL:new Date(Date.now()+60_000).toISOString()});
-    expect(await (await status(f.billingAccountId)).json()).toMatchObject({status:'active'});
-    expect(await (await status(f.billingAccountId,production)).json()).toMatchObject({status:'unknown'});
-    await entitlement(f.billingAccountId,1,7*86_400_000,false,'Production');
-    expect(await (await status(f.billingAccountId,production)).json()).toMatchObject({status:'active'});
+  const dualProductionStore = {
+    BILLING_STORE_ENVIRONMENT: 'Production',
+    BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: 'YES', BILLING_SANDBOX_OWNER_ONLY_REQUIRED: 'NO',
+  } satisfies Partial<BillingAuthorityEnv>;
+  const productionReview = { ...dualProductionStore, ENVIRONMENT: 'production' };
+
+  it('grants verified Sandbox storage access only before the production review deadline', async () => {
+    const active = await fixture();
+    const grace = await fixture();
+    await entitlement(active.billingAccountId, 1);
+    await entitlement(grace.billingAccountId, 4);
+    const deadline = Date.now() + 60_000;
+    const worker = makeWorker({ ...productionReview, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: new Date(deadline).toISOString() });
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      for (const [now, activeStatus, graceStatus] of [
+        [deadline - 1, 'active', 'grace'], [deadline, 'unknown', 'unknown'], [deadline + 1, 'unknown', 'unknown'],
+      ] as const) {
+        clock.mockReturnValue(now);
+        expect(await (await status(active.billingAccountId, worker)).json()).toMatchObject({ status: activeStatus });
+        expect(await (await status(grace.billingAccountId, worker)).json()).toMatchObject({ status: graceStatus });
+      }
+    } finally { clock.mockRestore(); }
+  });
+
+  it('requires a valid deadline and explicit production review configuration for Sandbox storage', async () => {
+    const f = await fixture();
+    await entitlement(f.billingAccountId, 1);
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const withDeadline = { ...productionReview, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: future };
+    for (const policy of [
+      productionReview,
+      { ...withDeadline, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: future.replace('Z', '+00:00') },
+      { ...withDeadline, BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: 'NO' },
+      { ...withDeadline, BILLING_SANDBOX_OWNER_ONLY_REQUIRED: 'YES' },
+      { ...dualProductionStore, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: future },
+      { ...withDeadline, BILLING_STORE_ENVIRONMENT: 'Sandbox', BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: 'NO' },
+    ] satisfies Partial<BillingAuthorityEnv>[]) {
+      expect(await (await status(f.billingAccountId, makeWorker(policy))).json())
+        .toMatchObject({ status: 'unknown' });
+    }
+    expect(await (await status(f.billingAccountId)).json()).toMatchObject({ status: 'active' });
+  });
+
+  it('keeps verified Production storage access after the Sandbox review deadline', async () => {
+    const f = await fixture();
+    await entitlement(f.billingAccountId, 1, 7 * 86_400_000, false, 'Production');
+    await entitlement(f.billingAccountId, 5);
+    const expired = new Date(Date.now() - 1000).toISOString();
+    for (const policy of [productionReview, { ...productionReview, BILLING_PRODUCTION_SANDBOX_REVIEW_UNTIL: expired }]) {
+      const worker = makeWorker(policy);
+      expect(await (await status(f.billingAccountId, worker)).json()).toMatchObject({ status: 'active' });
+    }
   });
 
   it('requires explicit dual approval and rejects unknown or contradictory store policies', async () => {
