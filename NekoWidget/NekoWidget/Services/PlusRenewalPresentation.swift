@@ -127,9 +127,17 @@ enum PlusSettingsRowStatus: Equatable, Sendable {
     /// even when it will not renew (cancelled, still in its period). Only a
     /// missing answer is 「確認できません」; an ended Plus is `.notMember`,
     /// which offers Plus again.
+    /// 11/25: `linkedPlusOnSave` is the save server's own answer that this
+    /// person's linked Plus is active (自動保存 is saving). It settles an open
+    /// question (checking, no answer, a purchase not yet confirmed) as Plus,
+    /// so 設定 never says 「購入を確かめられません」 next to a working 自動保存.
+    /// It never overrides this iPhone's own "ended" answer, and it is display
+    /// only: it grants nothing here.
     static func live(usableServerAnswer: Bool, firstCheck: Bool, answerMissing: Bool,
-                     purchaseWaiting: Bool) -> Self {
+                     purchaseWaiting: Bool, linkedPlusOnSave: Bool = false) -> Self {
         if usableServerAnswer { return .member }
+        let open = firstCheck || answerMissing || purchaseWaiting
+        if open && linkedPlusOnSave { return .member }
         if firstCheck { return .checking }
         if answerMissing || purchaseWaiting { return .unknown }
         return .notMember

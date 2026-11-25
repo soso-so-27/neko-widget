@@ -1088,7 +1088,33 @@ final class AppRecordPersistence: ObservableObject {
         let value = try await client.membership()
         try await client.requireSessionCheckpoint(checkpoint)
         cachedMembership = value.canSave ? (value, checkpoint, Date()) : nil
+        noteLinkedPlus(value)
         return value
+    }
+
+    /// 11/25: when the save server last said this person's linked Plus is
+    /// active (a pilot's access is not Plus). Memory only, never written to
+    /// disk; cleared by a stop for Plus or another account's dataset. 設定's
+    /// Plus section reads it so it does not say 「購入を確かめられません」
+    /// while 自動保存 is saving with that same Plus. Display only.
+    @Published private(set) var linkedPlusSeenAt: Date?
+    private func noteLinkedPlus(_ value: ManagedPreservationMembership) {
+        let plus = value.linked && value.access == nil && (value.status == .active || value.status == .grace)
+        linkedPlusSeenAt = plus ? Date() : nil
+    }
+    private var linkedPlusReadAt: Date?
+    /// One observing read of the save server's Plus answer, at most every 10
+    /// minutes, only while 自動保存 is on. Errors leave the last answer as it was,
+    /// except a stop for Plus.
+    func refreshLinkedPlus() async {
+        guard configuration.isEnabled, enabled else { return }
+        if let linkedPlusReadAt, Date().timeIntervalSince(linkedPlusReadAt) < 600 { return }
+        linkedPlusReadAt = Date()
+        do { noteLinkedPlus(try await client.membership(observingOnly: true)) }
+        catch {
+            let stop = error as? ManagedPreservationError
+            if stop == .membershipRequired || stop == .accessUnconfirmed { linkedPlusSeenAt = nil }
+        }
     }
 
     private func committed(now: Date = Date()) {
@@ -1172,7 +1198,10 @@ final class AppRecordPersistence: ObservableObject {
             Task { @MainActor in self?.committed() }
         }
         datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
-            Task { @MainActor in self?.datasetGeneration = UUID(); self?.cachedIndex = nil; self?.cachedMembership = nil }
+            Task { @MainActor in
+                self?.datasetGeneration = UUID(); self?.cachedIndex = nil; self?.cachedMembership = nil
+                self?.linkedPlusSeenAt = nil; self?.linkedPlusReadAt = nil
+            }
         }
         editingObserver = NotificationCenter.default.addObserver(forName: .appRecordEditingFinished, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
@@ -2020,6 +2049,7 @@ final class AppRecordPersistence: ObservableObject {
         if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
         let stop = error as? ManagedPreservationError
         stoppedForPlus = stop == .membershipRequired || stop == .accessUnconfirmed
+        if stoppedForPlus { linkedPlusSeenAt = nil }
         intakePaused = stop == .servicePaused
     }
 

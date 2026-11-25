@@ -241,6 +241,13 @@ private func check(_ condition: Bool, _ message: String) throws {
                   == .checking, "the first check is 確認しています")
         try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: true)
                   == .unknown, "a purchase the server has not confirmed keeps 購入を復元")
+        // 11/25: the save server says the linked Plus is active (自動保存 works).
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: true, purchaseWaiting: false,
+                         linkedPlusOnSave: true) == .member, "a working 自動保存's Plus is not 確かめられません")
+        try check(S.live(usableServerAnswer: false, firstCheck: true, answerMissing: false, purchaseWaiting: false,
+                         linkedPlusOnSave: true) == .member, "a working 自動保存's Plus needs no first check")
+        try check(S.live(usableServerAnswer: false, firstCheck: false, answerMissing: false, purchaseWaiting: false,
+                         linkedPlusOnSave: true) == .notMember, "this iPhone's own ended answer still wins")
         print("Plus rows (11/16): cancelled-in-period Plus, ended offers Plus, only a missing answer asks to restore")
     }
 }
