@@ -34,6 +34,8 @@ struct AccountDeletionChoicesView: View {
                         Label("自動保存のアカウントを消す", systemImage: "icloud.slash")
                     }
                     .accessibilityIdentifier("account-deletion-preservation")
+                } footer: {
+                    Text("自動保存で保存したものと、そのアカウントを消します。")
                 }
             }
             // 11/8 (29): said once in the deletion flow, here, not on each screen.
@@ -49,8 +51,7 @@ struct AccountDeletionChoicesView: View {
         }
         .navigationTitle("アカウントとデータを消す")
         // 11/26: inline; the large title was cut to 「アカウントとデータを…」.
-        // No footer that says the row again (自動保存), and the Plus note is
-        // one sentence: the row above it already says where to cancel.
+        // The Plus note is one sentence: its row already says where to cancel.
         .navigationBarTitleDisplayMode(.inline)
     }
 }
