@@ -734,20 +734,12 @@ struct CatCareDetailView: View {
         return CatCareProgress(draft: draft, record: currentRecord, hasLifeDates: lifeDates)
     }
 
-    /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
-    /// 11/26: the name only with an age (it is already large at the top);
-    /// with neither line, no footer.
+    /// 11/26: only 「誕生日か迎えた日を入れると…」, and only while no date is
+    /// written. No 「ミケ（4歳）」 (the page is already this cat's, the date is in
+    /// the row above) and no note on how the album groups once a date is in.
     private var basicsFooter: String {
-        var lines: [String] = []
-        if let birthday = currentRecord?.birthday?.value ?? nil,
-           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
-            lines.append(subject.displayName + (farewell == nil ? "（\(age)）" : "（\(age)まで）"))
-        }
-        // 11/23: 「誕生日か迎えた日を入れると…」 only while no date is written.
-        if case let .profile(profile) = subject, profile.lifeReference != nil || !hasLifeDate {
-            lines.append(profile.lifeDatesExplanation)
-        }
-        return lines.joined(separator: "\n")
+        guard case let .profile(profile) = subject, !hasLifeDate else { return "" }
+        return profile.lifeDatesExplanation
     }
 
     /// A birthday or a day the cat came home, written anywhere for this cat.
