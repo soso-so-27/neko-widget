@@ -300,13 +300,13 @@ final class GroupWindowMembersModel: ObservableObject {
         // 11/26: the admissions and the window are read side by side.
         let client = client, windowID = windowID
         async let admissions = (try? await client.reconcileAdmissions()) ?? []
-        let window: Result<GroupWindow, Error>
-        do { window = .success(try await client.window(id: windowID)) } catch { window = .failure(error) }
+        let fetched: Result<GroupWindow, Error>
+        do { fetched = .success(try await client.window(id: windowID)) } catch { fetched = .failure(error) }
         admissionResults = (await admissions).filter { $0.windowID == windowID && !$0.joinedLocally }
         do {
             // 11/26: read once; the requests and the link reuse it (it was
             // read three times in a row each time the screen opened).
-            let read = try window.get()
+            let read = try fetched.get()
             var latest = transform(read)
             if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
