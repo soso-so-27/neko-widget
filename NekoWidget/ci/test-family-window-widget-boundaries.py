@@ -2685,9 +2685,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('.alert("この子を追加できませんでした"', source("NekoWidget/Views/CatProfilesView.swift"))
         self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
         # 11/26: 「旅立った日を記録する」 is in 「…」 itself, not in the delete question.
-        self.assertIn('Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }',
-                      section(care, "private var moreMenu: some View {", "// MARK: The family's representative photo"))
-        self.assertNotIn("旅立った日を記録する", section(care, "@ViewBuilder private var deleteActions: some View {", "private func delete("))
+        more_menu = section(care, "private var moreMenu: some View {", "// MARK: The family's representative photo")
+        # 11/26: last before 「この子を削除」, a calendar (not a star), on one line.
+        self.assertIn('Button("旅立った日を記録", systemImage: "calendar") { showsFarewellEditor = true }', more_menu)
+        self.assertNotIn('systemImage: "star"', more_menu)
+        self.assertLess(more_menu.index("if canReorder { reorderButton }"), more_menu.index("cat-profile-record-farewell"))
+        self.assertLess(more_menu.index("cat-profile-family-unlink"), more_menu.index("cat-profile-record-farewell"))
+        self.assertNotIn("旅立った日を記録", section(care, "@ViewBuilder private var deleteActions: some View {", "private func delete("))
         self.assertIn("元に戻せません。", section(care, "private var form: some View {", "var body: some View {"))
         self.assertNotIn("openParts", care)
         self.assertIn('sheetRow("誕生日・迎えた日", "birthday.cake", value: profile.lifeDatesSummary,', care)

@@ -1039,16 +1039,19 @@ struct CatCareDetailView: View {
             deleteFailed = false
             showsDeleteConfirmation = true
         } extra: {
-            if case .profile = subject, farewell == nil, Version1.isOn {
-                Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }
-                    .accessibilityIdentifier("cat-profile-record-farewell")
-            }
             if canReorder { reorderButton }
             // 11/15: only a cat this iPhone linked to a family cat; the one
             // place to undo 「同じ子」.
             if case let .profile(profile) = subject, familyNotebook.unlinkOffered(profile: profile.identifier) {
                 Button("家族の手帳とのつながりを外す", systemImage: "link") { confirmsUnlink = true }
                     .accessibilityIdentifier("cat-profile-family-unlink")
+            }
+            // 11/26: last before 「この子を削除」, with a plain calendar, not a
+            // star: a once-in-a-life item is not the first thing seen each
+            // time 「…」 is opened to reorder.
+            if case .profile = subject, farewell == nil, Version1.isOn {
+                Button("旅立った日を記録", systemImage: "calendar") { showsFarewellEditor = true }
+                    .accessibilityIdentifier("cat-profile-record-farewell")
             }
         }
         .disabled(isDeleting)
