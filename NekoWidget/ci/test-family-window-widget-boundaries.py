@@ -4342,7 +4342,10 @@ class OwnerDecisions1108Tests(unittest.TestCase):
             self.assertNotIn(old, setup)
         # 16: where to undo a block is said once.
         self.assertEqual(window.count("から戻せます。"), 1)
-        self.assertIn('"困る写真は、写真の「…」から通報・ブロックできます。"', setup)
+        # 11/26: no note on where 通報 and ブロック are; own name under own face.
+        self.assertNotIn("困る写真は", setup)
+        self.assertIn('case (true, true): return "あなた・作った人"', setup)
+        self.assertNotIn('shownName: member.id == window.myParticipantID ? "あなた"', setup)
 
     def test_window_notes_are_short(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
