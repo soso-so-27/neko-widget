@@ -97,6 +97,13 @@ class AlbumWaitsEndTests(unittest.TestCase):
         self.assertIn("index = samePeriod ? min(index, max(0, next.count - 1)) : 0", book)
         self.assertIn("if showsLeaves {", book)
 
+    def test_an_invitation_reads_the_window_once(self):
+        client = (ROOT / "NekoWidget/Services/ProductionGroupWindowClient.swift").read_text(encoding="utf-8")
+        make = client[client.index("    func createInvitation(windowID: String, operation: GroupOperation)"):]
+        make = make[:make.index("    func revokeInvitation(")]
+        self.assertEqual(make.count("try await window(id: windowID)"), 1)
+        self.assertIn("reusableInvitation(windowID: windowID, current: current)", make)
+
     def test_a_cancelled_window_read_is_not_a_failure(self):
         window = (ROOT / "NekoWidget/Views/GroupWindowView.swift").read_text(encoding="utf-8")
         sync = window[window.index("    func sync(background: Bool, newestOnly: Bool) async {"):]
