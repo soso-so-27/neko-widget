@@ -464,6 +464,10 @@ final class GroupWindowScreenModel: ObservableObject {
             }
         } catch GroupClientError.notMember {
             window = nil; failedDelivery = nil; message = nil; isGone = true; morePhotosComing = false
+        } catch is CancellationError {
+            // 11/26: a read the app itself stopped (the screen went away or
+            // opened again; the transport turns URLError.cancelled into this)
+            // is not a failure: no 「まどを読み込めませんでした」, the next read goes on.
         } catch {
             message = GroupWindowPresentation.message(for: error)
             reloadMessage = message

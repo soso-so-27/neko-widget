@@ -97,6 +97,13 @@ class AlbumWaitsEndTests(unittest.TestCase):
         self.assertIn("index = samePeriod ? min(index, max(0, next.count - 1)) : 0", book)
         self.assertIn("if showsLeaves {", book)
 
+    def test_a_cancelled_window_read_is_not_a_failure(self):
+        window = (ROOT / "NekoWidget/Views/GroupWindowView.swift").read_text(encoding="utf-8")
+        sync = window[window.index("    func sync(background: Bool, newestOnly: Bool) async {"):]
+        sync = sync[:sync.index("    /// The Widget reads only this copy")]
+        self.assertLess(sync.index("} catch is CancellationError {"),
+                        sync.index("message = GroupWindowPresentation.message(for: error)"))
+
     def test_book_share_only_on_the_nine_page(self):
         # 11/26: on the cover it read as sharing the whole album.
         self.assertIn("if showsLeaves, leaves.indices.contains(index), case .nine = leaves[index] { shareButton }", ALBUM)
