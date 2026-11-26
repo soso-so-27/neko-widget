@@ -873,7 +873,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = try launchOwnerCapture("showcase")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "この子"))
         app.buttons["tools-showcase-open"].tap()
-        XCTAssertTrue(app.buttons["showcase-slideshow-open"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 15))
         if app.buttons["showcase-gallery-scope"].exists {
             app.buttons["showcase-gallery-scope"].tap()
             let all = app.buttons["すべての猫"]

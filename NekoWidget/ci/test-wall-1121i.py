@@ -97,6 +97,12 @@ class AlbumWaitsEndTests(unittest.TestCase):
         self.assertIn("index = samePeriod ? min(index, max(0, next.count - 1)) : 0", book)
         self.assertIn("if showsLeaves {", book)
 
+    def test_book_share_only_on_the_nine_page(self):
+        # 11/26: on the cover it read as sharing the whole album.
+        self.assertIn("if showsLeaves, leaves.indices.contains(index), case .nine = leaves[index] { shareButton }", ALBUM)
+        self.assertIn("if leaves.indices.contains(index), case .nine = leaves[index] { shareButton }", ALBUM)
+        self.assertEqual(ALBUM.count("{ shareButton }"), 2)
+
     def test_share_buttons_never_spin_forever(self):
         self.assertEqual(ALBUM.count(".task(id: BookShareTaskID(input: shareInput, attempt: shareAttempt)) {"), 2)
         self.assertEqual(ALBUM.count("shareFailed = request.input"), 2)

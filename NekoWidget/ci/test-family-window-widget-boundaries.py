@@ -4930,7 +4930,9 @@ class ShowcaseCatCareTests(unittest.TestCase):
         # 2. Slideshow: a quiet button, a full screen with no controls.
         main = section(view, "struct ShowcasePhotoView: View {", "enum BestNineComposer {")
         self.assertIn('Label("スライドショー", systemImage: "play")', main)
-        self.assertIn("if slides.count > 1 {", main)
+        self.assertIn("if Self.offersSlideshow, slides.count > 1 {", main)
+        # 11/26: the button is off in 1.0; the slideshow stays in the code.
+        self.assertIn("static let offersSlideshow = false", main)
         self.assertIn(".fullScreenCover(isPresented: $showsSlideshow) {", main)
         slides = section(view, "struct ShowcaseSlideshowView: View {", "private struct ShowcaseDetailPhoto: View {")
         self.assertIn("static let seconds: UInt64 = 3", slides)

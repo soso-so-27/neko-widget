@@ -1722,7 +1722,7 @@ private struct YearBookView: View {
                      photos: nine, title: "\(names)　\(cardTitle)")
     }
 
-    /// 11/7: always top right, like the month's book; a spinner while the image is made.
+    /// 11/7: top right, like the month's book; a spinner while the image is made. 11/26: on the nine's page only.
     @ViewBuilder private var shareButton: some View {
         if let input = shareInput {
             if let image = cardShare.image(for: input) {
@@ -1801,7 +1801,8 @@ private struct YearBookView: View {
                 HStack(spacing: 0) {
                     // 11/23: no title here; the cover already says the year.
                     Spacer()
-                    shareButton
+                    // 11/26: only on the nine's page, as the month's book.
+                    if leaves.indices.contains(index), case .nine = leaves[index] { shareButton }
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.headline).foregroundStyle(ink)
                             .frame(width: 44, height: 44)
@@ -2338,7 +2339,9 @@ struct MonthlyBookView: View {
                 HStack(spacing: 0) {
                     // 11/23: no title here; the cover already says the month.
                     Spacer()
-                    shareButton
+                    // 11/26: only on the nine's page, the picture it shares
+                    // (on the cover it read as sharing the whole album).
+                    if showsLeaves, leaves.indices.contains(index), case .nine = leaves[index] { shareButton }
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.headline).foregroundStyle(Self.ink)
                             .frame(width: 44, height: 44)
@@ -2399,8 +2402,8 @@ struct MonthlyBookView: View {
         }
     }
 
-    /// 11/7: always top right, on every page (was only on the nine page,
-    /// only once ready). Disabled with a spinner while the image is made.
+    /// 11/7: top right, a spinner while the image is made. 11/26: back on
+    /// the nine's page only: on the cover it read as sharing the album.
     @ViewBuilder private var shareButton: some View {
         if let input = shareInput {
             if let image = cardShare.image(for: input) {
