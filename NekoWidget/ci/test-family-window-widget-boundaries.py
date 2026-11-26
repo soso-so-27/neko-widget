@@ -9443,16 +9443,18 @@ class CatIdentityMeasure1113Tests(unittest.TestCase):
         # WhenStuckTests (C1A51C14…, the 11/14 「困ったとき」 words), then
         # LaunchWorkTests (4C570000…, the light first seconds after launch), then
         # AccessibilitySpeechTests (C1A55E50…, the 11/14 VoiceOver review), then
-        # SettingsRulesTests (C1B24C24…, the 11/24 設定 and 自動保存 row rules).
+        # SettingsRulesTests (C1B24C24…, the 11/24 設定 and 自動保存 row rules), then
+        # BillingRestoreRecoveryTests (C1B26C26…, 11/26 restore after a rotated key).
         self.assertIn("children = (C1108C000000000000000002,C1D3A9110000000000000006,"
                       "C15C0A7E0000000000000002,C1A1BF100000000000000002,C1CA70500000000000000002,"
                       "C1E0A7E00000000000000002,C1A11A170000000000000002,C1FA3A110000000000000002,C1A51C140000000000000002,4C570000000000000000000A,"
-                      "C1A55E500000000000000002,C1B24C240000000000000002,); path = NekoWidgetTests;", self.project)
+                      "C1A55E500000000000000002,C1B24C240000000000000002,C1B26C260000000000000002,); path = NekoWidgetTests;", self.project)
         self.assertIn("files = (C1108C000000000000000003,C1D3A9110000000000000005,"
                       "C15C0A7E0000000000000001,C1A1BF100000000000000001,C1CA70500000000000000001,"
                       "C1E0A7E00000000000000001,C1A11A170000000000000001,C1FA3A110000000000000001,C1A51C140000000000000001,4C5700000000000000000009,"
-                      "C1A55E500000000000000001,C1B24C240000000000000001,);", self.project)
+                      "C1A55E500000000000000001,C1B24C240000000000000001,C1B26C260000000000000001,);", self.project)
         self.assertIn("path = SettingsRulesTests.swift;", self.project)
+        self.assertIn("path = BillingRestoreRecoveryTests.swift;", self.project)
         self.assertEqual(len(set(re.findall(r"C1D3A911000000000000000\d", self.project))), 6)
 
     def test_store_product_compiles_none_of_it(self) -> None:
