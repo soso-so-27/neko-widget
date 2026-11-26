@@ -17,7 +17,7 @@ class ReadingControls(unittest.TestCase):
     def test_partial_failure_keeps_photos_and_retry(self):
         self.assertIn('if !catPhotos.isEmpty {', HOME)
         # 11/14: a running search is the spinner after 「〇枚」, not a row.
-        self.assertIn('if scan.hasFailed || scan.hasDeferredAssets {', HOME)
+        self.assertIn('if scan.hasFailed {', HOME)
         self.assertIn('.disabled(scan.isScanning)', HOME)
         method = VM.split('func rescan() async {', 1)[1].split('func suspendScan()', 1)[0]
         self.assertLess(method.index('isManualRescanRequestPending = true'), method.index('await saveSnapshot'))

@@ -143,7 +143,7 @@ class LaunchWork(unittest.TestCase):
     def test_photos_tab_grid_never_moves_for_a_search(self):
         home = read("NekoWidget/Views/HomeView.swift")
         main = read("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertIn("if scan.hasFailed {\n                            partialScanStatus", home)
         self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
         self.assertIn("PhotoCountWithScanActivity(count: photos.count)", main)
         count = block(home, "struct PhotoCountWithScanActivity: View {")
