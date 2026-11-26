@@ -31,11 +31,8 @@ struct CatCandidateCurationView: View {
 
             Section {
                 if excludedPhotos.isEmpty {
-                    ContentUnavailableView(
-                        "出さない写真はありません",
-                        systemImage: "cat",
-                        description: Text("写真の「…」から「猫の写真から外す」を選ぶと外せます。")
-                    )
+                    // 11/26: no 「写真の「…」から…」 directions.
+                    ContentUnavailableView("出さない写真はありません", systemImage: "cat")
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
                 } else {

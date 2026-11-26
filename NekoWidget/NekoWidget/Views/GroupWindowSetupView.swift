@@ -296,7 +296,10 @@ final class GroupWindowMembersModel: ObservableObject {
         let results = (try? await client.reconcileAdmissions()) ?? []
         admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
         do {
-            var latest = transform(try await client.window(id: windowID))
+            // 11/26: read once; the requests and the link reuse it (it was
+            // read three times in a row each time the screen opened).
+            let read = try await client.window(id: windowID)
+            var latest = transform(read)
             if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
                 do {
@@ -314,9 +317,17 @@ final class GroupWindowMembersModel: ObservableObject {
             // The people waiting and the invitation are read on their own:
             // a failure keeps what was shown, and the next pass reads again.
             if latest.canManage {
-                if let requests = try? await client.pendingRequests(windowID: windowID) { pendingRequests = requests }
-                do { invitation = try await client.reusableInvitation(windowID: windowID) } catch {}
+                // A renewed key (a new revision) is read again, as before.
+                if latest.revision == read.revision {
+                    if let requests = try? await client.pendingRequests(windowID: windowID, current: read) { pendingRequests = requests }
+                    do { invitation = try await client.reusableInvitation(windowID: windowID, current: read) } catch {}
+                } else {
+                    if let requests = try? await client.pendingRequests(windowID: windowID) { pendingRequests = requests }
+                    do { invitation = try await client.reusableInvitation(windowID: windowID) } catch {}
+                }
             }
+        } catch is CancellationError {
+            // 11/26: the screen went away or was pulled again: not a failure.
         } catch {
             // Keep the last known window and requests. Only say that the
             // latest could not be checked; never clear a list on a failure.
@@ -694,14 +705,13 @@ struct GroupWindowMembersView: View {
         // 11/21e: shown whenever this person has reports here (their answers
         // are read on the list itself), not only within a minute of a photo.
         let reports = safety.service.isAvailable || !(safety.records[model.windowID] ?? []).isEmpty
+        // 11/26: no note on where 通報 and ブロック are: they
+        // sit in the photo's 「…」, and the review note shows them.
         Section {
             if reports {
                 NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
                     .accessibilityIdentifier("group-window-reports")
             }
-        } footer: {
-            // 11/8: the photo's 「…」 offers ブロック and 通報 only.
-            Text("困る写真は、写真の「…」から通報・ブロックできます。")
         }
         .task { await safety.loadRecords(windowID: model.windowID) }
     }
@@ -880,6 +890,15 @@ struct GroupWindowMembersView: View {
         .contentShape(Rectangle())
     }
 
+    static func memberCaption(isMe: Bool, isOwner: Bool) -> String? {
+        switch (isMe, isOwner) {
+        case (true, true): return "あなた・作った人"
+        case (true, false): return "あなた"
+        case (false, true): return "作った人"
+        case (false, false): return nil
+        }
+    }
+
     @ViewBuilder
     private func memberRow(_ member: GroupMember, window: GroupWindow) -> some View {
         let canRemove = capabilities.removal
@@ -889,9 +908,11 @@ struct GroupWindowMembersView: View {
         let hidden = hiddenMembers.first { $0.id == member.id && member.id != window.myParticipantID }
         let caption: String? = running == "外す:\(member.id)" ? "外しています…"
             : hidden.map { $0.blocked == true ? "ブロック中" : "表示しない" }
-            ?? (member.role == .owner ? "作った人" : nil)
+            ?? Self.memberCaption(isMe: member.id == window.myParticipantID, isOwner: member.role == .owner)
+        // 11/26: one's own name under one's own face (its letter came from
+        // it, and it is what the family sees), 「あなた」 in the line below.
         let shown = face(name: member.displayName,
-                         shownName: member.id == window.myParticipantID ? "あなた" : member.displayName,
+                         shownName: member.displayName,
                          caption: caption, captionColor: hidden != nil ? .orange : .secondary)
         let label = "\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))"
             + (hidden.map { $0.blocked == true ? "、ブロック中" : "、表示しない" } ?? "")
@@ -1366,6 +1387,7 @@ final class GroupJoinModel: ObservableObject {
                 if let saved = try await client.resumableJoin(invitationID: invitationID) {
                     displayName = saved.displayName; update(with: saved)
                 }
+            } catch is CancellationError {
             } catch { errorMessage = GroupWindowPresentation.message(for: error) }
         }
     }
@@ -1415,6 +1437,7 @@ final class GroupJoinModel: ObservableObject {
             update(with: latest)
             // A quiet pass leaves the last result on screen unless the state moved on.
             if reportsFailure || !isPending { errorMessage = nil }
+        } catch is CancellationError {
         } catch {
             // Keep waiting; the application is still on the relay.
             if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }

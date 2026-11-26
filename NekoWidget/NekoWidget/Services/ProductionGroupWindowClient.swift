@@ -1033,11 +1033,13 @@ extension ProductionGroupWindowClient {
         return capability.invitationID
     }
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
-        if let existing = try await reusableInvitation(windowID: windowID) { return existing }
+        // 11/26: the window is read once for the whole link (it was read
+        // three times, one after another, before the link showed).
+        let current = try await window(id: windowID)
+        if let existing = try await reusableInvitation(windowID: windowID, current: current) { return existing }
         let intent = "invite:\(windowID):\(operation.expectedRevision)"
         var secret = try load(GroupLocalInvitation.self, "invite-op:" + operation.id.uuidString.lowercased())
         if secret == nil {
-            let current = try await window(id: windowID)
             guard current.canManage else { throw GroupClientError.ownerRequired }
             guard current.state == .active, current.deliveryStatus != .paused else { throw GroupSubscriptionError.windowPaused }
             guard current.revision == operation.expectedRevision else { throw GroupClientError.staleRevision(current: current.revision) }
@@ -1054,7 +1056,6 @@ extension ProductionGroupWindowClient {
         guard reply.operationID == operation.id.uuidString.lowercased(), reply.revision == operation.expectedRevision else { throw GroupClientError.invalidResponse }
         var capability = GroupInvitationCapability(windowID: windowID, invitationID: reply.invitationID, privateKey: secret.privateKey,
             ownerRoot: try local(windowID).anchor.ownerIdentityPublicKey, expiresAt: Date(timeIntervalSince1970: TimeInterval(reply.expiresAt)))
-        let current = try await window(id: windowID)
         let inviter = current.members.first { $0.id == current.myParticipantID }?.displayName ?? "まどを作った人"
         capability.contextCiphertext = try GroupInvitationContext(windowName: current.name, inviterName: inviter)
             .seal(secret: capability.privateKey, windowID: windowID, invitationID: capability.invitationID, owner: capability.ownerRoot)
@@ -1189,7 +1190,9 @@ extension ProductionGroupWindowClient {
         return false
     }
     func reusableInvitation(windowID: String) async throws -> GroupInvitation? {
-        let current = try await window(id: windowID)
+        try await reusableInvitation(windowID: windowID, current: try await window(id: windowID))
+    }
+    func reusableInvitation(windowID: String, current: GroupWindow) async throws -> GroupInvitation? {
         guard current.canManage, current.state == .active, current.deliveryStatus != .paused else { return nil }
         let index = try load([String: String].self, "owner-invitation-index") ?? [:]
         let accounts = Set(try secrets.accounts(prefix: "invite:") + [index[windowID]].compactMap { $0 }.map { "invite:" + $0 })
@@ -1357,7 +1360,10 @@ extension ProductionGroupWindowClient {
         return saved.request
     }
     func pendingRequests(windowID: String) async throws -> [GroupJoinRequest] {
-        let current = try await window(id: windowID), identity = try identity()
+        try await pendingRequests(windowID: windowID, current: try await window(id: windowID))
+    }
+    func pendingRequests(windowID: String, current: GroupWindow) async throws -> [GroupJoinRequest] {
+        let identity = try identity()
         guard current.canManage else { throw GroupClientError.ownerRequired }
         let rows = try await page(GroupAPIModel.PendingJoin.self, path: "/v3/group-windows/\(windowID)/join-requests/list")
         guard rows.count <= 100, Set(rows.map(\.id)).count == rows.count else { throw GroupClientError.invalidResponse }

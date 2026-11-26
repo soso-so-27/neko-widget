@@ -65,8 +65,11 @@ class FieldCountTests(unittest.TestCase):
 class CatCareTests(unittest.TestCase):
     def test_the_date_note_only_before_a_date(self):
         footer = section(CARE, "    private var basicsFooter: String {", "    // MARK: Rows")
-        self.assertIn("profile.lifeReference != nil || !hasLifeDate", footer)
+        self.assertIn("guard case let .profile(profile) = subject, !hasLifeDate else { return \"\" }", footer)
         self.assertIn("private var hasLifeDate: Bool {", footer)
+        # 11/26: no 「ミケ（4歳）」 line.
+        self.assertNotIn("CatCareLostCat.age(", footer)
+        self.assertNotIn("displayName", footer)
 
     def test_no_summary_line_or_check_mark(self):
         self.assertNotIn("summaryLine", CARE)

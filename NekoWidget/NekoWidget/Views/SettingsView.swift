@@ -45,11 +45,14 @@ struct AccountDeletionChoicesView: View {
                     Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
                         .accessibilityIdentifier("account-deletion-subscriptions")
                 } footer: {
-                    Text("Plusは、ここで消しても解約されません。解約はApp Storeのサブスクリプションからです。")
+                    Text("Plusは、ここで消しても解約されません。")
                 }
             }
         }
         .navigationTitle("アカウントとデータを消す")
+        // 11/26: inline; the large title was cut to 「アカウントとデータを…」.
+        // The Plus note is one sentence: its row already says where to cancel.
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

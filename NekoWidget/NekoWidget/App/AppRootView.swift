@@ -242,6 +242,8 @@ struct AppRootView: View {
             switch newPhase {
             case .active:
                 widgetInstallationChecker.refresh()
+                // 11/26: the person key into iCloud Keychain, for 機種変更.
+                Task { await GroupRecoveryRootBackup.ensure() }
                 Task {
                     await viewModel.syncOnActive()
                     await viewModel.refreshInstalledCloudyWindows()

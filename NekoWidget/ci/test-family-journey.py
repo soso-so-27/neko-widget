@@ -966,7 +966,9 @@ class NotebookCleanup1119Tests(unittest.TestCase):
         self.assertIn('case .remove: "この人を手帳から外す"', member)
         self.assertIn('"\\(member.displayName)さんを家族の手帳から外しますか？"', member)
         self.assertNotIn("家族の共有をやめる", NOTEBOOK)
-        self.assertIn('Button("この猫を手帳から外す")', read("NekoWidget/Views/FamilyNotebookSharedCatRow.swift"))
+        cat_row = read("NekoWidget/Views/FamilyNotebookSharedCatRow.swift")
+        self.assertIn('Button("この猫を手帳から外す", role: .destructive) { confirming = true }', cat_row)
+        self.assertNotIn(".swipeActions(", cat_row)
         self.assertIn('WorkingLabel(title: "この日付の共有をやめる"', NOTEBOOK)
         self.assertIn('static let dissolveDetail = "家族みんなの共有が終わります。書いたものは、それぞれのiPhoneに残ります。"',
                       NOTEBOOK)

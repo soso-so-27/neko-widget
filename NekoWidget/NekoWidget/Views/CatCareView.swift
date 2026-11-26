@@ -734,20 +734,12 @@ struct CatCareDetailView: View {
         return CatCareProgress(draft: draft, record: currentRecord, hasLifeDates: lifeDates)
     }
 
-    /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
-    /// 11/26: the name only with an age (it is already large at the top);
-    /// with neither line, no footer.
+    /// 11/26: only 「誕生日か迎えた日を入れると…」, and only while no date is
+    /// written. No 「ミケ（4歳）」 (the page is already this cat's, the date is in
+    /// the row above) and no note on how the album groups once a date is in.
     private var basicsFooter: String {
-        var lines: [String] = []
-        if let birthday = currentRecord?.birthday?.value ?? nil,
-           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
-            lines.append(subject.displayName + (farewell == nil ? "（\(age)）" : "（\(age)まで）"))
-        }
-        // 11/23: 「誕生日か迎えた日を入れると…」 only while no date is written.
-        if case let .profile(profile) = subject, profile.lifeReference != nil || !hasLifeDate {
-            lines.append(profile.lifeDatesExplanation)
-        }
-        return lines.joined(separator: "\n")
+        guard case let .profile(profile) = subject, !hasLifeDate else { return "" }
+        return profile.lifeDatesExplanation
     }
 
     /// A birthday or a day the cat came home, written anywhere for this cat.
@@ -1039,16 +1031,19 @@ struct CatCareDetailView: View {
             deleteFailed = false
             showsDeleteConfirmation = true
         } extra: {
-            if case .profile = subject, farewell == nil, Version1.isOn {
-                Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }
-                    .accessibilityIdentifier("cat-profile-record-farewell")
-            }
             if canReorder { reorderButton }
             // 11/15: only a cat this iPhone linked to a family cat; the one
             // place to undo 「同じ子」.
             if case let .profile(profile) = subject, familyNotebook.unlinkOffered(profile: profile.identifier) {
                 Button("家族の手帳とのつながりを外す", systemImage: "link") { confirmsUnlink = true }
                     .accessibilityIdentifier("cat-profile-family-unlink")
+            }
+            // 11/26: last before 「この子を削除」, with a plain calendar, not a
+            // star: a once-in-a-life item is not the first thing seen each
+            // time 「…」 is opened to reorder.
+            if case .profile = subject, farewell == nil, Version1.isOn {
+                Button("旅立った日を記録", systemImage: "calendar") { showsFarewellEditor = true }
+                    .accessibilityIdentifier("cat-profile-record-farewell")
             }
         }
         .disabled(isDeleting)

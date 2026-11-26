@@ -2685,9 +2685,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('.alert("この子を追加できませんでした"', source("NekoWidget/Views/CatProfilesView.swift"))
         self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
         # 11/26: 「旅立った日を記録する」 is in 「…」 itself, not in the delete question.
-        self.assertIn('Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }',
-                      section(care, "private var moreMenu: some View {", "// MARK: The family's representative photo"))
-        self.assertNotIn("旅立った日を記録する", section(care, "@ViewBuilder private var deleteActions: some View {", "private func delete("))
+        more_menu = section(care, "private var moreMenu: some View {", "// MARK: The family's representative photo")
+        # 11/26: last before 「この子を削除」, a calendar (not a star), on one line.
+        self.assertIn('Button("旅立った日を記録", systemImage: "calendar") { showsFarewellEditor = true }', more_menu)
+        self.assertNotIn('systemImage: "star"', more_menu)
+        self.assertLess(more_menu.index("if canReorder { reorderButton }"), more_menu.index("cat-profile-record-farewell"))
+        self.assertLess(more_menu.index("cat-profile-family-unlink"), more_menu.index("cat-profile-record-farewell"))
+        self.assertNotIn("旅立った日を記録", section(care, "@ViewBuilder private var deleteActions: some View {", "private func delete("))
         self.assertIn("元に戻せません。", section(care, "private var form: some View {", "var body: some View {"))
         self.assertNotIn("openParts", care)
         self.assertIn('sheetRow("誕生日・迎えた日", "birthday.cake", value: profile.lifeDatesSummary,', care)
@@ -4338,7 +4342,10 @@ class OwnerDecisions1108Tests(unittest.TestCase):
             self.assertNotIn(old, setup)
         # 16: where to undo a block is said once.
         self.assertEqual(window.count("から戻せます。"), 1)
-        self.assertIn('"困る写真は、写真の「…」から通報・ブロックできます。"', setup)
+        # 11/26: no note on where 通報 and ブロック are; own name under own face.
+        self.assertNotIn("困る写真は", setup)
+        self.assertIn('case (true, true): return "あなた・作った人"', setup)
+        self.assertNotIn('shownName: member.id == window.myParticipantID ? "あなた"', setup)
 
     def test_window_notes_are_short(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
@@ -4926,7 +4933,9 @@ class ShowcaseCatCareTests(unittest.TestCase):
         # 2. Slideshow: a quiet button, a full screen with no controls.
         main = section(view, "struct ShowcasePhotoView: View {", "enum BestNineComposer {")
         self.assertIn('Label("スライドショー", systemImage: "play")', main)
-        self.assertIn("if slides.count > 1 {", main)
+        self.assertIn("if Self.offersSlideshow, slides.count > 1 {", main)
+        # 11/26: the button is off in 1.0; the slideshow stays in the code.
+        self.assertIn("static let offersSlideshow = false", main)
         self.assertIn(".fullScreenCover(isPresented: $showsSlideshow) {", main)
         slides = section(view, "struct ShowcaseSlideshowView: View {", "private struct ShowcaseDetailPhoto: View {")
         self.assertIn("static let seconds: UInt64 = 3", slides)

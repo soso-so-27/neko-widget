@@ -31,7 +31,9 @@ class ReviewEyeTests(unittest.TestCase):
     def test_family_entry_can_be_told_to_us_without_sending_it(self) -> None:
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         recent = section(notebook, 'Section("最近の書き込み") {', '"family-notebook-hidden-operations"')
-        menu = section(recent, ".contextMenu {", "// Undo,")
+        # 11/26: a visible 「…」, not a long press.
+        menu = section(recent, "Menu {", '"family-notebook-recent-more"')
+        self.assertNotIn(".contextMenu {", recent)
         self.assertIn('Button("この書き込みを表示しない"', menu)
         self.assertIn('Button("運営に知らせる", systemImage: "exclamationmark.bubble") { reportsEntry = true }', menu)
         # Only others' entries are listed here.

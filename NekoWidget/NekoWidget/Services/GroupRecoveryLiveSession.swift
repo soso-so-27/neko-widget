@@ -2,7 +2,6 @@ import Foundation
 import Combine
 import CryptoKit
 #if os(iOS)
-import LocalAuthentication
 #endif
 
 // 機種変更の画面（設定 → 家族とまど、内部版は 設定 → テスト用 にも）の接続。
@@ -659,6 +658,41 @@ private func currentRegisteredRoot(namespace: String) throws -> Data? {
     return raw
 }
 
+/// 11/26 (the owner's decision): this iPhone's person key goes to iCloud
+/// Keychain by itself, as passkeys do, so a new iPhone finds the same
+/// person with 「引き継ぐ」. It was written only after 「このiPhoneの情報を
+/// 送り直す」 on the old iPhone with Face ID, which nobody does before
+/// changing phones. Once per launch when it worked; an iPhone without a
+/// registered person yet, or with the Keychain locked, tries on the next
+/// activation. Never overwrites (storeIfAbsent); the deletion path still
+/// removes it (removeDeletedPersonSyncedRoot).
+@MainActor
+enum GroupRecoveryRootBackup {
+    private static var done = false
+    private static var running = false
+
+    static func ensure() async {
+        guard !done, !running, SharingAPIConfiguration.groupRecoveryRuntimeEnabled else { return }
+        let environment: RootSyncStore.Environment
+        switch SharingAPIConfiguration.current.releaseMode {
+        case "production": environment = .production
+        case "media-staging": environment = .staging
+        default: return
+        }
+        running = true; defer { running = false }
+        let namespace = GroupWindowClientProvider.namespace
+        done = await Task.detached(priority: .utility) { () -> Bool in
+            guard let root = try? currentRegisteredRoot(namespace: namespace) else { return false }
+            // A build without the synced key's access group has nowhere to put it.
+            guard let sync = try? makeRootSyncStore(environment: environment) else { return true }
+            switch await sync.storeIfAbsent(explicitRoot: root) {
+            case .created, .existing: return true
+            case .failed: return false
+            }
+        }.value
+    }
+}
+
 /// 11/19: whether 設定 shows the 機種変更 row. Only in a build that carries the
 /// feature (SharingAPIConfiguration.groupRecoveryRuntimeEnabled), and only
 /// once the relay's own gate answered open. While it is closed (503
@@ -794,20 +828,9 @@ extension GroupRecoveryLiveModel {
             return GroupRecoveryLiveModel { throw RootSyncFailure.invalidInput }
         }
         let namespace = GroupWindowClientProvider.namespace
-        let publish: @Sendable () async throws -> Void = {
-            try await sync.publishCurrentRoot(authenticate: {
-                let context = LAContext()
-                defer { context.invalidate() }
-                return try await context.evaluatePolicy(.deviceOwnerAuthentication,
-                    localizedReason: GroupRecoveryWords.syncAction)
-            }, load: {
-                guard let root = try currentRegisteredRoot(namespace: namespace) else {
-                    throw GroupRecoveryClient.Failure.authentication
-                }
-                return root
-            })
-        }
-        return GroupRecoveryLiveModel(publishRoot: publish) {
+        // 11/26: no 「このiPhoneの情報を送り直す」 here; the key goes to iCloud
+        // Keychain by itself (GroupRecoveryRootBackup).
+        return GroupRecoveryLiveModel {
             // If the Keychain cannot be read, preserve the error. Only a
             // successful empty read plus no local identity means no candidates.
             var roots = try await sync.availableRoots().map(\.privateKey)

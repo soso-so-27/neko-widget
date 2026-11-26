@@ -199,6 +199,9 @@ struct ShowcasePhotoView: View {
     @State private var isPreparingBestNine = false
     /// Round 2: the photos one by one, full screen, to hand the iPhone over.
     @State private var showsSlideshow = false
+    /// 11/26: off in 1.0. It only showed the nine above again, one by one;
+    /// the page is for sharing the nine. The slideshow stays in the code.
+    static let offersSlideshow = false
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
@@ -430,7 +433,7 @@ struct ShowcasePhotoView: View {
                     .accessibilityLabel("画像を作っています")
                     .accessibilityIdentifier("showcase-share-best-nine-preparing")
                 }
-                if slides.count > 1 {
+                if Self.offersSlideshow, slides.count > 1 {
                     // Round 2: quiet, under the main button.
                     Button { showsSlideshow = true } label: {
                         Label("スライドショー", systemImage: "play")

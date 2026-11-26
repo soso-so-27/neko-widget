@@ -1517,20 +1517,28 @@ struct FamilyNotebookView: View {
             if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
                     ForEach(visibleRecentFromFamily) { operation in
+                        // 11/26: a visible 「…」 (it was a long press only, so
+                        // 「運営に知らせる」 could not be found by looking).
                         LabeledContent {
-                            Text(FamilyNotebookRecentDate.text(operation.editedAt))
+                            HStack(spacing: 4) {
+                                Text(FamilyNotebookRecentDate.text(operation.editedAt))
+                                Menu {
+                                    // Hiding is local to this iPhone; nobody is told.
+                                    Button("この書き込みを表示しない", systemImage: "eye.slash") { hide(operation) }
+                                    // Review (11/14, 1.2): a way to tell us, through the same
+                                    // contact page as Settings. Nothing about the entry is sent.
+                                    if AppPublicLinksConfiguration.current.supportURL != nil {
+                                        Button("運営に知らせる", systemImage: "exclamationmark.bubble") { reportsEntry = true }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis").frame(width: 36, height: 44)
+                                }
+                                .accessibilityLabel("その他")
+                                .accessibilityIdentifier("family-notebook-recent-more")
+                            }
                         } label: {
                             Text(model.place(of: operation))
                             Text(model.shownName(operation.author))
-                        }
-                        .contextMenu {
-                            // Hiding is local to this iPhone; nobody is told.
-                            Button("この書き込みを表示しない", systemImage: "eye.slash") { hide(operation) }
-                            // Review (11/14, 1.2): a way to tell us, through the same
-                            // contact page as Settings. Nothing about the entry is sent.
-                            if AppPublicLinksConfiguration.current.supportURL != nil {
-                                Button("運営に知らせる", systemImage: "exclamationmark.bubble") { reportsEntry = true }
-                            }
                         }
                     }
                     // Undo, in the same form as まど's 「表示しない・ブロックした人」.
@@ -1986,6 +1994,7 @@ struct FamilyFarewellShareSheet: View {
     private func load() async {
         do {
             state = try await FamilyNotebookSharing.waitingForCheck { try await service.loadFarewellSharing(toolCatID: toolCatID) }
+        } catch is CancellationError {
         } catch {
             errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
         }
@@ -3382,6 +3391,8 @@ struct FamilyReportRepliesView: View {
         do {
             let replies = try await SharingPersonAction.run { try await FamilyReportReplies.load() }
             phase = .loaded(replies.sorted { $0.receivedAt > $1.receivedAt })
+        } catch is CancellationError {
+            // 11/26: a pull or a screen that went away: keep what is shown.
         } catch {
             phase = .failed
         }

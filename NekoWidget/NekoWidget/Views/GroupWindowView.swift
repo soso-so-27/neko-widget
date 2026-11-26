@@ -464,6 +464,10 @@ final class GroupWindowScreenModel: ObservableObject {
             }
         } catch GroupClientError.notMember {
             window = nil; failedDelivery = nil; message = nil; isGone = true; morePhotosComing = false
+        } catch is CancellationError {
+            // 11/26: a read the app itself stopped (the screen went away or
+            // opened again; the transport turns URLError.cancelled into this)
+            // is not a failure: no 「まどを読み込めませんでした」, the next read goes on.
         } catch {
             message = GroupWindowPresentation.message(for: error)
             reloadMessage = message
@@ -2907,15 +2911,13 @@ private struct GroupPhotoPage: View {
     var body: some View {
         Group {
             if safety.hasReported(entry.id, in: model.windowID) {
-                // Where the answers really are: 「メンバー」, or 「…」 on a
-                // window this iPhone is no longer in (11/7).
+                // 11/26: the state only; where the answer comes is said once,
+                // when the report is sent.
                 ContentUnavailableView("通報した写真", systemImage: "eye.slash",
-                    description: Text(model.isFormer || model.isGone
-                        ? "このiPhoneでは表示しません。結果は、まどの右上の「…」→「通報への返答」でお知らせします。"
-                        : "このiPhoneでは表示しません。結果は、まどの「メンバー」→「通報への返答」でお知らせします。"))
+                    description: Text("このiPhoneでは表示しません。"))
             } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
-                    description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
+                    description: Text("センシティブな内容が含まれている可能性があります。"))
             } else if let image {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真")
@@ -3577,7 +3579,8 @@ struct GroupWindowListSection: View {
                 // 11/22: with the cards kept from last time on screen, a failed
                 // refresh says nothing. Each card still opens, and the list is
                 // read again the next time the tab is shown.
-                if showsDiagnosis, let failure = model.lastFailure {
+                // 11/26: test builds only (it shows an ID and an internal code).
+                if InternalDiagnosis.isOn, showsDiagnosis, let failure = model.lastFailure {
                     // Only after a long press on 「みんなのまど」: the failing stage.
                     Text("診断　" + failure)
                         .font(.caption2.monospaced())
@@ -4285,6 +4288,9 @@ struct GroupIdentityDeletionView: View {
         do {
             record = try await client.identityDeletion()
             readFailed = false; failure = nil
+        } catch is CancellationError {
+            working = false
+            return
         } catch {
             // 11/20: not "nothing under way": that is not known.
             readFailed = true
@@ -4809,4 +4815,14 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
             await safety.setBlock(windowID: windowID, participantID: current.senderParticipantID, active: true)
         }
     }
+}
+
+/// 11/26: the まど list's 「診断」 line (an ID's start and an internal code)
+/// only in test builds; the long press does nothing in the App Store build.
+enum InternalDiagnosis {
+#if DEBUG || INTERNAL_PRESENTATION
+    static let isOn = true
+#else
+    static let isOn = false
+#endif
 }
