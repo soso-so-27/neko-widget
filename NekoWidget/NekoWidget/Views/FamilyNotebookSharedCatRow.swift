@@ -13,14 +13,21 @@ struct FamilyNotebookSharedCatRow<Thumbnail: View>: View {
     init(name: String, remove: @escaping () -> Void, @ViewBuilder thumbnail: () -> Thumbnail) {
         self.name = name; self.remove = remove; self.thumbnail = thumbnail()
     }
+    /// 11/26: a tap opens one item, as a face in まど's members does. The
+    /// swipe was hidden, and on iOS 26 its long red button slid out of an
+    /// empty row under the cat.
     var body: some View {
-        HStack(spacing: 12) {
-            thumbnail
-            Text(name)
+        Menu {
+            Button("この猫を手帳から外す", role: .destructive) { confirming = true }
+        } label: {
+            HStack(spacing: 12) {
+                thumbnail
+                Text(name).foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button("この猫を手帳から外す") { confirming = true }.tint(.red)
-        }
+        .accessibilityHint("操作を選べます")
         .confirmationDialog("この猫を家族の手帳から外しますか？", isPresented: $confirming, titleVisibility: .visible) {
             Button("外す", role: .destructive, action: remove)
         } message: { Text("各自の記録は残ります。") }

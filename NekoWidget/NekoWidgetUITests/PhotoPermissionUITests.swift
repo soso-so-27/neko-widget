@@ -4255,9 +4255,11 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--family-unshare-ui-fixture"]
         app.launch()
         // 11/7: the row is a name, not a link (one place to write: ツール).
-        let row = app.staticTexts["試験の猫"]
+        let row = app.descendants(matching: .any)["試験の猫"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
-        row.swipeLeft()
+        // 11/26: a tap on the row opens its one item (was a swipe).
+        row.tap()
+        XCTAssertTrue(app.buttons["この猫を手帳から外す"].waitForExistence(timeout: 3))
         app.buttons["この猫を手帳から外す"].tap()
         XCTAssertTrue(app.staticTexts["この猫を家族の手帳から外しますか？"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["各自の記録は残ります。"].exists)
