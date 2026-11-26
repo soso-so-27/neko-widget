@@ -905,7 +905,7 @@ class NotebookCleanup1119Tests(unittest.TestCase):
     def test_a_failed_read_says_one_line_and_one_button(self):
         failed = section(NOTEBOOK, "private var checkFailedSection: some View {", "private var recheckButton")
         # 11/22 (1122n): the app's one sentence for no connection.
-        self.assertIn('Label(FamilyNotebookOfflineText.sentence, systemImage: "wifi.exclamationmark")', failed)
+        self.assertIn('Label(FamilyNotebookOfflineText.sentence, systemImage: "exclamationmark.arrow.circlepath")', failed)
         retry = section(NOTEBOOK, "private var recheckButton: some View {", '.accessibilityIdentifier("family-notebook-check-retry")')
         self.assertIn('WorkingLabel(title: "もう一度", workingTitle: "確認しています…", working: rechecking)', retry)
         self.assertIn("SharingPersonAction.run", retry)

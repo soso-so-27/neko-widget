@@ -1227,7 +1227,8 @@ struct GroupWindowScreen: View {
     /// 11/22 (A5): 「ホーム画面に置く」 left the screen right after 「作る」;
     /// it stays one row on 「メンバー」, under the まど's name.
     private var membersScreen: some View {
-        GroupWindowMembersScreen(client: model.client, windowID: model.windowID, onLeft: closeAfterLeaving,
+        GroupWindowMembersScreen(client: model.client, windowID: model.windowID, initialWindow: model.window,
+                                 onLeft: closeAfterLeaving,
                                  offersWidgetPlacement: true)
     }
 
@@ -2947,9 +2948,10 @@ struct GroupWindowMembersScreen: View {
     private let onLeft: (() -> Void)?
     private let offersWidgetPlacement: Bool
 
-    init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil,
-         offersWidgetPlacement: Bool = false) {
-        _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
+    init(client: any GroupWindowClient, windowID: String, initialWindow: GroupWindow? = nil,
+         onLeft: (() -> Void)? = nil, offersWidgetPlacement: Bool = false) {
+        _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID,
+                                                                   initialWindow: initialWindow))
         self.onLeft = onLeft
         self.offersWidgetPlacement = offersWidgetPlacement
     }

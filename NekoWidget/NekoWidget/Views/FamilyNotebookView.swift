@@ -1624,7 +1624,7 @@ struct FamilyNotebookView: View {
     private var checkFailedSection: some View {
         Section {
             // 11/22 (1122n): the app's one sentence for no connection.
-            Label(FamilyNotebookOfflineText.sentence, systemImage: "wifi.exclamationmark")
+            Label(FamilyNotebookOfflineText.sentence, systemImage: "exclamationmark.arrow.circlepath")
                 .accessibilityIdentifier("family-notebook-check-failed")
             recheckButton
         }
@@ -1633,7 +1633,7 @@ struct FamilyNotebookView: View {
     /// The same, before anything of the notebook can show.
     private var checkFailedView: some View {
         ContentUnavailableView {
-            Label(FamilyNotebookOfflineText.title, systemImage: "wifi.exclamationmark")
+            Label(FamilyNotebookOfflineText.title, systemImage: "exclamationmark.arrow.circlepath")
         } description: {
             Text(FamilyNotebookOfflineText.next)
         } actions: {
@@ -3318,11 +3318,13 @@ private struct FamilyReportRepliesRow: View {
     }
 }
 
-/// 11/22 (1122n): the app's one sentence for "the server cannot be reached"
-/// (as the まど says it). A full-screen state shows it as a title and the next step.
+/// 11/22 (1122n): the one sentence for a read that did not reach the family.
+/// A full-screen state shows it as a title and the next step. 11/26: not
+/// 「接続できません」: it showed on Wi‑Fi too, for any failed read (a busy
+/// relay, a limit), and the person saw a working connection.
 enum FamilyNotebookOfflineText {
-    static let title = "接続できません。"
-    static let next = "電波のあるところで、もう一度お試しください。"
+    static let title = "家族の手帳を読み込めませんでした。"
+    static let next = "少し待ってから、もう一度お試しください。"
     static let sentence = title + next
 }
 
@@ -3351,7 +3353,7 @@ struct FamilyReportRepliesView: View {
                 ProgressView()
             case .failed:
                 ContentUnavailableView {
-                    Label(FamilyNotebookOfflineText.title, systemImage: "wifi.exclamationmark")
+                    Label(FamilyNotebookOfflineText.title, systemImage: "exclamationmark.arrow.circlepath")
                 } description: {
                     Text(FamilyNotebookOfflineText.next)
                 } actions: {

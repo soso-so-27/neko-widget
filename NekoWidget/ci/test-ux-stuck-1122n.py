@@ -105,10 +105,10 @@ class OneOfflineSentence(unittest.TestCase):
         self.assertNotIn("インターネットにつながっていません", CONTRACT)
         self.assertNotIn('Label("つながりませんでした"', NOTEBOOK)
         words = section(NOTEBOOK, "enum FamilyNotebookOfflineText {", "\n}")
-        self.assertIn('static let title = "接続できません。"', words)
-        self.assertIn('static let next = "電波のあるところで、もう一度お試しください。"', words)
+        self.assertIn('static let title = "家族の手帳を読み込めませんでした。"', words)
+        self.assertIn('static let next = "少し待ってから、もう一度お試しください。"', words)
         self.assertIn("static let sentence = title + next", words)
-        self.assertEqual(NOTEBOOK.count("Label(FamilyNotebookOfflineText.title, systemImage: \"wifi.exclamationmark\")"), 2)
+        self.assertEqual(NOTEBOOK.count("Label(FamilyNotebookOfflineText.title, systemImage: \"exclamationmark.arrow.circlepath\")"), 2)
         self.assertEqual(NOTEBOOK.count("Text(FamilyNotebookOfflineText.next)"), 2)
 
     def test_nowa_only_for_network_failures(self):

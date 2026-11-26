@@ -242,12 +242,16 @@ final class GroupWindowMembersModel: ObservableObject {
         client: any GroupWindowClient,
         windowID: String,
         now: @escaping () -> Date = Date.init,
-        transform: @escaping (GroupWindow) -> GroupWindow = { $0 }
+        transform: @escaping (GroupWindow) -> GroupWindow = { $0 },
+        initialWindow: GroupWindow? = nil
     ) {
         self.client = client
         self.windowID = windowID
         self.now = now
         self.transform = transform
+        // 11/26: the まど already open is shown at once; the read below
+        // brings the latest (the screen was 「読み込んでいます…」 for seconds).
+        if let initialWindow, initialWindow.id == windowID { _window = Published(initialValue: transform(initialWindow)) }
     }
 
     var activeInvitation: GroupInvitation? {
@@ -293,12 +297,16 @@ final class GroupWindowMembersModel: ObservableObject {
     }
 
     private func read(reportsFailure: Bool) async {
-        let results = (try? await client.reconcileAdmissions()) ?? []
-        admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
+        // 11/26: the admissions and the window are read side by side.
+        let client = client, windowID = windowID
+        async let admissions = (try? await client.reconcileAdmissions()) ?? []
+        let fetched: Result<GroupWindow, Error>
+        do { fetched = .success(try await client.window(id: windowID)) } catch { fetched = .failure(error) }
+        admissionResults = (await admissions).filter { $0.windowID == windowID && !$0.joinedLocally }
         do {
             // 11/26: read once; the requests and the link reuse it (it was
             // read three times in a row each time the screen opened).
-            let read = try await client.window(id: windowID)
+            let read = try fetched.get()
             var latest = transform(read)
             if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
