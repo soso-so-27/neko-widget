@@ -78,7 +78,11 @@ class WidgetGuideTests(unittest.TestCase):
         self.assertIn("isWidgetPlaced: widgetInstallationChecker.isInstalled", APP_ROOT)
 
     def test_settings_guide_keeps_its_close_button(self):
-        self.assertIn("if let closeTitle {", GUIDE)
+        # 11/26: the まど's guide (a sheet) keeps 「閉じる」; 設定's pushed page
+        # has the system 「戻る」 alone.
+        self.assertIn("} else if let closeTitle {", GUIDE)
+        self.assertIn("if closeTitle != nil && !showsCloseButton {", GUIDE)
+        self.assertIn('closeTitle: "閉じる", showsCloseButton: false)', source("NekoWidget/Views/SettingsView.swift"))
         self.assertIn('.accessibilityIdentifier("widget-placement-close")', GUIDE)
         self.assertIn("Button(action: onComplete) {\n                        Text(closeTitle)", GUIDE)
 

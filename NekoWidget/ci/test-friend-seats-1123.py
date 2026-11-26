@@ -128,6 +128,10 @@ class JoinPageTests(unittest.TestCase):
         self.assertIn("<p>参加は無料です。</p>", JOIN_PAGE)
         self.assertEqual(JOIN_PAGE.count("<svg"), 1)
         self.assertLess(JOIN_PAGE.index("App Store で入れる"), JOIN_PAGE.index(">アプリで開く<"))
+        # 11/26: after installing, the same link is opened again (one sentence).
+        for page in (JOIN_PAGE, (REPO / "docs/family-join.html").read_text(encoding="utf-8")):
+            self.assertLess(page.index("App Store で入れる"), page.index("入れたら、このリンクをもう一度開いてください。"))
+            self.assertEqual(page.count("もう一度開いてください"), 1)
         self.assertIsNone(re.search(r"<img\b|<ol\b", JOIN_PAGE))
         # The key explanation moved to the policy, one link away.
         self.assertIn('<a href="/privacy/">', JOIN_PAGE)

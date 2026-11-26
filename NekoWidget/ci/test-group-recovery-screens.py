@@ -58,7 +58,7 @@ class GroupRecoveryScreenTests(unittest.TestCase):
             "deviceLimitTitle": "使えるiPhoneは3台までです",
             "deviceLimitMessage": "外すiPhoneを選んでください。",
             "removeDevice": "外す",
-            "keepDevice": "やめる",
+            "keepDevice": "キャンセル",
             "removeDeviceMessage": "外したiPhoneでは、この人として入っているまどと家族の手帳が見られなくなります。",
             "revokedTitle": "このまどには戻れません",
             "chooseTitle": "どちらを使いますか",

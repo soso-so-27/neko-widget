@@ -519,7 +519,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     }
     private var catProfiles: CatProfilesPresentation {
         if AppStoreScreenshotFixture.CatHomeStress.isRequested {
-            return CatProfilesPresentation(profiles: AppStoreScreenshotFixture.CatHomeStress.profiles())
+            // 11/26: a cat added on this run is listed as the app lists it.
+            return CatProfilesPresentation(profiles: AppStoreScreenshotFixture.CatHomeStress.profiles() + addedToolProfiles)
         }
         guard ["cats", "rediscovery", "tool-profiles"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation(profiles: addedToolProfiles) }
         let all = photos.map {

@@ -2684,7 +2684,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("プロフィール", delete)
         self.assertIn('.alert("この子を追加できませんでした"', source("NekoWidget/Views/CatProfilesView.swift"))
         self.assertIn("await profileActions.deleteProfile(profile.identifier)", delete)
-        self.assertIn('Button("旅立った日を記録する") { showsFarewellEditor = true }', delete)
+        # 11/26: 「旅立った日を記録する」 is in 「…」 itself, not in the delete question.
+        self.assertIn('Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }',
+                      section(care, "private var moreMenu: some View {", "// MARK: The family's representative photo"))
+        self.assertNotIn("旅立った日を記録する", section(care, "@ViewBuilder private var deleteActions: some View {", "private func delete("))
         self.assertIn("元に戻せません。", section(care, "private var form: some View {", "var body: some View {"))
         self.assertNotIn("openParts", care)
         self.assertIn('sheetRow("誕生日・迎えた日", "birthday.cake", value: profile.lifeDatesSummary,', care)
@@ -5820,10 +5823,14 @@ class GroupWindowSpeedTests(unittest.TestCase):
         loop = section(sync, "for photo in photos {", "message = nil")
         self.assertIn("entries = await store.entries(windowID: windowID)", loop)
         self.assertIn('"group-window-syncing"', screen)
-        # 11/7: a window read before opens with its name and kept photos (or
-        # its empty state) at once; only a first-ever open shows the spinner.
+        # 11/7: a window read before opens with its name and kept photos at
+        # once. 11/26: 「まだ写真はありません」 only once this opening's first
+        # read is done with none (96b: a まど with photos flashed as empty);
+        # a small spinner until then.
         # 11/20: also while more photos are still on their way (the call limit).
-        self.assertIn("if model.entries.isEmpty && (!model.knowsPhotos || model.morePhotosComing) && !model.isFormer {", screen)
+        self.assertIn("if model.entries.isEmpty && (!model.finishedFirstRead || model.morePhotosComing) && !model.isFormer {", screen)
+        self.assertNotIn("(!model.knowsPhotos ||", screen)
+        self.assertIn("knowsPhotos = true\n        entries = await store.entries(windowID: windowID)\n        finishedFirstRead = true", sync)
         self.assertIn('.navigationTitle(model.shownName ?? "まど")', screen)
         self.assertIn("GroupWindowListNavigation.shared.rememberListed(windows)", screen)
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
@@ -7994,7 +8001,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         self.assertNotIn("text = ", field)
         # 11/25: the library sheet's field also holds still while it sends.
         self.assertEqual(self.screen.count("GroupCaptionField(text: $memo)"), 1)
-        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared))"), 1)
+        self.assertEqual(self.screen.count("GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared), focus: $captionFocused)"), 1)
         self.assertNotIn("GroupCaptionField(text: $memo, photoIdentifier:", self.screen)
         self.assertEqual(self.screen.count('@State private var memo = ""'), 3)
 
@@ -8132,7 +8139,7 @@ class MemoCaptionOneWayTests(unittest.TestCase):
         step = section(self.screen, "private struct GroupLibraryDeliveryStep: View {", "private struct GroupLibraryDeliveryChosenWindow: View {")
         self.assertIn("@Binding var memo: String", step)
         self.assertNotIn("@State private var memo", step)
-        form = section(step, "} else if let prepared {\n                Form {", "GroupCaptionField(text: $memo")
+        form = section(step, "} else if let prepared {\n                ScrollViewReader { scroller in\n                Form {", "GroupCaptionField(text: $memo")
         self.assertIn("if let changeWindow, let name = model.window?.name {", form)
         self.assertIn('Text("届け先")', form)
         self.assertIn("Text(name)", form)
@@ -8244,7 +8251,13 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         auto = "\\nApp Store で手続きが終わると、自動で使えるようになります。"
         state = section(model, "        } else if isWaiting {", "        } else {\n            purchaseTitle = nil")
-        self.assertIn("もう一度購入しないでください。" + auto + '"', state)
+        # 11/26 (98c): Apple's pending purchase is one sentence, and it does
+        # not ask for 「購入を復元」 (that stays among the links, one place).
+        self.assertIn("? Self.applePendingLine", state)
+        self.assertIn('static let applePendingLine = "Appleの手続きを待っています。終わると自動で使えます。"', model)
+        self.assertNotIn("購入を復元", model[model.index("static let applePendingLine"):].split("\n")[0])
+        self.assertIn("message = Self.applePendingLine", section(model, "case .waiting:", "case .nothingToRestore:"))
+        self.assertNotIn("購入手続きが終わるのを待っています", model)
         self.assertIn("お支払い方法を確認してください。" + auto + '"', state)
         checking = state[state.index("} else if verificationRequired || restoresInsteadOfPurchase {"):]
         self.assertNotIn(auto, checking)
@@ -8253,7 +8266,7 @@ class PresubmitFixes1110Tests(unittest.TestCase):
         # 11/24: unknown keeps the button's name and says what to do once.
         self.assertIn("purchaseTitle = Self.restoreTitle\n            message = Self.restoreLine", checking)
         self.assertIn('static let restoreLine = "購入を確かめられません。買い直す必要はありません。"', model)
-        self.assertEqual(model.count(auto), 3)
+        self.assertEqual(model.count(auto), 1)
 
     def test_showcase_without_recommendation_offers_picking(self) -> None:
         showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")

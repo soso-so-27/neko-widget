@@ -1550,14 +1550,14 @@ struct SettingsActionRow: View {
     }
 }
 
-/// The widget guide as a page inside 設定: one 「閉じる」 goes back (11/7:
-/// 「完了」 and 「あとで」 both only closed it).
+/// The widget guide as a page inside 設定 (11/7: no 「完了」 and 「あとで」).
+/// 11/26: pushed, so the system 「戻る」 is its one way back; no 「閉じる」.
 struct WidgetPlacementGuidePage: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() },
-                                 closeTitle: "閉じる")
+                                 closeTitle: "閉じる", showsCloseButton: false)
             .navigationBarTitleDisplayMode(.inline)
     }
 }

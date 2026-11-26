@@ -953,13 +953,15 @@ struct GroupWindowMembersView: View {
         Button("キャンセル", role: .cancel) {}
     }
 
-    /// 11/24 (M4): someone about to join is a faded face with 「参加中…」.
+    /// 11/24 (M4): someone about to join is a faded face. 11/26: 「招待中」,
+    /// not 「参加中…」 (read as if they had joined, or as this person's
+    /// own wait): the request goes through by itself on the creator's iPhone.
     /// Joining goes through by itself on the creator's iPhone, so 「断る」
     /// is in the face's menu, not a button on a yellow card.
     @ViewBuilder
     private func requestRow(_ request: GroupJoinRequest, window: GroupWindow) -> some View {
         let caption = running == "断る:\(request.id)" ? "断っています…"
-            : request.admissionPaused == true ? "いまは参加できません" : "参加中…"
+            : request.admissionPaused == true ? "いまは参加できません" : "招待中"
         let shown = face(name: request.displayName, shownName: request.displayName, caption: caption, faded: true)
         if window.canManage {
             Menu {
@@ -1116,14 +1118,11 @@ struct GroupWindowMembersView: View {
 
     @ViewBuilder
     private func leaveSection(_ window: GroupWindow) -> some View {
-        if window.myRole == .owner && model.canManageWindow {
-            // Closing is offered above; the creator does not leave.
+        if window.myRole == .owner {
+            // The creator does not leave (closing is offered above when this
+            // iPhone manages the まど). 11/26: no standing sentence about it;
+            // there is no 「抜ける」 to press, so nothing needs saying.
             EmptyView()
-        } else if window.myRole == .owner {
-            // Nothing to press: said in a footer, not in a row that looks like one.
-            Section { EmptyView() } footer: {
-                Text(GroupWindowPresentation.message(for: GroupClientError.ownerCannotLeave))
-            }
         } else {
             Section {
                 Button(role: .destructive) {

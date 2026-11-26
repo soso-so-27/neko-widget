@@ -1294,7 +1294,8 @@ struct FamilyNotebookView: View {
                     }
                 case .pendingApproval:
                     // 11/19 (UI/UX 整理): the same words wherever it waits.
-                    ContentUnavailableView(FamilyNotebookWords.awaitingApproval, systemImage: "hourglass")
+                    ContentUnavailableView(FamilyNotebookWords.awaitingApproval, systemImage: "hourglass",
+                                           description: Text(FamilyNotebookWords.awaitingApprovalNext))
                 case .waitingForKeys:
                     ContentUnavailableView(FamilyNotebookWords.receiving, systemImage: "book.closed")
                 case .inFamily:
@@ -2441,7 +2442,8 @@ struct FamilyNotebookJoinView: View {
                             || (result == nil && (preview?.priorRequestState == "pending" || sharing.state == .pendingApproval)) {
                     // Sent is not joined: say what it is waiting for, in the
                     // notebook's words (11/19 UI/UX 整理).
-                    Text(result == .waitingForKeys ? FamilyNotebookWords.receiving : FamilyNotebookWords.awaitingApproval)
+                    Text(result == .waitingForKeys ? FamilyNotebookWords.receiving
+                         : FamilyNotebookWords.awaitingApproval + "\n" + FamilyNotebookWords.awaitingApprovalNext)
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("閉じる") { dismiss() }
                 } else if inFamily && !otherFamilyLink {
@@ -2791,7 +2793,7 @@ struct FamilyNotebookLinkQuestionView: View {
                    presenting: confirming) { profile in
                 Button("つなぐ") { confirming = nil; choose(profile) }
                     .accessibilityIdentifier("family-link-confirm")
-                Button("やめる", role: .cancel) { confirming = nil }
+                Button("キャンセル", role: .cancel) { confirming = nil }
             }
         }
         .presentationDetents([.medium, .large])
@@ -2921,6 +2923,8 @@ enum FamilyNotebookWords {
     /// 11/19 (UI/UX 整理): one way to say each wait, wherever it shows (the
     /// notebook, the invitation, Settings' row).
     static let awaitingApproval = "家族が受け入れるのを待っています"
+    /// 11/26: what moves it on, under the wait (the notebook and the invitation).
+    static let awaitingApprovalNext = "招待した人がアプリを開くと、受け入れられます。"
     static let receiving = "家族の手帳を受け取っています"
     /// 11/21: a newly approved person has not opened the app yet; what is
     /// written here stays and goes to the family after.

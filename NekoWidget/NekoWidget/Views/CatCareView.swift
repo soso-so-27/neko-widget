@@ -735,17 +735,19 @@ struct CatCareDetailView: View {
     }
 
     /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
+    /// 11/26: the name only with an age (it is already large at the top);
+    /// with neither line, no footer.
     private var basicsFooter: String {
-        var line = subject.displayName
+        var lines: [String] = []
         if let birthday = currentRecord?.birthday?.value ?? nil,
            let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
-            line += farewell == nil ? "（\(age)）" : "（\(age)まで）"
+            lines.append(subject.displayName + (farewell == nil ? "（\(age)）" : "（\(age)まで）"))
         }
         // 11/23: 「誕生日か迎えた日を入れると…」 only while no date is written.
         if case let .profile(profile) = subject, profile.lifeReference != nil || !hasLifeDate {
-            line += "\n" + profile.lifeDatesExplanation
+            lines.append(profile.lifeDatesExplanation)
         }
-        return line
+        return lines.joined(separator: "\n")
     }
 
     /// A birthday or a day the cat came home, written anywhere for this cat.
@@ -851,8 +853,10 @@ struct CatCareDetailView: View {
         } header: {
             partHeader("基本", progress.basics, key: "basics")
         } footer: {
-            Text(basicsFooter)
-                .accessibilityIdentifier("cat-care-basics")
+            if !basicsFooter.isEmpty {
+                Text(basicsFooter)
+                    .accessibilityIdentifier("cat-care-basics")
+            }
         }
     }
 
@@ -1026,14 +1030,19 @@ struct CatCareDetailView: View {
     }
 
     /// Deleting the cat, in 「…」 at the top right (11/12, round 2; it was the
-    /// page's last row). The confirmation also offers to record the day
-    /// instead, as before (11/7: moved from 写真).
+    /// page's last row). 11/26: 「旅立った日を記録する」 is its own item in
+    /// this 「…」, not a choice inside 「…を削除しますか？」 (a sad day was
+    /// led to 「削除」 and 「元に戻せません」).
     private var moreMenu: some View {
         ToolMoreMenu(destructiveTitle: "この子を削除", itemIdentifier: "cat-profile-delete",
                      menuIdentifier: "cat-care-more-menu") {
             deleteFailed = false
             showsDeleteConfirmation = true
         } extra: {
+            if case .profile = subject, farewell == nil, Version1.isOn {
+                Button("旅立った日を記録する", systemImage: "star") { showsFarewellEditor = true }
+                    .accessibilityIdentifier("cat-profile-record-farewell")
+            }
             if canReorder { reorderButton }
             // 11/15: only a cat this iPhone linked to a family cat; the one
             // place to undo 「同じ子」.
@@ -1092,11 +1101,6 @@ struct CatCareDetailView: View {
     @ViewBuilder private var deleteActions: some View {
         if case let .profile(profile) = subject {
             Button("この子を削除", role: .destructive) { delete(profile) }
-            // When a cat has died, deleting is usually where people go. Offer
-            // to record the day instead; the button says what it opens.
-            if farewell == nil, Version1.isOn {
-                Button("旅立った日を記録する") { showsFarewellEditor = true }
-            }
         }
         Button("キャンセル", role: .cancel) {}
     }
@@ -3735,9 +3739,13 @@ struct FamilyPhotoReportSheet: View {
                         Text("運営に送るのはこの写真1枚だけです。送ると、この写真はこのiPhoneでは見えなくなります。")
                     }
                     if let failure {
+                        // 11/26: unavailable reads as the まど's alert: its
+                        // words and its one sentence; 「送る」 waits meanwhile.
                         Section {
                             Text(failure.message).font(.footnote).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("family-photo-report-failure")
+                        } footer: {
+                            if failure == .disabled { Text(GroupReportUnavailableText.message) }
                         }
                     }
                 }
@@ -3746,7 +3754,7 @@ struct FamilyPhotoReportSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(number != nil ? "閉じる" : "やめる") { dismiss() }
+                    Button(number != nil ? "閉じる" : "キャンセル") { dismiss() }
                         .disabled(sending)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -3755,7 +3763,7 @@ struct FamilyPhotoReportSheet: View {
                             .accessibilityLabel("送っています")
                     } else if number == nil {
                         Button(failure == .unknownOutcome ? "もう一度送る" : "送る") { Task { await send() } }
-                            .disabled(reason == nil)
+                            .disabled(reason == nil || failure == .disabled)
                             .accessibilityIdentifier("family-photo-report-send")
                     }
                 }

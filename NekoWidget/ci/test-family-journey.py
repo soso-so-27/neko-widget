@@ -946,6 +946,9 @@ class NotebookCleanup1119Tests(unittest.TestCase):
     def test_each_wait_is_said_one_way(self):
         self.assertIn('static let awaitingApproval = "家族が受け入れるのを待っています"', NOTEBOOK)
         self.assertIn('static let receiving = "家族の手帳を受け取っています"', NOTEBOOK)
+        # 11/26: one sentence under the wait says what moves it on.
+        self.assertIn('static let awaitingApprovalNext = "招待した人がアプリを開くと、受け入れられます。"', NOTEBOOK)
+        self.assertEqual(NOTEBOOK.count("FamilyNotebookWords.awaitingApprovalNext"), 2)
         for old in ('"参加を待っています"', '"準備しています"', "家族が参加を受け入れると",
                     '"家族の手帳を受け取っています。"', '"家族が受け入れるのを待っています。"'):
             self.assertNotIn(old, NOTEBOOK)

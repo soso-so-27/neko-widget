@@ -417,7 +417,8 @@ struct PhotoMemoryNoteEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") {
+                    // 11/26: a screen that can drop what was written says 「キャンセル」.
+                    Button("キャンセル") {
                         isWriting = false; isMeasuring = false
                         if hasChanges { confirmsDiscard = true } else { dismiss() }
                     }
@@ -438,7 +439,8 @@ struct PhotoMemoryNoteEditor: View {
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("完了") { isWriting = false; isMeasuring = false }
+                    // 11/26: the same words as 病院・この子のこと (「完了」 read as 「保存」).
+                    Button("キーボードを閉じる") { isWriting = false; isMeasuring = false }
                         .accessibilityIdentifier("photo-memory-note-keyboard-done")
                 }
             }

@@ -196,6 +196,10 @@ final class GroupWindowScreenModel: ObservableObject {
     /// This window was read here before (or just now), so no kept photos
     /// means none yet, not "still loading" (11/7).
     @Published private(set) var knowsPhotos = false
+    /// 11/26: the first read of this opening is done (the relay answered or
+    /// failed). Until then no 「まだ写真はありません」: kept photos may still
+    /// be on their way (96b: a まど with photos showed as empty for a moment).
+    @Published private(set) var finishedFirstRead = false
 
     var shownWindow: GroupWindow? { isGone ? nil : window ?? listedWindow }
     var shownName: String? { window?.name ?? formerName ?? listedWindow?.name ?? knownName }
@@ -357,6 +361,7 @@ final class GroupWindowScreenModel: ObservableObject {
             // A window this iPhone left: only what is kept here.
             entries = await store.entries(windowID: windowID)
             knowsPhotos = true
+            finishedFirstRead = true
             return
         }
         guard !isSyncing else { return }
@@ -466,6 +471,7 @@ final class GroupWindowScreenModel: ObservableObject {
         }
         knowsPhotos = true
         entries = await store.entries(windowID: windowID)
+        finishedFirstRead = true
         await updateHomeScreenPhoto()
     }
 
@@ -1300,7 +1306,7 @@ struct GroupWindowScreen: View {
                 // Photos already here stay as they are while new ones are checked
                 // quietly; new photos simply appear. Only a window never read on
                 // this iPhone shows a small spinner (11/7: a blank page for 3 s).
-                if model.entries.isEmpty && (!model.knowsPhotos || model.morePhotosComing) && !model.isFormer {
+                if model.entries.isEmpty && (!model.finishedFirstRead || model.morePhotosComing) && !model.isFormer {
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity)
@@ -2297,6 +2303,7 @@ private struct GroupLibraryDeliveryStep: View {
     var fixturePhoto: GroupWindowScreenModel.PreparedPhoto? = nil
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var checked = false
+    @FocusState private var captionFocused: Bool
 
     private var unavailableReason: String {
         model.isPaused ? GroupWindowPresentation.message(for: GroupSubscriptionError.windowPaused)
@@ -2306,15 +2313,18 @@ private struct GroupLibraryDeliveryStep: View {
     var body: some View {
         Group {
             if model.sendCompleted {
+                // 11/26: one 「届けました」 with the green check of the まど's
+                // send bar; 「閉じる」 is the toolbar's alone.
                 ContentUnavailableView {
-                    Label("届けました", systemImage: "checkmark.circle.fill")
-                } description: {
-                    Text(model.window.map { "「\($0.name)」のメンバーに届きました。" } ?? "")
-                } actions: {
-                    Button("閉じる", action: close).buttonStyle(.borderedProminent)
+                    Label {
+                        Text("届けました")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
                 }
                 .accessibilityIdentifier("group-library-delivery-done")
             } else if let prepared {
+                ScrollViewReader { scroller in
                 Form {
                     if let changeWindow, let name = model.window?.name {
                         Section {
@@ -2341,13 +2351,13 @@ private struct GroupLibraryDeliveryStep: View {
                     Section {
                         if let image = UIImage(data: prepared.jpeg) {
                             Image(uiImage: image).resizable().scaledToFit()
-                                .frame(maxWidth: .infinity, maxHeight: 300)
+                                .frame(maxWidth: .infinity, maxHeight: captionFocused ? 120 : 300)
                                 .accessibilityLabel("届ける写真")
                         }
                     }
                     // 11/25: nothing on this sheet changes while it is sent
                     // (build 412: the ひとこと stayed editable under 「届けています…」).
-                    GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared))
+                    GroupCaptionField(text: $memo, locked: model.locksCaption(for: prepared), focus: $captionFocused)
                     // 11/25: while 「届けています…」, no earlier sentence beside it.
                     if let message = model.message, !model.isSending {
                         // 11/22 (1122n): today's limit is a quiet notice, not an error.
@@ -2388,6 +2398,17 @@ private struct GroupLibraryDeliveryStep: View {
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
+                // 11/26 (96e): with the keyboard up, the ひとこと and 「100文字まで」
+                // stay above 「届ける」: the photo gets smaller and the field
+                // with its footer scrolls into view.
+                .onChange(of: captionFocused) { _, focused in
+                    guard focused else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(350))
+                        withAnimation { scroller.scrollTo(GroupCaptionField.footerID, anchor: .bottom) }
+                    }
+                }
+                }
             } else if checked {
                 // A window that cannot take photos (paused, closed, left) says
                 // so instead of checking forever (11/5).
@@ -2401,7 +2422,16 @@ private struct GroupLibraryDeliveryStep: View {
             }
         }
         .navigationTitle(model.window.map { "「\($0.name)」に届ける" } ?? "まどに届ける")
+        // 11/26 (96e): the title in the middle of the bar, on one line.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(model.window.map { "「\($0.name)」に届ける" } ?? "まどに届ける")
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityAddTraits(.isHeader)
+            }
             ToolbarItem(placement: pushed ? .topBarTrailing : .cancellationAction) {
                 Button(model.sendCompleted ? "閉じる" : "キャンセル", action: close)
                     .disabled(model.isSending)
@@ -2507,11 +2537,15 @@ private struct GroupCaptionField: View {
     /// 11/25: while it is sent, the words hold still and look it (a disabled
     /// field alone kept its full colour).
     var locked = false
+    /// 11/26: the send sheet's focus, so the field and its footer stay in view.
+    var focus: FocusState<Bool>.Binding? = nil
+    static let footerID = "group-window-send-caption-footer"
 
     var body: some View {
         Section {
             TextField("例：おなかを見せて寝ていた", text: $text, axis: .vertical)
                 .lineLimit(2...5)
+                .modifier(GroupCaptionFocus(focus: focus))
                 .disabled(locked)
                 .foregroundStyle(locked ? Color.secondary : Color.primary)
                 .accessibilityIdentifier("group-window-send-caption")
@@ -2521,8 +2555,21 @@ private struct GroupCaptionField: View {
         } header: { Text("ひとこと") }
           footer: {
               Text(GroupPhotoCaption.visibilityFooter)
+                  .id(Self.footerID)
                   .accessibilityIdentifier("group-window-send-caption-footer")
           }
+    }
+}
+
+private struct GroupCaptionFocus: ViewModifier {
+    let focus: FocusState<Bool>.Binding?
+
+    func body(content: Content) -> some View {
+        if let focus {
+            content.focused(focus)
+        } else {
+            content
+        }
     }
 }
 
@@ -4522,7 +4569,7 @@ struct GroupReportSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(record?.progress == .received ? "閉じる" : "やめる") { dismiss() }
+                    Button(record?.progress == .received ? "閉じる" : "キャンセル") { dismiss() }
                         .disabled(safety.isWorking)
                 }
                 ToolbarItem(placement: .confirmationAction) {

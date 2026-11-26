@@ -319,6 +319,10 @@ final class MembershipOfferModel: ObservableObject {
     /// 11/15 (TestFlight 378): the line on screen tells the person to press
     /// 「購入を復元」, so the screen's one 「購入を復元」 stands right under it
     /// instead of among the links below the fold.
+    /// 11/26 (98c): Apple holds the purchase; the button cannot buy again
+    /// meanwhile, so one sentence says it all.
+    static let applePendingLine = "Appleの手続きを待っています。終わると自動で使えます。"
+
     var asksForRestore: Bool { !isMember && (message?.contains("「購入を復元」") ?? false) }
 
     private init(
@@ -447,7 +451,8 @@ final class MembershipOfferModel: ObservableObject {
             if result == .completed { isWaiting = false }
         case .waiting:
             isWaiting = true
-            message = "Appleでの購入手続きが終わるのを待っています。もう一度購入せずに、しばらくしてから「購入を復元」を押してください。\nApp Store で手続きが終わると、自動で使えるようになります。"
+            // 11/26: one sentence; 「購入を復元」 stays among the links (one place).
+            message = Self.applePendingLine
         case .nothingToRestore:
             actionResult = "Plusの購入が見つかりませんでした。購入したときと同じApple Accountでサインインしているか確かめてください。"
         case .unavailable:
@@ -670,7 +675,7 @@ final class MembershipOfferModel: ObservableObject {
             applePending = applePending || fixtureStatus == .applePending
 #endif
             message = applePending
-                ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。\nApp Store で手続きが終わると、自動で使えるようになります。"
+                ? Self.applePendingLine
                 : "購入の確認を待っています。もう一度購入せずに、「購入を復元」を押してください。"
         } else if purchases?.hasBillingIssue == true {
             purchaseTitle = "お支払い方法の確認が必要です"
