@@ -7,7 +7,7 @@ private func check(_ result: Bool, _ name: String) throws {
     if !result { throw Failure.check(name) }
 }
 // Synthetic adapter only. Mutations happen between awaited actor operations.
-private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
+final class RootSyncTestKeychain: RootSyncKeychain, @unchecked Sendable {
     var items: [String: [String: Any]] = [:]
     var queries: [[String: Any]] = []
     var reads: OSStatus?
@@ -44,9 +44,10 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
     }
 }
 
+#if !NEKO_TWO_DEVICE_E2E
 @main struct RootSyncChecks {
     static func main() async throws {
-        let fake = FakeKeychain()
+        let fake = RootSyncTestKeychain()
         let store = try RootSyncStore(bundleID: "jp.synthetic", environment: .synthetic, keychain: fake)
         let raw = Data(repeating: 7, count: 32), root = SyncedRoot(privateKey: raw)
         let other = SyncedRoot(privateKey: Data(repeating: 8, count: 32))
@@ -129,7 +130,7 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
             }
         }
         let privateGroup = "EXAMPLETEAM.jp.synthetic"
-        let scopedFake = FakeKeychain()
+        let scopedFake = RootSyncTestKeychain()
         let privateStore = try RootSyncStore(bundleID: "jp.synthetic", environment: .production,
                                              accessGroup: privateGroup, keychain: scopedFake)
         try check(await privateStore.storeIfAbsent(explicitRoot: raw) == .created, "private production write")
@@ -144,3 +145,4 @@ private final class FakeKeychain: RootSyncKeychain, @unchecked Sendable {
         print("PASS: P2 synthetic adapter, validation, no overwrite, scoped reads/removal, unavailable != missing")
     }
 }
+#endif

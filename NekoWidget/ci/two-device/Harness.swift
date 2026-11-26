@@ -134,8 +134,15 @@ extension Device {
 @MainActor final class PersonCloud {
     let pins = MemorySecrets()
     private(set) var roots: [Data] = []
-    /// 「このiPhoneを同期」 (RootSyncStore.publishCurrentRoot).
-    /// `first`: listed before the others (RootSyncStore's order is not ours to pick).
+    // The foreground case uses the real store over a synthetic shared Keychain.
+    // Other scenarios keep their existing fixtures for specific candidate sets.
+    let syncedRoots: RootSyncStore?
+
+    init(syncedRoots: RootSyncStore? = nil) {
+        self.syncedRoots = syncedRoots
+    }
+
+    /// `first`: listed before the others for candidate-order test fixtures.
     func publish(_ root: Data?, first: Bool = false) {
         guard let root, !roots.contains(root) else { return }
         if first { roots.insert(root, at: 0) } else { roots.append(root) }
@@ -584,6 +591,11 @@ struct Drained: Decodable {
     /// The app starts: ProductionGroupWindowClient over the usual namespace,
     /// and the notebook service as FamilyNotebookServiceFactory.make() wires it.
     func launch() async throws {
+        // Model the app becoming active; the local identity must already exist.
+        if let sync = cloud.syncedRoots, let root = try usualRoot(),
+           case .failed(let error) = await sync.storeIfAbsent(explicitRoot: root) {
+            throw error
+        }
         let outbox = support.appendingPathComponent("GroupTransport-v3", isDirectory: true)
             .appendingPathComponent(GroupWire.base64(GroupCanonical.hash(Data((Self.namespace + "|" + relay.endpoint.absoluteString).utf8))), isDirectory: true)
             .appendingPathComponent("outbox", isDirectory: true)
@@ -684,6 +696,9 @@ struct Drained: Decodable {
     /// root's own namespace, the notebook row) and the screen's GroupRecoveryAdapter.
     func openRecoveryScreen() async throws -> GroupRecoveryAdapter {
         var roots = cloud.roots
+        if let sync = cloud.syncedRoots {
+            roots = try await sync.availableRoots().map(\.privateKey)
+        }
         let local = try usualRoot()
         if let local { roots.append(local) }
         // 11/20: a person set aside after a fresh start (GroupRecoveryLiveModel.connected).

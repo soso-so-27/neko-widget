@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STORE = ROOT / "NekoWidget/Services/RootSyncStore.swift"
 VIEW = ROOT / "NekoWidget/Views/KeychainSyncProbeView.swift"
 LIVE = ROOT / "NekoWidget/Services/GroupRecoveryLiveSession.swift"
+APP_ROOT = ROOT / "NekoWidget/App/AppRootView.swift"
 
 
 class Boundary(unittest.TestCase):
@@ -42,6 +43,12 @@ class Boundary(unittest.TestCase):
             if path in (STORE, VIEW, LIVE):
                 continue
             self.assertNotRegex(path.read_text(encoding="utf-8"), r"\b(?:RootSyncStore|SystemRootSyncKeychain|P2RootSyncProbeView)\b", str(path))
+
+    def test_app_activation_starts_root_backup(self):
+        app = APP_ROOT.read_text(encoding="utf-8")
+        activation_handler = app.split(".onChange(of: scenePhase) { _, newPhase in", 1)[1]
+        active_branch = activation_handler.split("case .active:", 1)[1].split("case .inactive:", 1)[0]
+        self.assertIn("Task { await GroupRecoveryRootBackup.ensure() }", active_branch)
 
     def test_no_other_targets_or_real_store_changes(self):
         project = (ROOT / "NekoWidget.xcodeproj/project.pbxproj").read_text(encoding="utf-8")

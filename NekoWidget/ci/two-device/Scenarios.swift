@@ -9,8 +9,9 @@ import Foundation
 //   FamilyRepresentativePhotos.shared and FamilyNotebookPrototype (UIKit,
 //   UserDefaults.standard): their reads and the notebook view's cat sharing
 //   are driven as they call the service and the bridge, one step at a time.
-// - RootSyncStore (iCloud Keychain): the person keys it would list are kept
-//   in PersonCloud and handed to the real GroupRecoveryLiveBuilder.
+// - Apple's iCloud Keychain: S3 uses RootSyncStore over a synthetic shared
+//   Keychain. The other scenarios hand PersonCloud fixtures to the real
+//   GroupRecoveryLiveBuilder.
 // - GroupWindowScreenModel (the まど screen, UIKit): its sync is mirrored over
 //   the app's ProductionGroupWindowClient and GroupWindowLocalPhotoStore
 //   (Device.syncWindow); ProductionGroupReporting refuses the local endpoint.
@@ -30,7 +31,7 @@ struct Family {
     static let all: [(String, String, Run)] = [
         ("S1", "create, invite, join, approve", s1),
         ("S2", "representative photo: read, replace, cancelled read", s2),
-        ("S3", "the creator's second iPhone", s3),
+        ("S3", "the creator opens the app, then recovers on a second iPhone", s3),
         ("S4", "member B deletes and reinstalls the app (PR #1090)", s4),
         ("S5", "member B changes iPhone, reports A's photo, the operator stops it", s5),
         ("S6", "A reinstalls and adds the same cat page again (PR #1089)", s6),
@@ -277,11 +278,12 @@ struct Family {
     // MARK: Common steps
 
     /// `oldBuildB`: B joins with a build from before the Keychain copy of its name.
-    static func makeFamily(_ relay: Relay, notifications: Bool = false, oldBuildB: Bool = false) async throws -> Family {
+    static func makeFamily(_ relay: Relay, notifications: Bool = false, oldBuildB: Bool = false,
+                           creatorCloud: PersonCloud? = nil) async throws -> Family {
         Log.step("A: a Sandbox billing account with test Plus")
         let billing = try await relay.bootstrapBilling()
         try await relay.grantPlus(billing)
-        let a = try await Device.make("A", relay: relay, cloud: PersonCloud(), billing: billing)
+        let a = try await Device.make("A", relay: relay, cloud: creatorCloud ?? PersonCloud(), billing: billing)
 
         Log.step("A creates the family notebook")
         let id = UUID()
@@ -290,7 +292,9 @@ struct Family {
         try await a.service.createFamily(operationID: id)
         try await settle("A's first key", [a]) { a.inFamily }
         try expect(a.service.currentFamilyID == id, "A's notebook is the one it created")
-        a.cloud.publish(a.notebookIdentity?.personPrivateKey)
+        if creatorCloud == nil {
+            a.cloud.publish(a.notebookIdentity?.personPrivateKey)
+        }
 
         Log.step("A puts one cat page into the notebook")
         let profile = UUID(), tool = UUID()
@@ -471,15 +475,28 @@ struct Family {
     // MARK: S3
 
     static func s3(_ relay: Relay) async throws -> String? {
-        let f = try await makeFamily(relay)
+        let keychain = RootSyncTestKeychain()
+        let rootSync = try RootSyncStore(bundleID: "jp.synthetic", environment: .staging, keychain: keychain)
+        let sharedCloud = PersonCloud(syncedRoots: rootSync)
+        let f = try await makeFamily(relay, creatorCloud: sharedCloud)
         let creator = try required(f.a.notebookIdentity?.personID, "A has no person")
 
         Log.step("A puts a photo; B sees it")
         let first = try await deliver(f.a, f.cat, shade: 3)
         _ = try await seePhoto(f.b, f.cat, asset: first.asset)
 
-        Log.step("A's second iPhone: only A's iCloud Keychain on it")
-        let a2 = try await Device.make("A2", relay: relay, cloud: f.a.cloud)
+        Log.step("A has a registered identity; A2 has no identity and no synced candidate yet")
+        let a2 = try await Device.make("A2", relay: relay, cloud: sharedCloud)
+        try expect(try f.a.usualRoot() != nil && a2.usualRoot() == nil, "only the old phone has the device-local identity")
+        try expect(try await rootSync.availableRoots().isEmpty, "the shared Keychain is empty before A opens the app")
+        let before = try await a2.openRecoveryScreen()
+        try expect(before.selectedRootID == nil && before.rootChoice.isEmpty, "no candidate before foreground backup")
+
+        Log.step("A opens the app without tapping a sync button")
+        try await f.a.relaunch()
+        try expect(keychain.addCount == 1, "foreground made exactly one new shared Keychain item")
+        try expect(try await rootSync.availableRoots().map(\.privateKey) == [try required(f.a.usualRoot(), "A's old root")],
+                   "the shared Keychain contains just A's verified root")
         let entrance = await a2.pass()
         try expect(entrance == .notInFamily, "nothing of the notebook before 機種変更 (got \(String(describing: entrance)))")
 
@@ -511,7 +528,7 @@ struct Family {
         let mine = try await deliver(a2, f.cat, shade: 4)
         let replaced = try await seePhoto(f.b, f.cat, asset: mine.asset)
         try expect(replaced.author == creator && replaced.jpeg == mine.jpeg, "B gets A2's photo, by the same person")
-        return "service level; the sent/seen rule of FamilyRepresentativePhotos.syncOne is not driven"
+        return "real RootSyncStore, recovery adapter and local Worker; opening the iPhone app and iCloud delivery are simulated"
     }
 
     // MARK: S4

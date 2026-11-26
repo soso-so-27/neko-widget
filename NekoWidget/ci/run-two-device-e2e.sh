@@ -46,8 +46,9 @@ sources=(
   NekoWidget/Services/FamilyNotebookCatLink.swift NekoWidget/Services/SharingAutoCheckPolicy.swift
   NekoWidget/Services/GroupWindowLocalPhotoStore.swift
   NekoWidget/Services/GroupShareAccess.swift NekoWidgetShareExtension/GroupShareService.swift
-  ci/two-device/Harness.swift ci/two-device/Scenarios.swift ci/two-device/RevokedDevice.swift
+  ci/verify-root-sync-store.swift ci/two-device/Harness.swift ci/two-device/Scenarios.swift ci/two-device/RevokedDevice.swift
 )
+python3 ci/test-root-sync-boundary.py
 echo "Compiling the two-device driver (${#sources[@]} files)" >&2
 xcrun --sdk macosx swiftc -D NEKO_TWO_DEVICE_E2E -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   "${sources[@]}" -o "$build/two-device-e2e"
