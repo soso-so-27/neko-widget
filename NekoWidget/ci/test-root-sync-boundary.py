@@ -3,7 +3,8 @@
 11/19: the store and the live connection ship in the App Store build with
 機種変更 (the relay's gate decides whether anything happens). The diagnostic
 probe screen stays internal. The person key is still published only after
-the person's own tap and device-owner authentication.
+the person's own tap and device-owner authentication. 11/26: by itself
+(GroupRecoveryRootBackup), the owner's decision for 機種変更.
 """
 from pathlib import Path
 import re
@@ -28,9 +29,14 @@ class Boundary(unittest.TestCase):
         live = LIVE.read_text(encoding="utf-8")
         self.assertFalse(live.startswith("#if DEBUG || INTERNAL_PRESENTATION\n"))
         self.assertEqual(sum(1 for line in live.splitlines() if "RootSyncStore(bundleID:" in line), 1)
-        # Publishing the person key: only from the tap, after the device owner's check.
-        self.assertEqual(live.count("sync.publishCurrentRoot(authenticate:"), 1)
-        self.assertIn("context.evaluatePolicy(.deviceOwnerAuthentication,", live)
+        # 11/26 (the owner's decision): the person key goes to iCloud Keychain
+        # by itself, once, never overwriting; no tap and no Face ID.
+        self.assertEqual(live.count("sync.publishCurrentRoot(authenticate:"), 0)
+        self.assertNotIn("LAContext", live)
+        backup = live[live.index("enum GroupRecoveryRootBackup {"):]
+        backup = backup[:backup.index(chr(10) + "}" + chr(10))]
+        self.assertIn("await sync.storeIfAbsent(explicitRoot: root)", backup)
+        self.assertEqual(live.count("storeIfAbsent("), 1)
         self.assertNotIn(".diagnostic.1115e", live)
         for path in (ROOT / "NekoWidget").rglob("*.swift"):
             if path in (STORE, VIEW, LIVE):

@@ -379,11 +379,6 @@ struct GroupRecoveryLiveScreen: View {
                 .listRowBackground(Color.clear)
                 .accessibilityIdentifier("group-recovery-live-entry")
                 .disabled(model.publishingRoot)
-            if model.canPublishRoot {
-                Button(GroupRecoveryWords.syncAction) { model.syncThisDevice() }
-                    .disabled(model.publishingRoot)
-                if let message = model.rootSyncMessage { Text(message) }
-            }
         }
         .onDisappear { model.cancelRootPublication() }
         .navigationTitle(GroupRecoveryWords.settingsEntry)
