@@ -2082,7 +2082,9 @@ final class AppRecordPersistence: ObservableObject {
     var shownDetail: String? {
         if failing && intakePaused { return Self.intakePausedDetail }
         if failing && retriesByItself { return "通信が戻ると、自動で続けます。" }
-        if shownTitle == "保存中…" { return "アプリを閉じても、次に開いたときに続きます。" }
+        // 11/26 (98d→98e): 「保存中…」 is the status line alone, so turning
+        // 「保存済み」 moves nothing below it.
+        if shownTitle == "保存中…" { return nil }
         // Tidying older saves is the app's own work, not something to read about.
         return title == "保存済み" ? nil : detail
     }

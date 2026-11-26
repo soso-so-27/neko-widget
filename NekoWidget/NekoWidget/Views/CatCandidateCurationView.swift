@@ -58,7 +58,8 @@ struct CatCandidateCurationView: View {
                     .disabled(isRestoringAll)
                 }
             } header: {
-                Text("猫の写真から外した写真")
+                // 11/26: with none, the empty state alone.
+                if !excludedPhotos.isEmpty { Text("猫の写真から外した写真") }
             }
         }
         .navigationTitle(showsSourceSettings ? "写真の整理" : "出さない写真")

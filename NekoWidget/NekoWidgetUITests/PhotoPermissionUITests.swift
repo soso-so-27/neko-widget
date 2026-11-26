@@ -1387,9 +1387,10 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         settingsWidgetGuide.tap()
 
-        // From Settings the guide has one 「閉じる」, not 「完了」 and 「あとで」 (11/7).
-        let widgetClose = app.buttons["widget-placement-close"]
-        guard widgetClose.waitForExistence(timeout: 15) else {
+        // From Settings the guide is a pushed page: the system 「戻る」 alone,
+        // no 「閉じる」 and no 「完了」 or 「あとで」 (11/7, 11/26).
+        let widgetSteps = app.descendants(matching: .any)["widget-placement-steps"].firstMatch
+        guard widgetSteps.waitForExistence(timeout: 15) else {
             fail(
                 "The Widget placement guide did not reopen from Settings.",
                 app: app
@@ -1397,6 +1398,7 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
         XCTAssertFalse(app.buttons["widget-placement-skip"].exists)
+        XCTAssertFalse(app.buttons["widget-placement-close"].exists)
 
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "Widget placement guide reopened from Settings"
@@ -4233,9 +4235,8 @@ final class SoloMemoriesUITests: XCTestCase {
         purchase.tap()
         let message = app.staticTexts["membership-offer-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        // 10/30 wording: wait for Apple's purchase, and do not buy again.
-        XCTAssertTrue(message.label.contains("購入手続きが終わるのを待っています"), message.label)
-        XCTAssertTrue(message.label.contains("もう一度購入せず"), message.label)
+        // 11/26: one sentence: wait for Apple; the button cannot buy again.
+        XCTAssertEqual(message.label, "Appleの手続きを待っています。終わると自動で使えます。")
         XCTAssertFalse(purchase.isEnabled)
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
         let restore = app.buttons["membership-offer-restore"]
@@ -4415,8 +4416,11 @@ final class SoloMemoriesUITests: XCTestCase {
                 continue
             } else {
                 XCTAssertFalse(purchase.isEnabled, "Pending states must not invite another purchase")
-                XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
-                              || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
+                // 11/26: Apple's pending purchase is one sentence (the button
+                // cannot buy again); the server's check asks for 「購入を復元」.
+                let line = app.staticTexts["membership-offer-message"].label
+                XCTAssertTrue(line == "Appleの手続きを待っています。終わると自動で使えます。"
+                              || line.contains("もう一度購入せず"), line)
             }
             // One button: 「購入を復元」 re-checks and restores (11/5).
             XCTAssertFalse(app.buttons["membership-offer-refresh"].exists)
@@ -6295,7 +6299,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "memory-library-photo-detail")
         photo.tap()
         XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["photo-memory-note-excerpt"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["photo-memory-note-excerpt"].firstMatch.exists)
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(body.waitForExistence(timeout: 5))
         app.buttons["memory-note-edit"].tap()
@@ -6497,7 +6501,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         done.tap()
         attach(app, name: "personal-memory-note-editor")
         app.buttons["photo-memory-note-save"].tap()
-        let excerpt = app.buttons["photo-memory-note-excerpt"]
+        // 11/26: the excerpt is read only; 「メモ」 opens the editor.
+        let excerpt = app.descendants(matching: .any)["photo-memory-note-excerpt"].firstMatch
+        XCTAssertFalse(app.buttons["photo-memory-note-excerpt"].exists)
         XCTAssertTrue(excerpt.waitForExistence(timeout: 5))
         XCTAssertEqual(excerpt.value as? String, note)
         attach(app, name: "personal-memory-note-photo")

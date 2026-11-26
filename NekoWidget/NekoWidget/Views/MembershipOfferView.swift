@@ -529,8 +529,15 @@ struct PlusStartedView: View {
     let nextTitle: String?
     let onNext: () -> Void
     let onClose: () -> Void
+    /// 11/26: the free trial's last day, as StoreKit tells it (none: no line).
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
 
     static let line = "Plusが始まりました。"
+
+    private var trialEndLine: String? {
+        guard let end = purchases.renewal?.trialEndsAt, end > .now else { return nil }
+        return PlusRenewalPresentation.monthDay(end, calendar: .nekoGregorian) + "まで無料です。"
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -542,6 +549,14 @@ struct PlusStartedView: View {
                 .accessibilityIdentifier("membership-offer-started")
                 // The purchase screen was replaced in place: say so once.
                 .onAppear { AccessibilityNotification.Announcement(Self.line).post() }
+            if let trialEndLine {
+                Text(trialEndLine)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .accessibilityIdentifier("membership-offer-started-trial-end")
+            }
             Button(action: onNext) {
                 Text(nextTitle ?? "閉じる")
                     .font(.headline)

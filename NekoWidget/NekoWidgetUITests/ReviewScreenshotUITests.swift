@@ -537,13 +537,13 @@ final class ReviewScreenshotUITests: XCTestCase {
             guidePage.tap()
             guard guide.waitForExistence(timeout: 10) else { return "widget guide row not found" }
             guide.tap()
-            guard app.buttons["widget-placement-close"].waitForExistence(timeout: 15) else { return "widget guide did not open" }
+            guard steps.waitForExistence(timeout: 15) else { return "widget guide did not open" }
             settle(1.5)
             return nil
         }
         for page in 2...5 {
             shot("29_widget_guide_\(page)", app) {
-                guard app.buttons["widget-placement-close"].exists else { return "widget guide not shown" }
+                guard steps.exists else { return "widget guide not shown" }
                 if steps.exists { steps.swipeLeft() } else { app.swipeLeft() }
                 settle(1.5)
                 return nil
@@ -901,6 +901,8 @@ final class ReviewScreenshotUITests: XCTestCase {
         shot("48c_home_family_farewell", app) {
             if let reason = reachStressHome(app) { return reason }
             guard !app.buttons["tools-care-open"].exists else { return "family farewell not shown (tool buttons still there)" }
+            // 11/26: nothing to add on a departed cat's page.
+            guard !app.buttons["cat-home-choose-photo"].exists else { return "このiPhoneにも登録 shown for a departed cat" }
             return nil
         }
         app.terminate()
@@ -970,9 +972,9 @@ final class ReviewScreenshotUITests: XCTestCase {
             reason.tap()
             app.buttons["family-photo-report-send"].firstMatch.tap()
             // Received (a number), or, in a build without the pinned team
-            // key, 「いまは通報できません。」: never a send to another key.
+            // key, 「いまは通報を受け付けられません。」: never a send to another key.
             let number = app.descendants(matching: .any)["family-photo-report-number"].firstMatch
-            let unavailable = app.staticTexts["いまは通報できません。"].firstMatch
+            let unavailable = app.staticTexts["いまは通報を受け付けられません。"].firstMatch
             guard number.waitForExistence(timeout: 15) || unavailable.exists else {
                 return "report was not received"
             }
@@ -1108,7 +1110,7 @@ final class ReviewScreenshotUITests: XCTestCase {
             settle(1.5)
             return nil
         }
-        for label in ["やめる", "閉じる"] where app.navigationBars["この写真を通報"].exists {
+        for label in ["キャンセル", "閉じる"] where app.navigationBars["この写真を通報"].exists {
             let button = app.navigationBars["この写真を通報"].buttons[label].firstMatch
             if button.exists { button.tap(); settle(1) }
         }
@@ -1253,7 +1255,9 @@ final class ReviewScreenshotUITests: XCTestCase {
             guidePage.tap()
             guard guide.waitForExistence(timeout: 10) else { return "widget guide row not found" }
             guide.tap()
-            guard app.buttons["widget-placement-close"].waitForExistence(timeout: 15) else { return "widget guide did not open" }
+            guard app.descendants(matching: .any)["widget-placement-steps"].firstMatch.waitForExistence(timeout: 15) else {
+                return "widget guide did not open"
+            }
             settle(1.5)
             return nil
         }
@@ -2215,7 +2219,7 @@ final class ReviewScreenshotUITests: XCTestCase {
 
     @MainActor
     private func closeTop(_ app: XCUIApplication) {
-        for label in ["閉じる", "完了"] {
+        for label in ["閉じる", "完了", "キャンセル"] {
             let button = app.buttons[label].firstMatch
             if button.exists, button.isHittable { button.tap(); settle(0.8); return }
         }

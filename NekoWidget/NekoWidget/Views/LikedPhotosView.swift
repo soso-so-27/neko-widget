@@ -2854,30 +2854,21 @@ struct PhotoBrowserView: View {
                         .accessibilityIdentifier("cloudy-photo-same-day")
                 }
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
-                    Button {
-                        personalNotePhoto = selectedPhoto
-                    } label: {
-                        // 11/7: an icon and a chevron so the excerpt reads as tappable.
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: "note.text")
-                                .accessibilityHidden(true)
-                            Text(note.text)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .contentShape(Rectangle())
+                    // 11/26: the excerpt is read here only; 「メモ」 above is
+                    // the one way in (one place per action).
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "note.text")
+                            .accessibilityHidden(true)
+                        Text(note.text)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.plain)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("メモ")
                     .accessibilityValue(note.text)
-                    .accessibilityHint("メモを開いて読み、編集できます")
                     .accessibilityIdentifier("photo-memory-note-excerpt")
                 }
                 if personalNote.state(for: selectedPhoto.localIdentifier) == .failed {

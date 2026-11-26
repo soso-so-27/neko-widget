@@ -98,8 +98,24 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn("guard model.sendCompleted, !UIAccessibility.isVoiceOverRunning else { return }", task)
         self.assertIn("try? await Task.sleep(for: .milliseconds(1200))", task)
         self.assertIn("close()", task)
-        # 「閉じる」 stays.
-        self.assertIn('Button("閉じる", action: close).buttonStyle(.borderedProminent)', step)
+        # 11/26: one 「閉じる」, the toolbar's; the done page is 「届けました」
+        # with a green check, no second 「閉じる」 in its body.
+        self.assertNotIn('Button("閉じる", action: close).buttonStyle(.borderedProminent)', step)
+        self.assertIn('Button(model.sendCompleted ? "閉じる" : "キャンセル", action: close)', step)
+        done = section(step, "if model.sendCompleted {", '"group-library-delivery-done"')
+        self.assertIn('Text("届けました")', done)
+        self.assertIn('Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)', done)
+        self.assertNotIn("のメンバーに届きました", done)
+
+    def test_the_caption_stays_above_the_send_button(self):
+        step = section(WINDOW, "private struct GroupLibraryDeliveryStep: View {", "private struct GroupLibraryDeliveryChosenWindow: View {")
+        # 11/26 (96e): 「届ける」 in the bottom inset; with the keyboard up the
+        # photo shrinks and the field's footer is scrolled into view.
+        self.assertIn(".safeAreaInset(edge: .bottom) {", step)
+        self.assertIn("maxHeight: captionFocused ? 120 : 300", step)
+        self.assertIn("scroller.scrollTo(GroupCaptionField.footerID, anchor: .bottom)", step)
+        self.assertIn(".navigationBarTitleDisplayMode(.inline)", step)
+        self.assertIn("ToolbarItem(placement: .principal) {", step)
 
     def test_the_last_window_is_chosen_with_two_or_more(self):
         sheet = section(WINDOW, "struct GroupLibraryDeliverySheet: View {", "enum GroupLibraryDeliveryMemory {")

@@ -82,7 +82,8 @@ enum GroupSafetyError: Error, Equatable, Sendable {
         case .reservationExpired: "時間がたったため、送れませんでした。もう一度通報してください。"
         case .dailyLimit: "きょうはこれ以上通報できません。明日お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
-        case .disabled: "いまは通報できません。"
+        // 11/26: the まど's alert words, the same everywhere.
+        case .disabled: "いまは通報を受け付けられません。"
         case .unknownOutcome: "送れたかどうか分かりませんでした。「もう一度送る」を押してください。"
         // 11/21e: the same words as the rest of the まど for no connection.
         case .offline: "接続できません。電波のあるところで、もう一度お試しください。"

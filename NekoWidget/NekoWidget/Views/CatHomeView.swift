@@ -314,6 +314,9 @@ struct CatHomeView: View {
     @State private var pageID: String?
     @State private var addsCat = false
     @State private var addedCat: String?
+    /// 11/26 (95m/95n): a cat just added whose profile is not in the list
+    /// yet. Its page opens once the list has it, never as an empty page.
+    @State private var pendingAddedCat: String?
     /// The page the pager last came to rest on (the tick is for this).
     @State private var settledPageID: String?
     @State private var pageActions = CatHomePageActions()
@@ -375,7 +378,16 @@ struct CatHomeView: View {
             }
             storedCatID = identifier
             pageID = identifier
-            addedCat = identifier
+            if presentation.profiles.contains(where: { $0.identifier == identifier }) {
+                addedCat = identifier
+            } else {
+                pendingAddedCat = identifier
+            }
+        }
+        .onChange(of: presentation.profiles.map(\.identifier)) { _, identifiers in
+            guard let pending = pendingAddedCat, identifiers.contains(pending) else { return }
+            pendingAddedCat = nil
+            addedCat = pending
         }
         // Once per cat added: set only here, and nil again when its page closes.
         .sensoryFeedback(.success, trigger: addedCat) { old, new in old == nil && new != nil }
@@ -992,7 +1004,8 @@ private struct CatHomePage: View {
                             pageNames: pageNames, go: { actions.go($0) })
                 // 18 (was 22): the page fits one screen on a standard iPhone (11/14).
                 VStack(spacing: 18) {
-                    if choosesPhoto {
+                    // 11/26: not on a departed cat's page (nothing to add there).
+                    if choosesPhoto && !facts.departed {
                         CatHomeChoosePhotoButton(name: cat.name, linksHere: linksHere) { actions.choosePhoto(cat.id) }
                     }
                     // A cat whose farewell day is recorded is not offered in the tools.
@@ -1621,13 +1634,15 @@ private struct CatHomeNoPhotoArt: View {
 /// 11/15: the button under the photo of a family cat this iPhone has no
 /// cat for: it links to a cat here, or registers one with its name. 11/19
 /// (UI/UX 整理): named for what it does, 「このiPhoneの子とつなぐ」, or
-/// 「この子を追加」 when this iPhone has no cat it could be.
+/// 「この子を追加」 when this iPhone has no cat it could be. 11/26: that one
+/// says where the cat is added, 「このiPhoneにも登録」 (on the family cat's
+/// own page 「この子を追加」 read as unclear, above all with no cat here).
 private struct CatHomeChoosePhotoButton: View {
     let name: String
     var linksHere = true
     let action: () -> Void
 
-    private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "この子を追加" }
+    private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "このiPhoneにも登録" }
 
     var body: some View {
         Button(action: action) {

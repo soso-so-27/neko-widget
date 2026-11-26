@@ -131,7 +131,7 @@ class LinkFollowUps(unittest.TestCase):
         view = block(NOTEBOOK, "struct FamilyNotebookLinkQuestionView: View {")
         self.assertIn('.alert("このiPhoneに書いたことは、家族の手帳の内容に合わせます。"', view)
         self.assertIn('Button("つなぐ") { confirming = nil; choose(profile) }', view)
-        self.assertIn('Button("やめる", role: .cancel) { confirming = nil }', view)
+        self.assertIn('Button("キャンセル", role: .cancel) { confirming = nil }', view)
         self.assertIn("if model.linkReplacesOwnWriting(cat.id, profile: profile.identifier) { confirming = profile } else { choose(profile) }", view)
 
     def test_unlinking_shows_the_own_writing_again(self):

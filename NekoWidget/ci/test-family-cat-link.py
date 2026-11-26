@@ -85,7 +85,9 @@ class Words(unittest.TestCase):
         self.assertIn(".accessibilityHidden(true)", art)
         button = block(HOME, "private struct CatHomeChoosePhotoButton: View {")
         # 11/19 (UI/UX 整理): named for what it does, not 「写真を選ぶ」.
-        self.assertIn('private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "この子を追加" }', button)
+        # 11/26: registering says where: 「このiPhoneにも登録」.
+        self.assertIn('private var title: String { linksHere ? "このiPhoneの子とつなぐ" : "このiPhoneにも登録" }', button)
+        self.assertIn("if choosesPhoto && !facts.departed {", HOME)
         self.assertIn("Label(title, systemImage: linksHere ? \"link\" : \"plus\")", button)
         self.assertNotIn("写真を選ぶ", button)
         self.assertIn("linksHere: hasLinkCandidates(toolID: cat.id),", HOME)

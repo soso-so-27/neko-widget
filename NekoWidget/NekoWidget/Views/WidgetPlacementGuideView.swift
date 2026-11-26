@@ -13,6 +13,9 @@ struct WidgetPlacementGuideView: View {
     /// Opened again from 設定: one button with this title (it calls
     /// `onComplete`) in place of 「完了」 and 「あとで」 (11/7).
     var closeTitle: String? = nil
+    /// 11/26: false on 設定's pushed page, whose 「戻る」 is the way back
+    /// (one way out, not also a 「閉じる」 at the bottom).
+    var showsCloseButton = true
     /// An official window just received: the last line says to choose it in
     /// the Widget (11/7: one guide for every place, not a second one).
     var windowName: String? = nil
@@ -102,7 +105,11 @@ struct WidgetPlacementGuideView: View {
         .onAppear { UsageCounter.shared.count(.widgetGuideOpened) }  // Usage (11/7)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
-                if let closeTitle {
+                if closeTitle != nil && !showsCloseButton {
+                    // From 設定: the system 「戻る」 alone; the steps keep 設定's
+                    // last page (`closeTitle` is still set).
+                    EmptyView()
+                } else if let closeTitle {
                     Button(action: onComplete) {
                         Text(closeTitle)
                             .font(.headline)

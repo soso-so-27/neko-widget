@@ -575,7 +575,7 @@ final class FamilyRepresentativePhotoFixture: FamilyRepresentativePhotoBackend {
     func report(assetID: UUID, reason: GroupReportReason) async throws -> String {
         guard let jpeg = shownJPEG[assetID] else { throw FamilyNotebookPhotoFailure.unavailable }
         // The same pinned recipient as a real build: none in this
-        // configuration means 「いまは通報できません」, never another key.
+        // configuration means 「いまは通報を受け付けられません」, never another key.
         guard let recipient = FamilyNotebookServiceFactory.moderationRecipient() else { throw FamilyNotebookPhotoFailure.unavailable }
         let pending = try await client.prepareReport(canonicalJPEG: jpeg, assetID: assetID, reasonCode: reason.rawValue,
             moderationKeyID: recipient.keyID, moderationPublicKey: recipient.publicKey)

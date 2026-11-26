@@ -626,6 +626,8 @@ final class ScreenSpeedSweepUITests: XCTestCase {
         if close.exists, close.isHittable { close.tap(); return }
         let done = app.buttons["完了"].firstMatch
         if done.exists, done.isHittable { done.tap(); return }
+        let cancel = app.buttons["キャンセル"].firstMatch
+        if cancel.exists, cancel.isHittable { cancel.tap(); return }
         let backButton = app.navigationBars.buttons.element(boundBy: 0)
         if backButton.exists, backButton.isHittable { backButton.tap(); return }
         app.swipeDown(velocity: .fast)
