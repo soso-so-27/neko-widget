@@ -432,6 +432,11 @@ class BillingClientFoundationTests(unittest.TestCase):
         existing = coordinator[coordinator.index("let previous = try loadCredential()"):
                                coordinator.index("return previous")]
         self.assertIn("previous.billingAccountID == currentEvidence.billingAccountID", existing)
+        # 11/26: a stored key the server no longer accepts continues to the
+        # explicit recovery; only the server's revoked/unknown-key answer does.
+        self.assertLess(existing.index("await serverRejectsStoredKey(previous)"),
+                        existing.index("try removeCommittedAttempt(previous)"))
+        self.assertIn('status == 401 && code == "invalid_billing_authentication"', coordinator)
 
         self.assertIn("insertRecoveryAttempt(candidate)", coordinator)
         self.assertIn("attempt.persistedEvidence", coordinator)
@@ -502,6 +507,8 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertNotIn("recoverBillingAccountExplicitly", plus)
         self.assertNotIn("recoverBillingAccountExplicitly", app)
         self.assertNotIn("BillingAccountRecoveryCoordinator", app)
+        self.assertNotIn("BillingAccountRecoveryCoordinator", plus)
+        self.assertNotIn("serverRejectsStoredKey", plus)
 
     def test_disabled_window_sponsorship_client_matches_server_contract(self) -> None:
         core = source("NekoWidget/Services/BillingClientCore.swift")

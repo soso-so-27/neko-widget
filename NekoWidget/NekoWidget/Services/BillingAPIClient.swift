@@ -426,8 +426,16 @@ actor BillingAccountRecoveryCoordinator {
            previous.phase == .registered,
            previous.installationMarker == markerValue,
            previous.billingAccountID == currentEvidence.billingAccountID {
-            try removeCommittedAttempt(previous)
-            return previous
+            // 11/26: a recovery on another iPhone (same Apple Account) rotates
+            // the account's one active key, and this stored key then gets 401
+            // on every call. Ask the server once, signed with the stored key;
+            // only its answer that the key is no longer active continues to
+            // the recovery below. Any other answer keeps the stored key.
+            let keyNoLongerActive = await serverRejectsStoredKey(previous)
+            if !keyNoLongerActive {
+                try removeCommittedAttempt(previous)
+                return previous
+            }
         }
         if let previous,
            previous.phase == .pendingBootstrap,
@@ -471,6 +479,36 @@ actor BillingAccountRecoveryCoordinator {
             throw BillingClientError.credentialChanged
         }
         return registered
+    }
+
+    /// One signed entitlement read with the stored key, only inside the
+    /// person's explicit restore. A stale clock, a replay, 429/5xx, no
+    /// connection or a success all keep the stored key.
+    private func serverRejectsStoredKey(
+        _ credential: BillingCredential
+    ) async -> Bool {
+        do {
+            _ = try await apiClient.fetchAuthoritativeEntitlement(
+                credential: credential
+            )
+            return false
+        } catch {
+            return BillingCredentialRejection.keyNoLongerActive(error)
+        }
+    }
+}
+
+/// 11/26: the billing server answers 401 `invalid_billing_authentication`
+/// when the signed request's key is not an active key of that account
+/// (billing-auth.ts: revoked by a recovery elsewhere, unknown, or a
+/// signature it cannot verify). A clock outside the window is
+/// `stale_billing_request` and a reused nonce is 409; neither says the key
+/// is gone.
+enum BillingCredentialRejection {
+    static func keyNoLongerActive(_ error: Error) -> Bool {
+        guard case let .requestRejected(status, code)? = error as? BillingClientError
+        else { return false }
+        return status == 401 && code == "invalid_billing_authentication"
     }
 }
 
