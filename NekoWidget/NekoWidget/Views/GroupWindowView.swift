@@ -3579,7 +3579,8 @@ struct GroupWindowListSection: View {
                 // 11/22: with the cards kept from last time on screen, a failed
                 // refresh says nothing. Each card still opens, and the list is
                 // read again the next time the tab is shown.
-                if showsDiagnosis, let failure = model.lastFailure {
+                // 11/26: test builds only (it shows an ID and an internal code).
+                if InternalDiagnosis.isOn, showsDiagnosis, let failure = model.lastFailure {
                     // Only after a long press on 「みんなのまど」: the failing stage.
                     Text("診断　" + failure)
                         .font(.caption2.monospaced())
@@ -4287,6 +4288,9 @@ struct GroupIdentityDeletionView: View {
         do {
             record = try await client.identityDeletion()
             readFailed = false; failure = nil
+        } catch is CancellationError {
+            working = false
+            return
         } catch {
             // 11/20: not "nothing under way": that is not known.
             readFailed = true
@@ -4811,4 +4815,14 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
             await safety.setBlock(windowID: windowID, participantID: current.senderParticipantID, active: true)
         }
     }
+}
+
+/// 11/26: the まど list's 「診断」 line (an ID's start and an internal code)
+/// only in test builds; the long press does nothing in the App Store build.
+enum InternalDiagnosis {
+#if DEBUG || INTERNAL_PRESENTATION
+    static let isOn = true
+#else
+    static let isOn = false
+#endif
 }

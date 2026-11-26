@@ -1192,7 +1192,7 @@ extension ProductionGroupWindowClient {
     func reusableInvitation(windowID: String) async throws -> GroupInvitation? {
         try await reusableInvitation(windowID: windowID, current: try await window(id: windowID))
     }
-    private func reusableInvitation(windowID: String, current: GroupWindow) async throws -> GroupInvitation? {
+    func reusableInvitation(windowID: String, current: GroupWindow) async throws -> GroupInvitation? {
         guard current.canManage, current.state == .active, current.deliveryStatus != .paused else { return nil }
         let index = try load([String: String].self, "owner-invitation-index") ?? [:]
         let accounts = Set(try secrets.accounts(prefix: "invite:") + [index[windowID]].compactMap { $0 }.map { "invite:" + $0 })
@@ -1360,7 +1360,10 @@ extension ProductionGroupWindowClient {
         return saved.request
     }
     func pendingRequests(windowID: String) async throws -> [GroupJoinRequest] {
-        let current = try await window(id: windowID), identity = try identity()
+        try await pendingRequests(windowID: windowID, current: try await window(id: windowID))
+    }
+    func pendingRequests(windowID: String, current: GroupWindow) async throws -> [GroupJoinRequest] {
+        let identity = try identity()
         guard current.canManage else { throw GroupClientError.ownerRequired }
         let rows = try await page(GroupAPIModel.PendingJoin.self, path: "/v3/group-windows/\(windowID)/join-requests/list")
         guard rows.count <= 100, Set(rows.map(\.id)).count == rows.count else { throw GroupClientError.invalidResponse }

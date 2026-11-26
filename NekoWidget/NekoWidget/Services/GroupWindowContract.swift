@@ -261,6 +261,9 @@ struct GroupAdmissionResult: Codable, Equatable, Sendable, Identifiable {
 protocol GroupWindowClient: Sendable {
     func resumableJoin(invitationID: String) async throws -> GroupJoinRequest?
     func reusableInvitation(windowID: String) async throws -> GroupInvitation?
+    /// 11/26: the same, with the window the caller has just read (no second read).
+    func reusableInvitation(windowID: String, current: GroupWindow) async throws -> GroupInvitation?
+    func pendingRequests(windowID: String, current: GroupWindow) async throws -> [GroupJoinRequest]
     func reconcileAdmissions() async throws -> [GroupAdmissionResult]
     func windows() async throws -> [GroupWindow]
     func window(id: String) async throws -> GroupWindow
@@ -293,6 +296,12 @@ protocol GroupWindowClient: Sendable {
 }
 
 extension GroupWindowClient {
+    func reusableInvitation(windowID: String, current: GroupWindow) async throws -> GroupInvitation? {
+        try await reusableInvitation(windowID: windowID)
+    }
+    func pendingRequests(windowID: String, current: GroupWindow) async throws -> [GroupJoinRequest] {
+        try await pendingRequests(windowID: windowID)
+    }
     func resumableJoin(invitationID: String) async throws -> GroupJoinRequest? { nil }
     func reusableInvitation(windowID: String) async throws -> GroupInvitation? { nil }
     func reconcileAdmissions() async throws -> [GroupAdmissionResult] { [] }

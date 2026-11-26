@@ -296,7 +296,10 @@ final class GroupWindowMembersModel: ObservableObject {
         let results = (try? await client.reconcileAdmissions()) ?? []
         admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
         do {
-            var latest = transform(try await client.window(id: windowID))
+            // 11/26: read once; the requests and the link reuse it (it was
+            // read three times in a row each time the screen opened).
+            let read = try await client.window(id: windowID)
+            var latest = transform(read)
             if latest.state == .rotationRequired, latest.canManage {
                 // Someone left: renewing the key here lets the window go on.
                 do {
@@ -314,9 +317,17 @@ final class GroupWindowMembersModel: ObservableObject {
             // The people waiting and the invitation are read on their own:
             // a failure keeps what was shown, and the next pass reads again.
             if latest.canManage {
-                if let requests = try? await client.pendingRequests(windowID: windowID) { pendingRequests = requests }
-                do { invitation = try await client.reusableInvitation(windowID: windowID) } catch {}
+                // A renewed key (a new revision) is read again, as before.
+                if latest.revision == read.revision {
+                    if let requests = try? await client.pendingRequests(windowID: windowID, current: read) { pendingRequests = requests }
+                    do { invitation = try await client.reusableInvitation(windowID: windowID, current: read) } catch {}
+                } else {
+                    if let requests = try? await client.pendingRequests(windowID: windowID) { pendingRequests = requests }
+                    do { invitation = try await client.reusableInvitation(windowID: windowID) } catch {}
+                }
             }
+        } catch is CancellationError {
+            // 11/26: the screen went away or was pulled again: not a failure.
         } catch {
             // Keep the last known window and requests. Only say that the
             // latest could not be checked; never clear a list on a failure.
@@ -1376,6 +1387,7 @@ final class GroupJoinModel: ObservableObject {
                 if let saved = try await client.resumableJoin(invitationID: invitationID) {
                     displayName = saved.displayName; update(with: saved)
                 }
+            } catch is CancellationError {
             } catch { errorMessage = GroupWindowPresentation.message(for: error) }
         }
     }
@@ -1425,6 +1437,7 @@ final class GroupJoinModel: ObservableObject {
             update(with: latest)
             // A quiet pass leaves the last result on screen unless the state moved on.
             if reportsFailure || !isPending { errorMessage = nil }
+        } catch is CancellationError {
         } catch {
             // Keep waiting; the application is still on the relay.
             if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }
