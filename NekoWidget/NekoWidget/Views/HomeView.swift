@@ -676,7 +676,11 @@ struct HomeView: View {
                         // shows as the small spinner after 「〇枚」; only a state
                         // with something to press keeps its row. A paused
                         // search resumes by itself when the app opens.
-                        if scan.hasFailed || scan.hasDeferredAssets {
+                        // 11/26: a few unreadable photos are not a row here.
+                        // They are tried again by themselves once a day, and
+                        // the row came and went with every search (the grid
+                        // dropped each time). 設定's search details keep the count.
+                        if scan.hasFailed {
                             partialScanStatus
                         }
                         detectedPhotosSection
@@ -814,19 +818,13 @@ struct HomeView: View {
             // button taken away), so its height never changes during a pass.
             Group {
                 Label(scan.hasFailed ? "写真を最後まで探せませんでした"
-                      : scan.hasDeferredAssets ? "読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります"
                       : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
                       systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
                     .font(.subheadline)
                 if scan.hasFailed || scan.isPaused {
                     // Continues from where it stopped (photos already looked
-                    // at are reused); only 「読み込めなかった写真」 below needs
-                    // the search from the start that tries those again.
+                    // at are reused).
                     Button(scan.isPaused ? "続きを探す" : "もう一度探す", action: resumeScan ?? rescan)
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("photo-library-partial-retry")
-                } else if scan.hasDeferredAssets {
-                    Button("もう一度探す", action: rescan)
                         .frame(minHeight: 44)
                         .accessibilityIdentifier("photo-library-partial-retry")
                 }

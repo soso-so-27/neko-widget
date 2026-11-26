@@ -123,15 +123,9 @@ struct AlbumView: View {
                 .accessibilityIdentifier("albums-scan-failed")
             } else if scan.isPreparingGroupedAlbums {
                 groupedAlbumPreparationBanner
-            } else if scan.hasFinalResult, scan.hasDeferredAssets {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
-                        .font(.subheadline.weight(.semibold))
-                    Text("読み込めた写真だけで、アルバムを表示しています。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
+            // 11/26: no banner for a few unreadable photos (retried by
+            // themselves once a day; 設定's search details keep the count).
 
             if let featuredContent {
                 featuredContent

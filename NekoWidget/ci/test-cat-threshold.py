@@ -112,7 +112,8 @@ class CatThresholdTests(unittest.TestCase):
         self.assertNotIn("analysisRevision", resume)
         status = section(HOME, "private var partialScanStatus: some View {", "private var monthDestinations")
         self.assertIn('Button(scan.isPaused ? "続きを探す" : "もう一度探す", action: resumeScan ?? rescan)', status)
-        self.assertIn("} else if scan.hasDeferredAssets {\n                    Button(\"もう一度探す\", action: rescan)", status)
+        # 11/26: unreadable photos no longer get a row or a button here.
+        self.assertNotIn("scan.hasDeferredAssets", status)
         self.assertIn("var resumeScan: (() async -> Void)? = nil", MAIN)
         self.assertIn("await viewModel.resumeScan()", ROOT_VIEW)
 

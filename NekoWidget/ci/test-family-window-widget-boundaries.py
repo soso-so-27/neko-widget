@@ -6039,7 +6039,8 @@ class PhotoScanStatusTests(unittest.TestCase):
         # above the grid (the grid jumped on every launch); it is the spinner
         # after 「〇枚」, and only failed or unreadable photos keep a row.
         self.assertNotIn("if scan.isScanning {", status)
-        self.assertIn("if scan.hasFailed || scan.hasDeferredAssets {\n                            partialScanStatus", home)
+        self.assertIn("if scan.hasFailed {\n                            partialScanStatus", home)
+        self.assertNotIn("scan.hasDeferredAssets", home)
         self.assertNotIn("scan.hasFailed || scan.hasDeferredAssets || scan.isScanning || scan.isPaused", home)
         count = section(home, "struct PhotoCountWithScanActivity: View {", "struct HomeView: View {")
         self.assertIn("@ObservedObject private var activity = ScanActivity.shared", count)
@@ -6049,7 +6050,7 @@ class PhotoScanStatusTests(unittest.TestCase):
         self.assertIn("PhotoCountWithScanActivity(count: catPhotos.count)", home)
         self.assertNotIn("まだ読み込めない写真があります", status)
         self.assertNotIn(".disabled(scan.isScanning)", status)
-        self.assertIn('"読み込めなかった写真が\\(scan.deferredAssets.formatted())枚あります"', status)
+        self.assertNotIn("読み込めなかった写真", status)
         self.assertIn(".padding(.horizontal, isEmbedded ? 16 : 0)", status)
 
     def test_monthly_nine_share_image_has_no_title_band(self) -> None:
