@@ -52,6 +52,7 @@ struct CatProfileTransferView: View {
             }
         }
         .navigationTitle("プロフィールの引き継ぎ")
+        .navigationBarTitleDisplayMode(.inline)
         .fileExporter(isPresented: $showsExporter, document: document,
                       contentType: .json, defaultFilename: "ねこのプロフィール") { result in
             document = nil

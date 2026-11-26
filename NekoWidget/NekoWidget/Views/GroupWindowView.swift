@@ -2911,15 +2911,13 @@ private struct GroupPhotoPage: View {
     var body: some View {
         Group {
             if safety.hasReported(entry.id, in: model.windowID) {
-                // Where the answers really are: 「メンバー」, or 「…」 on a
-                // window this iPhone is no longer in (11/7).
+                // 11/26: the state only; where the answer comes is said once,
+                // when the report is sent.
                 ContentUnavailableView("通報した写真", systemImage: "eye.slash",
-                    description: Text(model.isFormer || model.isGone
-                        ? "このiPhoneでは表示しません。結果は、まどの右上の「…」→「通報への返答」でお知らせします。"
-                        : "このiPhoneでは表示しません。結果は、まどの「メンバー」→「通報への返答」でお知らせします。"))
+                    description: Text("このiPhoneでは表示しません。"))
             } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
-                    description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
+                    description: Text("センシティブな内容が含まれている可能性があります。"))
             } else if let image {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.from(entry.senderDisplayName))届いた写真")
